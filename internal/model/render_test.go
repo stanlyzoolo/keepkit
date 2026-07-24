@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -1717,6 +1718,77 @@ func TestFetchInstalledCmd(t *testing.T) {
 	if msg.toolName != "nonexistent-tool-xyz" {
 		t.Errorf("toolName = %q, want %q", msg.toolName, "nonexistent-tool-xyz")
 	}
+	// The command must carry InstalledVersion's second result, not just the
+	// version: a tool that is not on PATH is the "not installed" state the card
+	// renders differently from a version-less install.
+	if msg.present {
+		t.Error("present = true for a tool that does not exist")
+	}
+
+	// false is the zero value, so the assertion above cannot catch a dropped
+	// present on its own — pin the true case against a binary that really is on
+	// PATH but answers no version, the state the two differ in.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "presenttool"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	hit, ok := fetchInstalledCmd(loader.Tool{Name: "presenttool"})().(installedMsg)
+	if !ok {
+		t.Fatalf("expected installedMsg, got %T", hit)
+	}
+	if hit.installed != "" {
+		t.Errorf("installed = %q, want empty — the fake answers no version", hit.installed)
+	}
+	if !hit.present {
+		t.Error("present = false for a binary that is on PATH")
+	}
+}
+
+// TestInstalledMsgCarriesPresence pins the plumbing between the probe and the
+// card: fetchInstalledCmd's present flag must survive the handler into
+// VersionInfo and reach the rendered installed: line. Without this the
+// assignment could be dropped and every other test would stay green — the
+// render tests build VersionInfo directly.
+func TestInstalledMsgCarriesPresence(t *testing.T) {
+	newModel := func() Model {
+		m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+		return updated.(Model)
+	}
+
+	tests := []struct {
+		name    string
+		present bool
+		want    string
+		notWant string
+	}{
+		{"installed but version-less", true, "installed: ✓ no version", "not installed"},
+		{"absent", false, "installed: ✕ not installed", "no version"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModel()
+			updated, _ := m.Update(installedMsg{toolName: "gh", installed: "", present: tt.present})
+			nm := updated.(Model)
+
+			info := nm.versions["gh"]
+			if info.InstalledPresent != tt.present {
+				t.Errorf("InstalledPresent = %v, want %v", info.InstalledPresent, tt.present)
+			}
+			if !info.InstalledKnown {
+				t.Error("InstalledKnown = false, want true — the probe reported back")
+			}
+			card := stripANSI(nm.renderCard())
+			if !strings.Contains(card, tt.want) {
+				t.Errorf("card missing %q; got:\n%s", tt.want, card)
+			}
+			if strings.Contains(card, tt.notWant) {
+				t.Errorf("card shows the other presence state (%q); got:\n%s", tt.notWant, card)
+			}
+		})
+	}
 }
 
 func TestNeedsInstalled(t *testing.T) {
@@ -2514,7 +2586,8 @@ func TestRenderCardSpinner(t *testing.T) {
 
 // TestRenderCardInstalledLatest covers the [info] version lines: installed:
 // renders whenever the section is open (muted "detecting…" while the local
-// probe is in flight, "✕ not found" once it reported empty), the section
+// probe is in flight, "✓ no version" / "✕ not installed" once it reported
+// empty, split by presence), the section
 // opens for a GitHub-less tool once an installed version is known, and
 // latest: gains the update highlight + ↑ only when the installed version is
 // older. The model goes through New + WindowSizeMsg so renderCard sees the
@@ -2555,13 +2628,28 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		}
 	})
 
-	t.Run("detection reported empty: not found", func(t *testing.T) {
+	t.Run("detection reported empty and absent: not installed", func(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "installed: ✕ not found") {
+		if !strings.Contains(card, "installed: ✕ not installed") {
 			t.Errorf("card missing installed fallback with ✕ marker; got:\n%s", card)
+		}
+	})
+
+	// A tool that is installed but won't name its version (a TUI app ignoring
+	// --version) must not read as missing: same empty Installed, different line.
+	t.Run("detection reported empty but present: no version", func(t *testing.T) {
+		m := newCardModel("cli/cli")
+		m.versions["gh"] = VersionInfo{Latest: "v2.0.0", InstalledKnown: true, InstalledPresent: true}
+		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
+		card := stripANSI(m.renderCard())
+		if !strings.Contains(card, "installed: ✓ no version") {
+			t.Errorf("card missing present-but-version-less line; got:\n%s", card)
+		}
+		if strings.Contains(card, "not installed") {
+			t.Errorf("an installed tool must not read as missing; got:\n%s", card)
 		}
 	})
 
@@ -2573,8 +2661,8 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		if !strings.Contains(card, "installed: detecting…") {
 			t.Errorf("card missing pending installed line; got:\n%s", card)
 		}
-		if strings.Contains(card, "not found") || strings.Contains(card, "✕") {
-			t.Errorf("card claims not found before detection finished; got:\n%s", card)
+		if strings.Contains(card, "not installed") || strings.Contains(card, "✕") {
+			t.Errorf("card claims not installed before detection finished; got:\n%s", card)
 		}
 	})
 

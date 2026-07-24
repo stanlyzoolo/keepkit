@@ -126,10 +126,113 @@ func TestDetectUpdateCmdOverride(t *testing.T) {
 }
 
 func TestDetectMissingBinary(t *testing.T) {
+	// Empty brew prefix: no keg can be found by name either, so the miss is
+	// conclusive regardless of what the host machine has installed.
+	setTestBrewPrefix(t, t.TempDir())
+
 	tool := loader.Tool{Name: "definitely-not-a-real-binary-xyz"}
 	_, err := Detect(tool)
 	if !errors.Is(err, ErrUnknownManager) {
 		t.Fatalf("err = %v, want ErrUnknownManager", err)
+	}
+}
+
+// setTestBrewPrefix points brewPrefix at dir for the duration of the test,
+// restoring the previous override afterwards.
+func setTestBrewPrefix(t *testing.T, dir string) {
+	t.Helper()
+	orig := testBrewPrefix
+	testBrewPrefix = dir
+	t.Cleanup(func() { testBrewPrefix = orig })
+}
+
+func TestBrewNamePlanAt(t *testing.T) {
+	prefix := t.TempDir()
+	// rust: the motivating case — a formula whose binaries (rustc, cargo) are
+	// named differently, so LookPath("rust") can never find it.
+	mustMkdirAll(t, filepath.Join(prefix, "Cellar", "rust", "1.96.1"))
+	mustMkdirAll(t, filepath.Join(prefix, "Caskroom", "someapp", "2.0.0"))
+	// A plain file, not a directory — must not be mistaken for a keg.
+	mustMkdirAll(t, filepath.Join(prefix, "Cellar"))
+	if err := os.WriteFile(filepath.Join(prefix, "Cellar", "notadir"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		tool     string
+		prefix   string
+		wantOK   bool
+		wantArgv []string
+	}{
+		{"cellar formula", "rust", prefix, true, []string{"brew", "upgrade", "rust"}},
+		{"caskroom cask", "someapp", prefix, true, []string{"brew", "upgrade", "someapp"}},
+		{"no such keg", "nothere", prefix, false, nil},
+		{"keg path is a file", "notadir", prefix, false, nil},
+		{"no brew prefix", "rust", "", false, nil},
+		{"empty name", "", prefix, false, nil},
+		// Traversal guard: a brew formula name is a bare identifier.
+		{"name with slash", "../../etc", prefix, false, nil},
+		{"name with backslash", `..\..\etc`, prefix, false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, ok := brewNamePlanAt(tt.tool, tt.prefix)
+			if ok != tt.wantOK {
+				t.Fatalf("brewNamePlanAt(%q, %q) ok = %v, want %v", tt.tool, tt.prefix, ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if plan.Manager != "brew" {
+				t.Errorf("Manager = %q, want %q", plan.Manager, "brew")
+			}
+			if !equalStrings(plan.Argv, tt.wantArgv) {
+				t.Errorf("Argv = %v, want %v", plan.Argv, tt.wantArgv)
+			}
+			if want := strings.Join(tt.wantArgv, " "); plan.Display != want {
+				t.Errorf("Display = %q, want %q", plan.Display, want)
+			}
+		})
+	}
+}
+
+// TestDetectBrewByName pins the Detect branch: a tracked name with no binary of
+// its own still resolves to brew when a keg of that name exists — the "rust is
+// tracked, rustc is installed" case that used to dead-end in ErrUnknownManager.
+func TestDetectBrewByName(t *testing.T) {
+	prefix := t.TempDir()
+	mustMkdirAll(t, filepath.Join(prefix, "Cellar", "rust", "1.96.1"))
+	setTestBrewPrefix(t, prefix)
+	// An empty PATH guarantees the LookPath miss this branch hangs off.
+	t.Setenv("PATH", t.TempDir())
+
+	plan, err := Detect(loader.Tool{Name: "rust"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.Manager != "brew" {
+		t.Errorf("Manager = %q, want %q", plan.Manager, "brew")
+	}
+	wantArgv := []string{"brew", "upgrade", "rust"}
+	if !equalStrings(plan.Argv, wantArgv) {
+		t.Errorf("Argv = %v, want %v", plan.Argv, wantArgv)
+	}
+
+	// An explicit UpdateCmd still wins over the brew branch.
+	custom, err := Detect(loader.Tool{Name: "rust", UpdateCmd: "rustup update"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if custom.Manager != "custom" || custom.Display != "rustup update" {
+		t.Errorf("UpdateCmd override lost to the brew branch: %+v", custom)
+	}
+}
+
+func mustMkdirAll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 

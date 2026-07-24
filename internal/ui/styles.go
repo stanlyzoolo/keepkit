@@ -84,6 +84,13 @@ var (
 				Foreground(ColorOrange).
 				Bold(true)
 
+	// OkStyle marks a benign affirmative state — the card's "installed but
+	// version unknown". Deliberately not UpdateAvailableStyle: orange there
+	// means "act on this", and a working install needs no action.
+	OkStyle = lipgloss.NewStyle().
+			Foreground(ColorGreen).
+			Bold(true)
+
 	// My Tools status colors
 	StatusColorActive   = ColorGreen
 	StatusColorTrying   = ColorOrange
