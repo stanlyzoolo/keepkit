@@ -32,14 +32,23 @@ type VersionInfo struct {
 	// flight" — only the installedMsg handler sets it, so the card can show
 	// a pending state instead of a premature "not found".
 	InstalledKnown bool
+	// InstalledPresent separates the two states InstalledKnown collapses when
+	// Installed == "": the tool is installed but won't name its version (a TUI
+	// app that ignores --version) versus not installed at all. Only the
+	// installedMsg handler sets it, from version.InstalledVersion's second
+	// result; the card renders the two differently.
+	InstalledPresent bool
 }
 
-// installedMsg carries the locally detected installed version for a tool.
-// It is emitted by fetchInstalledCmd independently of any network activity so
-// the installed version renders immediately, without waiting on GitHub.
+// installedMsg carries the locally detected installed version for a tool, plus
+// whether the tool is present at all (a version-less install is still an
+// install). It is emitted by fetchInstalledCmd independently of any network
+// activity so the installed version renders immediately, without waiting on
+// GitHub.
 type installedMsg struct {
 	toolName  string
 	installed string
+	present   bool
 }
 
 // remoteMsg carries the result of a single network pass (release + repo info +
@@ -433,6 +442,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		info := m.versions[msg.toolName]
 		info.Installed = msg.installed
 		info.InstalledKnown = true
+		info.InstalledPresent = msg.present
 		m.versions[msg.toolName] = info
 		if hasSel {
 			m.metaSelected = m.indexOfMeta(prev.Name)

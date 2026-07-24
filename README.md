@@ -122,6 +122,12 @@ Statuses: `active` (●) · `trying` (○) · `inactive` (✕) — shown on the 
 Legacy `forgotten` / `archived` values from `meta.yaml` are automatically read as
 `inactive`; a legacy list of several tags is read as its first tag.
 
+The `installed:` line has four states: the detected version, `detecting…` while the
+local probe runs, `✓ no version` for a tool that is installed but won't report one
+(a TUI app that ignores `--version`), and `✕ not installed`. The version is read from
+`--version` / `-V`, and failing that from Homebrew's directory layout or
+`cargo install --list` — so tools with no version CLI still resolve.
+
 The card's links are clickable: a click on the `repo:` line opens the repository in the
 browser, a click on the release URL under `[changelog]` opens that release page — the
 same thing `o` and `c` do from the keyboard.
@@ -169,6 +175,11 @@ in the brief panel. `keeptui` detects the package manager the binary was install
 - `cargo` — a binary in `~/.cargo/bin` → `cargo install <crate>`;
 - `pipx` — a venv in `~/.local/pipx/venvs/<pkg>/` → `pipx upgrade <pkg>`;
 - `npm` — a global `node_modules/<pkg>` → `npm install -g <pkg>`.
+
+If the tool has no binary of its own on `PATH`, one more check runs before giving up:
+a Homebrew keg or cask named after the tool → `brew upgrade <name>`. That covers
+formulae whose binaries are named differently — `rust` installs `rustc` and `cargo`,
+so there is no `rust` binary to detect from.
 
 The command is shown in the status bar for confirmation (`enter` runs it, any other
 key cancels); its output streams into panel `[3] Update` in real time and the TUI

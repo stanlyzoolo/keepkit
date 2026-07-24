@@ -1084,21 +1084,27 @@ func (m Model) buildCard() (string, map[int]string) {
 		if hasCard && card.Stars > 0 {
 			sb.WriteString(ui.InfoStyle.Render(fmt.Sprintf("stars: %s", formatStars(card.Stars))) + "\n")
 		}
-		// "not found" only once the local probe reported back — before that
-		// an empty Installed just means the detection is still in flight.
+		// The version-less states resolve only once the local probe reported
+		// back (InstalledKnown) — before that an empty Installed just means the
+		// detection is still in flight. Present-but-version-less is a working
+		// install (a TUI app that ignores --version), so it reads green and
+		// affirmative; only a genuine absence gets the red ✕.
 		// A resolved version carries the same U+F412 (nf-oct-tag) glyph the
 		// latest: line uses — here it marks a version, not specifically a
 		// release tag; the two version lines read as a pair. The states with no
-		// version to tag (not found / detecting) stay bare. Written as a \u
-		// escape on purpose — the raw glyph is invisible in most editors and
-		// diffs and gets silently lost.
+		// version to tag stay bare. Written as a \u escape on purpose — the raw
+		// glyph is invisible in most editors and diffs and gets silently lost.
 		switch {
 		case installed != "":
 			sb.WriteString(ui.InfoStyle.Render("installed: \uf412 "+installed) + "\n")
+		case vinfo.InstalledKnown && vinfo.InstalledPresent:
+			sb.WriteString(ui.InfoStyle.Render("installed: ") +
+				ui.OkStyle.Render("✓") +
+				ui.InfoStyle.Render(" no version") + "\n")
 		case vinfo.InstalledKnown:
 			sb.WriteString(ui.InfoStyle.Render("installed: ") +
 				ui.DangerStyle.Render("✕") +
-				ui.InfoStyle.Render(" not found") + "\n")
+				ui.InfoStyle.Render(" not installed") + "\n")
 		default:
 			sb.WriteString(ui.InfoStyle.Render("installed: detecting…") + "\n")
 		}

@@ -156,10 +156,11 @@ func notFoundExit(err error) bool {
 // so the installed version can render before any GitHub fetch completes.
 func fetchInstalledCmd(t loader.Tool) tea.Cmd {
 	return safeCmd("fetchInstalledCmd", func() tea.Msg {
-		installed := version.InstalledVersion(t)
+		installed, present := version.InstalledVersion(t)
 		return installedMsg{
 			toolName:  t.Name,
 			installed: installed,
+			present:   present,
 		}
 	})
 }

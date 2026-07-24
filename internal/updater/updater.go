@@ -47,6 +47,55 @@ func homeDir() string {
 	return h
 }
 
+// testBrewPrefix overrides the Homebrew prefix in tests.
+var testBrewPrefix string
+
+// brewPrefix resolves the Homebrew installation prefix without spawning brew
+// (a ruby process that costs ~1.5s per invocation): the HOMEBREW_PREFIX env
+// var brew's shellenv exports, else the first standard location that exists.
+// Empty when brew is not installed (including Windows, where none exist).
+// A deliberate duplicate of version.brewPrefix — both packages are bottom
+// leaves of the import graph and neither may depend on the other; twelve
+// duplicated lines cost less than a shared package they would both import.
+func brewPrefix() string {
+	if testBrewPrefix != "" {
+		return testBrewPrefix
+	}
+	if p := os.Getenv("HOMEBREW_PREFIX"); p != "" {
+		return p
+	}
+	for _, p := range []string{"/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"} {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+// brewNamePlan reports the brew upgrade plan for a tracked name that is itself
+// a formula/cask, for binaries LookPath cannot find. Thin OS-facing wrapper
+// over brewNamePlanAt.
+func brewNamePlan(name string) (Plan, bool) {
+	return brewNamePlanAt(name, brewPrefix())
+}
+
+// brewNamePlanAt is the pure core: a keg or cask directory named after the tool
+// means brew owns it, and `brew upgrade <name>` is the update command. Mirrors
+// version.brewDirVersion's traversal guard — a brew formula/cask name is a bare
+// identifier, so a name carrying a path separator can't be one and must not
+// turn the Join into a traversal.
+func brewNamePlanAt(name, prefix string) (Plan, bool) {
+	if prefix == "" || name == "" || strings.ContainsAny(name, `/\`) {
+		return Plan{}, false
+	}
+	for _, room := range []string{"Cellar", "Caskroom"} {
+		if fi, err := os.Stat(filepath.Join(prefix, room, name)); err == nil && fi.IsDir() {
+			return autoPlan("brew", []string{"brew", "upgrade", name}), true
+		}
+	}
+	return Plan{}, false
+}
+
 // Detect resolves the update Plan for a tool. It is the OS-facing wrapper over
 // the pure detectFromPath core: it spawns subprocesses (go version -m, cargo
 // install --list) and must therefore never run on a latency-sensitive path such
@@ -74,6 +123,14 @@ func Detect(t loader.Tool) (Plan, error) {
 
 	found, err := exec.LookPath(t.Name)
 	if err != nil {
+		// No binary by that name, but the tracker name can still be a brew
+		// formula whose binaries are named differently — "rust" ships rustc and
+		// cargo, so LookPath("rust") misses while `brew upgrade rust` is exactly
+		// the right command. The branch is self-validating: it fires only when a
+		// keg/cask directory of that name actually exists.
+		if plan, ok := brewNamePlan(t.Name); ok {
+			return plan, nil
+		}
 		return Plan{}, fmt.Errorf("%s not installed: %w", t.Name, ErrUnknownManager)
 	}
 	realPath, err := filepath.EvalSymlinks(found)

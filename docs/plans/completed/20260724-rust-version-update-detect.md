@@ -80,17 +80,18 @@
 - Modify: `internal/model/model.go`
 - Modify: `internal/model/commands.go`
 
-- [ ] `detect.go`: сменить сигнатуру `InstalledVersion(t loader.Tool) string` → `(ver string, present bool)`; завести `binaryExists bool`, ставить `true` на успешном `exec.LookPath(args[0])` (на промахе — не трогать)
-- [ ] `detect.go`: добавить дубль `isTUITakeover(out []byte) bool` (`bytes.Contains(out, []byte("\x1b[?1049"))`, import `"bytes"`); сразу после `cmd.CombinedOutput()` — если `isTUITakeover(out)`, сбросить capture и `break` из цикла, **не** добавляя reason
-- [ ] `detect.go`: добавить `cargoVersionFromList(list, binName string) string` — чистый парсер header/indented, версию берёт через `versionRe.FindStringSubmatch(line)[1]` (**без** ведущего `v`, чтобы `installed:` совпадал с brew/`--version` формой)
-- [ ] `detect.go`: добавить `cargoListVersion(binName string) string` — `LookPath("cargo")` (промах → `""`) → **свой** `context.WithTimeout` (2s, как в `InstalledVersion`; `version` не имеет `runProbe`) + `exec.CommandContext` + `proc.DetachTTY` → `cargoVersionFromList`
-- [ ] `detect.go`: порядок fallback `--version`/`-V` → `brewDirVersion(t.Name)` → `cargoListVersion(t.Name)` (вызывать **только** при `binaryExists`); вернуть `(ver, present)`, где `present = binaryExists || ver!=""`
-- [ ] `model/model.go`: добавить `present bool` в `installedMsg`; `InstalledPresent bool` в `VersionInfo` (коммент почему); в `case installedMsg` — `info.InstalledPresent = msg.present`
-- [ ] `model/commands.go`: `fetchInstalledCmd` → `ver, present := version.InstalledVersion(t)`; прокинуть оба в `installedMsg`
-- [ ] обновить существующие тесты под 2-значную сигнатуру: `detect_test.go` (строки ~87/104/123/145/162), `brew_test.go` (~150/154/157)
-- [ ] написать тесты: `cargoVersionFromList` (несколько крейтов, бинарник во втором блоке, `inertia-tui v0.1.0:` → `0.1.0`, промах → `""`); дубль `isTUITakeover` (сырой `\x1b[?1049` → true)
-- [ ] написать тесты: present-но-без-версии (LookPath есть, версии нет → `present==true, ver==""`) и not-present (`missingtool` → `present==false`); проверить, что TUI-takeover-вывод **не** пишет anomaly-лог и не парсит `0.30.2`
-- [ ] `go build ./...` + `go test -race ./internal/version/... ./internal/model/...` — зелёные перед Task 2
+- [x] `detect.go`: сменить сигнатуру `InstalledVersion(t loader.Tool) string` → `(ver string, present bool)`; завести `binaryExists bool`, ставить `true` на успешном `exec.LookPath(args[0])` (на промахе — не трогать)
+- [x] `detect.go`: добавить дубль `isTUITakeover(out []byte) bool` (`bytes.Contains(out, []byte("\x1b[?1049"))`, import `"bytes"`); сразу после `cmd.CombinedOutput()` — если `isTUITakeover(out)`, сбросить capture и `break` из цикла, **не** добавляя reason
+  - ➕ уточнение скоупа: на takeover сбрасываем **и накопленные** `reasons` (`reasons = nil`), а не только текущий capture. Иначе тул, у которого `--version` падает не-нулём, а `-V` уходит в TUI, всё равно писал бы anomaly-лог на каждом старте — ровно тот сигнал logx, который задача чинит. Takeover — это классифицированное поведение, а не аномалия
+- [x] `detect.go`: добавить `cargoVersionFromList(list, binName string) string` — чистый парсер header/indented, версию берёт через `versionRe.FindStringSubmatch(line)[1]` (**без** ведущего `v`, чтобы `installed:` совпадал с brew/`--version` формой)
+- [x] `detect.go`: добавить `cargoListVersion(binName string) string` — `LookPath("cargo")` (промах → `""`) → **свой** `context.WithTimeout` (2s, как в `InstalledVersion`; `version` не имеет `runProbe`) + `exec.CommandContext` + `proc.DetachTTY` → `cargoVersionFromList`
+- [x] `detect.go`: порядок fallback `--version`/`-V` → `brewDirVersion(t.Name)` → `cargoListVersion(t.Name)` (вызывать **только** при `binaryExists`); вернуть `(ver, present)`, где `present = binaryExists || ver!=""`
+- [x] `model/model.go`: добавить `present bool` в `installedMsg`; `InstalledPresent bool` в `VersionInfo` (коммент почему); в `case installedMsg` — `info.InstalledPresent = msg.present`
+- [x] `model/commands.go`: `fetchInstalledCmd` → `ver, present := version.InstalledVersion(t)`; прокинуть оба в `installedMsg`
+- [x] обновить существующие тесты под 2-значную сигнатуру: `detect_test.go` (строки ~87/104/123/145/162), `brew_test.go` (~150/154/157)
+- [x] написать тесты: `cargoVersionFromList` (несколько крейтов, бинарник во втором блоке, `inertia-tui v0.1.0:` → `0.1.0`, промах → `""`); дубль `isTUITakeover` (сырой `\x1b[?1049` → true)
+- [x] написать тесты: present-но-без-версии (LookPath есть, версии нет → `present==true, ver==""`) и not-present (`missingtool` → `present==false`); проверить, что TUI-takeover-вывод **не** пишет anomaly-лог и не парсит `0.30.2`
+- [x] `go build ./...` + `go test -race ./internal/version/... ./internal/model/...` — зелёные перед Task 2
 
 ### Task 2: Рендер `installed:` — 4 состояния + `ui.OkStyle`
 
@@ -99,12 +100,12 @@
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/render_test.go`
 
-- [ ] `ui/styles.go`: добавить `OkStyle = lipgloss.NewStyle().Foreground(ColorGreen)` (не переиспользовать `UpdateAvailableStyle`)
-- [ ] `render.go` (~1095): расширить switch до 4 ветвей — версия / `✓ no version` (`OkStyle`) / `✕ not installed` (`DangerStyle`) / `detecting…`
-- [ ] **обновить существующий подтест** `render_test.go:2558-2566` «detection reported empty: not found»: `VersionInfo{Latest:"v2.0.0", InstalledKnown:true}` теперь рендерит `✕ not installed` — поменять assert `installed: ✕ not found` → `installed: ✕ not installed`; поправить doc-коммент `TestRenderCardInstalledLatest` (строка ~2517, `"✕ not found" once it reported empty`)
-- [ ] добавить подтест `present-but-no-version`: `VersionInfo{Latest:"v2.0.0", InstalledKnown:true, InstalledPresent:true}` → assert `installed: ✓ no version`
-- [ ] (подтест `detecting…` на строке ~2568 остаётся как есть — `InstalledKnown:false`)
-- [ ] `go test -race ./internal/model/...` — зелёные перед Task 3
+- [x] `ui/styles.go`: добавить `OkStyle = lipgloss.NewStyle().Foreground(ColorGreen)` (не переиспользовать `UpdateAvailableStyle`)
+- [x] `render.go` (~1095): расширить switch до 4 ветвей — версия / `✓ no version` (`OkStyle`) / `✕ not installed` (`DangerStyle`) / `detecting…`
+- [x] **обновить существующий подтест** `render_test.go:2558-2566` «detection reported empty: not found»: `VersionInfo{Latest:"v2.0.0", InstalledKnown:true}` теперь рендерит `✕ not installed` — поменять assert `installed: ✕ not found` → `installed: ✕ not installed`; поправить doc-коммент `TestRenderCardInstalledLatest` (строка ~2517, `"✕ not found" once it reported empty`)
+- [x] добавить подтест `present-but-no-version`: `VersionInfo{Latest:"v2.0.0", InstalledKnown:true, InstalledPresent:true}` → assert `installed: ✓ no version`
+- [x] (подтест `detecting…` на строке ~2568 остаётся как есть — `InstalledKnown:false`); его негативный assert перевели с мёртвой строки `"not found"` на актуальную `"not installed"`
+- [x] `go test -race ./internal/model/...` — зелёные перед Task 3
 
 ### Task 3: `updater` — brew-by-name для бинарников не в PATH
 
@@ -112,26 +113,31 @@
 - Modify: `internal/updater/updater.go`
 - Modify: `internal/updater/updater_test.go`
 
-- [ ] `updater.go`: добавить `brewPrefix()` + сид `var testBrewPrefix string` (дубль из `version/brew.go`)
-- [ ] `updater.go`: добавить чистое ядро `brewNamePlanAt(name, prefix string) (Plan, bool)` (traversal-гард на `/`/`\`; `Cellar/<name>` и `Caskroom/<name>` через `os.Stat`+`IsDir`; хит → `autoPlan("brew", ["brew","upgrade",name])`) + обёртку `brewNamePlan(name) (Plan, bool)`
-- [ ] `updater.go`: в `Detect`, в ветке промаха `exec.LookPath(t.Name)` — до возврата `ErrUnknownManager` вставить `if plan, ok := brewNamePlan(t.Name); ok { return plan, nil }`
-- [ ] написать тесты: `brewNamePlanAt` table (temp-prefix с `Cellar/rust/1.96.1` → `brew upgrade rust`; нет каталога → `ok=false`; имя с `/`/`\` → `false`)
-- [ ] написать тест `Detect` через `testBrewPrefix` (name без бинарника, но с `Cellar/<name>` → brew-план)
-- [ ] `go test -race ./internal/updater/...` — зелёные перед Task 4
+- [x] `updater.go`: добавить `brewPrefix()` + сид `var testBrewPrefix string` (дубль из `version/brew.go`)
+- [x] `updater.go`: добавить чистое ядро `brewNamePlanAt(name, prefix string) (Plan, bool)` (traversal-гард на `/`/`\`; `Cellar/<name>` и `Caskroom/<name>` через `os.Stat`+`IsDir`; хит → `autoPlan("brew", ["brew","upgrade",name])`) + обёртку `brewNamePlan(name) (Plan, bool)`
+- [x] `updater.go`: в `Detect`, в ветке промаха `exec.LookPath(t.Name)` — до возврата `ErrUnknownManager` вставить `if plan, ok := brewNamePlan(t.Name); ok { return plan, nil }`
+- [x] написать тесты: `brewNamePlanAt` table (temp-prefix с `Cellar/rust/1.96.1` → `brew upgrade rust`; нет каталога → `ok=false`; имя с `/`/`\` → `false`)
+- [x] написать тест `Detect` через `testBrewPrefix` (name без бинарника, но с `Cellar/<name>` → brew-план); заодно закрепили, что `update_cmd` по-прежнему выигрывает у новой ветки
+- [x] ➕ `TestDetectMissingBinary` изолирован пустым `testBrewPrefix` — иначе исход зависел бы от того, что стоит на машине через brew
+- [x] `go test -race ./internal/updater/...` — зелёные перед Task 4
 
 ### Task 4: Verify acceptance criteria
 
-- [ ] сверить, что все пункты Overview реализованы (rust → `brew upgrade rust`; inertia → `installed: 0.1.0`; не-установленный тул → `✕ not installed`; present-без-версии → `✓ no version`)
-- [ ] сверить крайние случаи (нет cargo → мгновенный short-circuit; TUI-takeover → нет anomaly-лога и мис-парса; traversal-гард)
-- [ ] прогнать полный набор: `go build ./... && go vet ./... && go test -race ./...`
-- [ ] прогнать lint: `golangci-lint run` (проверить отсутствие `unused` на новых хелперах)
-- [ ] (skill `preflight` покрывает build/vet/test-race/lint одним прогоном)
+- [x] сверить, что все пункты Overview реализованы (rust → `brew upgrade rust`; inertia → `installed: 0.1.0`; не-установленный тул → `✕ not installed`; present-без-версии → `✓ no version`)
+  - проверено временными probe-тестами против **живой машины** (созданы, прогнаны, удалены). `version.InstalledVersion`: `inertia` → `("0.1.0", true)`, `rust` → `("1.96.1", true)`, `definitely-missing-xyz` → `("", false)`, `git` → `("2.50.1", true)`; лог по итогам всех четырёх — **пустой**. `updater.Detect`: `rust` → `brew upgrade rust`, `inertia` → `cargo install inertia-tui`, отсутствующий тул → `ErrUnknownManager`
+  - ⚠️ нюанс харнесса: `TestMain` пакета `version` пинит `testBrewPrefix` в пустой temp-каталог, поэтому probe изнутри пакета видит `rust` как not-present, пока префикс не вернуть на `/opt/homebrew`. На продакшн-путь не влияет, но любой будущий probe об это споткнётся
+- [x] сверить крайние случаи (нет cargo → мгновенный short-circuit; TUI-takeover → нет anomaly-лога и мис-парса; traversal-гард)
+- [x] прогнать полный набор: `go build ./... && go vet ./... && go test -race ./...`
+- [x] прогнать lint: `golangci-lint run` (проверить отсутствие `unused` на новых хелперах) — `0 issues`
+- [x] (skill `preflight` покрывает build/vet/test-race/lint одним прогоном)
 
 ### Task 5: Update documentation
 
-- [ ] обновить `CLAUDE.md` (skill `docs-sync`): в описании version-fallback'ов добавить cargo-list рядом с brew; в цепочке `updater` — brew-by-name на промахе `LookPath`; отметить 4-е состояние `installed:` и новую сигнатуру `InstalledVersion(t) (string, bool)`
-- [ ] обновить README.md, если затронуты видимые фичи (вероятно не нужно)
-- [ ] переместить этот план в `docs/plans/completed/`
+- [x] обновить `CLAUDE.md` (skill `docs-sync`): в описании version-fallback'ов добавить cargo-list рядом с brew; в цепочке `updater` — brew-by-name на промахе `LookPath`; отметить 4-е состояние `installed:` и новую сигнатуру `InstalledVersion(t) (string, bool)`
+  - плюс: `installedMsg{…, present}` в async-split, `isTUITakeover` в секции sandboxing, оговорка про `testBrewPrefix` в двух пакетах, logx-сайт `InstalledVersion`
+- [x] ➕ обновить `ARCHITECTURE.md` (skill `docs-sync` требует все три документа): таблица пакетов, «пять источников данных» (installed), секция `Updating a tool (u)`, список тест-сидов. Граф импортов не менялся — новых внутренних зависимостей нет, mermaid трогать не нужно
+- [x] обновить README.md, если затронуты видимые фичи (оказалось — нужно): 4 состояния `installed:` в разделе `Panel [2] Brief` + brew-by-name в `Updating tools`
+- [x] переместить этот план в `docs/plans/completed/`
 
 ## Post-Completion
 

@@ -45,7 +45,7 @@ graph TD
 | `internal/proc` | `DetachTTY` — run probes without a controlling terminal; `KillGroup` — process-group SIGKILL (plain `Kill` on Windows) |
 | `internal/ui` | Lip Gloss styles, `PlaceOverlay`, `StripANSI` |
 | `internal/updater` | Detect the package manager that owns an installed binary and produce an update `Plan{Manager, Argv, Display}` |
-| `internal/version` | Detect the installed version locally; GitHub API with a 24-hour cache; semver comparison (`IsNewer`) |
+| `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`) |
 
 `configdir`, `launcher`, `logx`, `proc`, `ui`, `updater` and `version` sit at the bottom of the import graph:
 they know nothing about the TUI (`ui`, `updater` and `version` reach only into
@@ -74,7 +74,10 @@ The `model` package is split across files within a single package:
 
 Each tool has five data sources, split so local detection never waits on the network:
 
-- **installed** — `fetchInstalledCmd`: a local subprocess (`--version`/`-V`), always fired;
+- **installed** — `fetchInstalledCmd`: a local subprocess (`--version`/`-V`, with brew-directory
+  and `cargo install --list` fallbacks that need no subprocess of the tool itself), always
+  fired. It reports a version *and* whether the tool is present at all, so the card can tell
+  "installed, version unknown" from "not installed";
 - **remote** — `fetchRemoteCmd`: a single network pass via `version.GetRepoData`
   (release + repo card + languages), only when `github` is set;
 - **changelog** — `fetchChangelogCmd`;
@@ -175,6 +178,11 @@ brew → go → cargo → pipx → npm (order matters: brew before go, so a brew
 Go binary is not misrouted to `go install`). `update_cmd` from `meta.yaml` always
 wins and runs via `sh -c`. Detection spawns subprocesses, so it runs as a `tea.Cmd`,
 never inside `Update()`.
+
+When the tool has no binary of its own on PATH, one fallback runs before
+`ErrUnknownManager`: a `Cellar/<name>`/`Caskroom/<name>` directory means brew owns
+the name, so the plan is `brew upgrade <name>`. That is the `rust` case — the
+formula ships `rustc` and `cargo`, so `LookPath("rust")` can only miss.
 
 Output streaming uses the "channel + re-subscribe" idiom, with no `*tea.Program`: a
 goroutine reads the merged stdout+stderr to EOF (`streamLines`, splitting on `\n`
@@ -280,7 +288,8 @@ rewrites the tracker wholesale. A `TestConfigDirIsolated` test in each of those
 packages fails if the isolation is ever dropped.
 
 Per-test setup still uses the internal seams: `testConfigDir`, `testCacheDir`,
-`testTokenDir`, `testAPIBase`, `testBrewPrefix`, `updater`'s `testHomeDir`, and
+`testTokenDir`, `testAPIBase`, `testBrewPrefix` (one copy in `version`, a second in
+`updater` — each private to its package), `updater`'s `testHomeDir`, and
 `model`'s `testReadmeStyle` (forces the glamour construction failure so the
 plain-text fallback is covered). The races are real (mutexes in `version`, `logx`),
 so tests always run with `-race`:

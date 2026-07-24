@@ -147,15 +147,16 @@ func TestInstalledVersionBrewFallback(t *testing.T) {
 	restore := logx.SetDirForTesting(logDir)
 	defer restore()
 
-	if got := InstalledVersion(loader.Tool{Name: "agterm"}); got != "0.15.1" {
-		t.Fatalf("expected brew fallback to find 0.15.1, got %q", got)
+	if got, present := InstalledVersion(loader.Tool{Name: "agterm"}); got != "0.15.1" || !present {
+		t.Fatalf("expected brew fallback to find 0.15.1 (present), got %q (present=%v)", got, present)
 	}
-	// A cask with no PATH binary at all resolves purely from the brew layout.
-	if got := InstalledVersion(loader.Tool{Name: "noclitool"}); got != "14.1.0" {
-		t.Fatalf("expected brew fallback to find 14.1.0, got %q", got)
+	// A cask with no PATH binary at all resolves purely from the brew layout —
+	// and a version found there is itself proof the tool is installed.
+	if got, present := InstalledVersion(loader.Tool{Name: "noclitool"}); got != "14.1.0" || !present {
+		t.Fatalf("expected brew fallback to find 14.1.0 (present), got %q (present=%v)", got, present)
 	}
-	if got := InstalledVersion(loader.Tool{Name: "clitool"}); got != "5.5.5" {
-		t.Fatalf("expected CLI answer to win over brew dir, got %q", got)
+	if got, present := InstalledVersion(loader.Tool{Name: "clitool"}); got != "5.5.5" || !present {
+		t.Fatalf("expected CLI answer to win over brew dir, got %q (present=%v)", got, present)
 	}
 	// A fallback hit is this path's normal state, not a malfunction — the
 	// failed --version/-V attempts must not create a session log.
