@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/stanlyzoolo/keeptui/internal/configdir"
 )
 
 var (
@@ -27,13 +29,13 @@ var (
 	dirOverride string // test seam; empty in production
 )
 
-// logDir resolves ~/.config/keeptui/logs via os.UserConfigDir, honoring the test
-// override. Mirrors loader.MetaPath's resolution. Caller holds mu.
+// logDir resolves <configdir.Base>/keeptui/logs, honoring the test override.
+// Mirrors loader.MetaPath's resolution. Caller holds mu.
 func logDir() string {
 	if dirOverride != "" {
 		return dirOverride
 	}
-	base, err := os.UserConfigDir()
+	base, err := configdir.Base()
 	if err != nil {
 		return ""
 	}

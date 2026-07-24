@@ -15,6 +15,7 @@ graph TD
     main --> loader
     main --> logx
     main --> version
+    main --> configdir
     model[internal/model] --> loader[internal/loader]
     model --> version[internal/version]
     model --> updater[internal/updater]
@@ -25,27 +26,32 @@ graph TD
     version --> loader
     version --> logx[internal/logx]
     version --> proc
+    version --> configdir
     updater --> loader
     updater --> proc
     ui --> loader
     loader --> logx
+    loader --> configdir
+    logx --> configdir[internal/configdir]
 ```
 
 | Package | Responsibility |
 |---|---|
+| `internal/configdir` | Resolve the base user-config dir: `~/.config/keeptui` on macOS/Linux (`$XDG_CONFIG_HOME` else `~/.config`), `%AppData%\keeptui` on Windows. Pure `baseFor(goos, …)` core + `Base()` wrapper; stdlib-only bottom leaf shared by `loader`/`version`/`logx`/`main` |
 | `internal/launcher` | Decide how to run a tracked tool in a new terminal tab: pure `planFor(env, command, toolName)` → `Plan{Argv, Fallback, Terminal}`, detection chain tmux → iTerm2 → Terminal.app → kitty → WezTerm → fallback; env-only, no subprocesses |
 | `internal/loader` | Tracker persistence (`meta.yaml`), status lifecycle (`active → trying → inactive`, legacy values migrated on read), the one-tag-per-tool invariant (a legacy multi-tag list is truncated to its first entry on read), GitHub ref parsing (`NormalizeRepo`, `ParseToolRef`) |
-| `internal/logx` | Session error journal: dependency-free, errors only, one lazily created file per session. Package-level state — any package can log without threading a logger through |
+| `internal/logx` | Session error journal: errors only, one lazily created file per session, imports only the stdlib-only `configdir` leaf. Package-level state — any package can log without threading a logger through |
 | `internal/model` | The entire Bubble Tea model: TUI state, key handling, rendering |
 | `internal/proc` | `DetachTTY` — run probes without a controlling terminal; `KillGroup` — process-group SIGKILL (plain `Kill` on Windows) |
 | `internal/ui` | Lip Gloss styles, `PlaceOverlay`, `StripANSI` |
 | `internal/updater` | Detect the package manager that owns an installed binary and produce an update `Plan{Manager, Argv, Display}` |
 | `internal/version` | Detect the installed version locally; GitHub API with a 24-hour cache; semver comparison (`IsNewer`) |
 
-`launcher`, `logx`, `proc`, `ui`, `updater` and `version` sit at the bottom of the import graph:
+`configdir`, `launcher`, `logx`, `proc`, `ui`, `updater` and `version` sit at the bottom of the import graph:
 they know nothing about the TUI (`ui`, `updater` and `version` reach only into
-`loader`/`proc`/`logx`). GitHub ref parsing is owned by `loader` (otherwise a
-`version ↔ loader` cycle would appear).
+`loader`/`proc`/`logx`). `configdir` is the lowest leaf (stdlib only), shared by
+`loader`/`version`/`logx`/`main` for one config-dir resolution. GitHub ref parsing
+is owned by `loader` (otherwise a `version ↔ loader` cycle would appear).
 
 The `model` package is split across files within a single package:
 
@@ -232,6 +238,8 @@ caller left it empty). Token: `GITHUB_TOKEN` from the environment always wins ov
   the cache with an empty response.
 
 ## Storage
+
+The base dir comes from `configdir.Base()`: `~/.config/keeptui` on macOS and Linux (`$XDG_CONFIG_HOME` else `~/.config`), `%AppData%\keeptui` on Windows. Paths below use the macOS/Linux form.
 
 | Data | Path |
 |---|---|

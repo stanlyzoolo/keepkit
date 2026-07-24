@@ -229,6 +229,9 @@ atomic.
 | Session error log | `~/.config/keeptui/logs/keeptui-<timestamp>.log` |
 | Copy of the tracker before the one-tag migration | `~/.config/keeptui/meta.yaml.bak` |
 
+The paths above are the macOS and Linux locations (`$XDG_CONFIG_HOME` if set, otherwise
+`~/.config`). On Windows the base directory is `%AppData%\keeptui\` instead.
+
 The log is created lazily — only on the first error. A session with no errors leaves
 no file at all, so the presence of a file is itself the signal. The 20 most recent
 logs are kept.

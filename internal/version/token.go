@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/stanlyzoolo/keeptui/internal/configdir"
 )
 
 // testTokenDir overrides the token file directory in tests.
@@ -22,7 +24,7 @@ func tokenFilePath() (string, error) {
 	if testTokenDir != "" {
 		return filepath.Join(testTokenDir, "token"), nil
 	}
-	base, err := os.UserConfigDir()
+	base, err := configdir.Base()
 	if err != nil {
 		return "", err
 	}
