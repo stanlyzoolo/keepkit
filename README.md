@@ -31,7 +31,7 @@ subcommands; the only flags are `--version` and `--help`.
 - **Run tools** — `enter` on a tool opens a one-line command prompt (it remembers the last command per tool for the session) and launches it in a new terminal tab (tmux / iTerm2 / kitty / WezTerm / Terminal.app); anywhere else the tool runs in the current window and `keeptui` resumes when it exits
 - **Help navigation** — in `--help` / `man` mode `j` / `k` walk through flags and subcommands with the current entry highlighted; `/` searches the text
 - **List search** — `/` filters by name and tag with match highlighting and an `N/M` counter
-- **Tracker** — add by GitHub URL, statuses, one tag per tool and notes, all inside the TUI; `space` regroups the list under `#tag` headers
+- **Tracker** — add by GitHub URL, statuses, one tag per tool and notes, all inside the TUI; `space` regroups the list under tag divider headers
 - **GitHub API gauge** — an API quota usage indicator in the status bar, token management via `L`
 - **Mouse** — scrolling, clicking on panels, and clicking the repository / release links on the card
 
@@ -76,7 +76,7 @@ time for the hotkeys overlay — every keybinding, grouped by panel.
 | `PgUp / PgDn`, `ctrl+f / ctrl+b` | page the selection up / down |
 | `ctrl+d / ctrl+u` | move the selection half a page down / up |
 | `g / G` | jump to the first / last tool |
-| `space` | group the list by tag on / off — tools are gathered under `#tag` headers (untagged ones last); the selected tool stays selected across the toggle. With nothing tagged yet there is nothing to group, and the status bar says so |
+| `space` | group the list by tag on / off — tools are gathered under tag divider headers with the label centered (`────… tag ────…`, untagged ones last); the selected tool stays selected across the toggle. With nothing tagged yet there is nothing to group, and the status bar says so |
 | `t` | track — add a tool by GitHub URL or short name |
 | `u` | untrack — remove (with confirmation) |
 | `r` | rename — fix the binary name when it differs from the repo name (e.g. `claude-code` → `claude`) |
@@ -95,8 +95,8 @@ The selected row carries the `⏺` marker, which stays visible (dimmed) while an
 panel is focused. Tools with an available update are marked `↑` and gathered at the
 top of the list; the order in `meta.yaml` is never changed.
 
-`space` switches the list to the tag view: tools are gathered under `#tag` headers
-(untagged ones under `#untagged`, last), in the order the tags first appear in
+`space` switches the list to the tag view: tools are gathered under muted tag divider
+headers with the label centered (`────… tag ────…`, untagged ones under `────… untagged ────…`, last), in the order the tags first appear in
 `meta.yaml`; tags differing only in letter case are one group, exactly as the search
 treats them. In this view tools are grouped by tag rather than by pending update — the
 `↑` marker still shows per row. Header rows are not selectable: `j` / `k` step over

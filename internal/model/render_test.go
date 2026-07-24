@@ -1578,6 +1578,7 @@ func TestUpdateBriefOpenActions(t *testing.T) {
 	keyC := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")}
 
 	t.Run("no repo sets status message and no command", func(t *testing.T) {
+		shrinkStatusTTL(t)
 		for _, key := range []tea.KeyMsg{keyO, keyC} {
 			m := Model{
 				meta:         []loader.ToolMeta{{Name: "tool-x"}},
@@ -1592,9 +1593,8 @@ func TestUpdateBriefOpenActions(t *testing.T) {
 			if nm.statusMsg != "no repo for tool-x" {
 				t.Errorf("key %q: statusMsg = %q, want %q", key.String(), nm.statusMsg, "no repo for tool-x")
 			}
-			if cmd != nil {
-				t.Errorf("key %q: cmd = %v, want nil for no-repo tool", key.String(), cmd)
-			}
+			// No repo → no browser open, only the transient-status expiry tick.
+			assertOnlyExpiryTick(t, cmd)
 		}
 	})
 

@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -87,6 +88,18 @@ type readmeMsg struct {
 	err      error
 }
 
+// statusExpiredMsg is the one-shot tick that retires a transient status message.
+// setStatus stamps the current statusSeq into it; the Update handler clears
+// m.statusMsg only when the seq still matches, so a timer for a message that has
+// since been superseded is a harmless no-op instead of clearing the newer one.
+type statusExpiredMsg struct{ seq int }
+
+// statusMsgTTL is how long a transient status message holds the bar before it
+// yields back to the hints. A var, not a const, mirroring launchTimeout: tea.Tick
+// blocks for the full duration, so tests shrink it to inspect the produced
+// statusExpiredMsg without a real sleep.
+var statusMsgTTL = 1 * time.Second
+
 const (
 	helpModeHelp = 0
 	helpModeMan  = 1
@@ -151,9 +164,16 @@ type Model struct {
 	// to this tool in the full list.
 	searchPrevName string
 	statusMsg      string
-	width          int
-	height         int
-	ready          bool
+	// statusSeq is a generation counter for transient status messages: setStatus
+	// bumps it on every transient message and stamps the value into the
+	// statusExpiredMsg tick it returns, so a stale timer (from a message already
+	// superseded by a newer one) is dropped instead of clearing the current
+	// message early. In-flight statuses ("launching …") bypass setStatus and so
+	// carry no timer — they are extinguished by launchDoneMsg, not the clock.
+	statusSeq int
+	width     int
+	height    int
+	ready     bool
 
 	// mode is the single input/modal state (see inputMode in mode.go). The
 	// zero value modeNormal is the base state; per-mode key handlers own the
@@ -227,7 +247,7 @@ type Model struct {
 
 	// groupByTag is the [1] list view toggle (space in focusTools): off (the
 	// default) is the flat update-grouped list, on partitions the tools under
-	// #tag headers. Display-only — meta.yaml is never reordered.
+	// tag divider headers. Display-only — meta.yaml is never reordered.
 	groupByTag bool
 	// toolLine maps a tool index to its screen line, lineTool a screen line
 	// back to its tool index (-1 on a header row). Both are rebuilt by
@@ -550,7 +570,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openURLMsg:
 		if msg.err != nil {
-			m.statusMsg = msg.err.Error()
+			return m, m.setStatus(msg.err.Error())
 		}
 		return m, nil
 
@@ -578,12 +598,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingLaunchCommand = msg.command
 				return m, nil
 			}
-			m.statusMsg = launchFallbackStatus(msg.toolName)
-			return m, execToolCmd(msg.toolName, msg.command)
+			return m, tea.Batch(
+				m.setStatus(launchFallbackStatus(msg.toolName)),
+				execToolCmd(msg.toolName, msg.command),
+			)
 		}
 		// Mode-neutral wording: Terminal.app and tmux open a window, not a tab.
-		m.statusMsg = "launched " + msg.toolName
-		return m, nil
+		return m, m.setStatus("launched " + msg.toolName)
 
 	case execDoneMsg:
 		// The tool ran in the current window and keeptui resumed. A non-zero
@@ -593,10 +614,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// "not installed" instead of surfacing a cryptic exit status.
 		if msg.err != nil {
 			if notFoundExit(msg.err) {
-				m.statusMsg = msg.toolName + " not found — is it installed?"
-			} else {
-				m.statusMsg = msg.toolName + " exited: " + msg.err.Error()
+				return m, m.setStatus(msg.toolName + " not found — is it installed?")
 			}
+			return m, m.setStatus(msg.toolName + " exited: " + msg.err.Error())
 		}
 		return m, nil
 
@@ -637,11 +657,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			if errors.Is(msg.err, updater.ErrUnknownManager) {
-				m.statusMsg = "no known updater for " + msg.tool + " — set update_cmd or [o] releases"
-			} else {
-				m.statusMsg = "update detect failed: " + msg.err.Error()
+				return m, m.setStatus("no known updater for " + msg.tool + " — set update_cmd or [o] releases")
 			}
-			return m, nil
+			return m, m.setStatus("update detect failed: " + msg.err.Error())
 		}
 		m.updatePlan = msg.plan
 		m.mode = modeConfirmUpdate
@@ -688,7 +706,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.statusMsg = "update failed — see [3]"
+			statusCmd := m.setStatus("update failed — see [3]")
 			// A command that fails before emitting any output (empty argv, missing
 			// manager binary, StdoutPipe/Start error, immediate non-zero exit)
 			// leaves updateLog empty, so [3] would still read "starting update…"
@@ -708,14 +726,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			logx.Errorf("update failed: tool=%s manager=%s err=%v tail=%q",
 				msg.tool, m.updatePlan.Manager, msg.err, tailLines(m.updateLog, 5))
 			m.briefViewport.SetContent(m.renderCard())
-			return m, nil
+			return m, statusCmd
 		}
 		// Success: re-detect the installed version. The installedMsg merge flips
 		// hasUpdate off, moves the tool out of the update group and remaps the
 		// cursor by name, so no extra bookkeeping is needed here.
-		m.statusMsg = "updated " + msg.tool
+		statusCmd := m.setStatus("updated " + msg.tool)
 		m.briefViewport.SetContent(m.renderCard())
-		return m, fetchInstalledCmd(t)
+		return m, tea.Batch(statusCmd, fetchInstalledCmd(t))
+
+	case statusExpiredMsg:
+		// Retire a transient status only if it is still the current one: a stale
+		// timer from a superseded message must not clear the newer message. The
+		// blanket tea.KeyMsg reset stays; a timer arriving after it is a no-op.
+		if msg.seq == m.statusSeq {
+			m.statusMsg = ""
+		}
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		prevWrapW := m.helpWrapWidth()
@@ -1022,8 +1049,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// space is the list-view toggle here, not a page-down —
 				// ctrl+f/PgDn already page the list.
 				if msg.String() == " " {
-					m.toggleGroupByTag()
-					return m, nil
+					return m, m.toggleGroupByTag()
 				}
 				step := max(m.toolsViewport.Height, 1)
 				return m, m.selectMeta(m.toolNearLine(m.selectedLine()+step, 1))
@@ -1184,8 +1210,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if t, ok := m.selectedTool(); ok {
 					if !m.hasUpdate(t.Name) {
-						m.statusMsg = "no update available for " + t.Name
-						return m, nil
+						return m, m.setStatus("no update available for " + t.Name)
 					}
 					return m, detectUpdateCmd(t)
 				}
@@ -1213,8 +1238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focus == focusBrief {
 				if t, ok := m.selectedTool(); ok {
 					if t.GitHub == "" {
-						m.statusMsg = "no repo for " + t.Name
-						return m, nil
+						return m, m.setStatus("no repo for " + t.Name)
 					}
 					return m, openURLCmd("https://" + t.GitHub)
 				}
@@ -1224,8 +1248,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focus == focusBrief {
 				if t, ok := m.selectedTool(); ok {
 					if t.GitHub == "" {
-						m.statusMsg = "no repo for " + t.Name
-						return m, nil
+						return m, m.setStatus("no repo for " + t.Name)
 					}
 					return m, openURLCmd("https://" + t.GitHub + "/releases")
 				}
@@ -1372,6 +1395,23 @@ func (m Model) searchMatches() []searchMatch {
 	return grouped
 }
 
+// setStatus shows a transient status message and returns the tick that retires
+// it after statusMsgTTL. Every transient assignment site routes through here (in
+// flight statuses like "launching …" stay direct assignments — they must not
+// vanish mid-flight). The returned Cmd must be batched into whatever the caller
+// already returns. The closure captures the sequence number by value and reads
+// no model state: reading m.statusSeq at fire time would both defeat the
+// generation guard and race Update's mutations under -race (the Cmd runs in a
+// goroutine).
+func (m *Model) setStatus(s string) tea.Cmd {
+	m.statusSeq++
+	m.statusMsg = s
+	seq := m.statusSeq
+	return tea.Tick(statusMsgTTL, func(time.Time) tea.Msg {
+		return statusExpiredMsg{seq: seq}
+	})
+}
+
 // toggleGroupByTag flips the [1] list between the flat update-grouped view and
 // the tag-grouped one. The toggle reorders filteredMeta(), and metaSelected is
 // an index into that projection — so it would silently point at a different
@@ -1379,14 +1419,16 @@ func (m Model) searchMatches() []searchMatch {
 // cursor-follows-the-tool rule the installedMsg/remoteMsg handlers use.
 // Deliberately not routed through selectMeta — a pure view toggle changes no
 // selection and must fire no auto-fetch.
-func (m *Model) toggleGroupByTag() {
-	// Turning it on with nothing tagged would produce a lone "#untagged" header
+// The three statusMsg exits all route through setStatus, so the returned tea.Cmd
+// is the expiry tick that yields the bar back to the hints after statusMsgTTL;
+// the caller (the space case) returns it. A view toggle still fetches nothing.
+func (m *Model) toggleGroupByTag() tea.Cmd {
+	// Turning it on with nothing tagged would produce a lone "untagged" divider
 	// over the unchanged list — a keypress that reads as broken. Say why
 	// instead. Turning it *off* is never refused, so a tracker whose last tag
 	// was just removed cannot get stuck in the tag view.
 	if !m.groupByTag && !m.hasTaggedTool() {
-		m.statusMsg = "no tags to group by — press [t] on a tool"
-		return
+		return m.setStatus("no tags to group by — press [t] on a tool")
 	}
 	name := ""
 	if mt, ok := m.selectedMeta(); ok {
@@ -1398,10 +1440,9 @@ func (m *Model) toggleGroupByTag() {
 	}
 	m.setToolsContent()
 	if m.groupByTag {
-		m.statusMsg = "grouped by tag"
-	} else {
-		m.statusMsg = "flat list"
+		return m.setStatus("grouped by tag")
 	}
+	return m.setStatus("flat list")
 }
 
 // hasTaggedTool reports whether any tracked tool carries a tag — the condition
@@ -1420,7 +1461,7 @@ func (m Model) hasTaggedTool() bool {
 // never disagree about whether headers belong in the content. An active search
 // suppresses it: the `/` filter behaves identically to before, headers and all.
 // It also requires at least one tagged tool: with none, the tag view is a
-// single "#untagged" header over the unchanged list, so it degrades to the flat
+// single "untagged" divider over the unchanged list, so it degrades to the flat
 // view rather than spending a row on a meaningless section (this covers a tag
 // removed while the view is on, which the toggle guard cannot).
 func (m Model) grouped() bool {

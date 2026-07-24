@@ -184,8 +184,7 @@ func (m Model) updateTrackInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setToolsContent()
 		m.briefViewport.GotoTop()
 		m.briefViewport.SetContent(m.renderCard())
-		m.statusMsg = status
-		return m, m.autoFetchCmdsForSelected()
+		return m, tea.Batch(m.setStatus(status), m.autoFetchCmdsForSelected())
 	case "esc":
 		m.mode = modeNormal
 		m.trackInput.Blur()
@@ -268,8 +267,7 @@ func (m Model) updateRenameInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if err != nil {
 			m.mode = modeNormal
 			m.nameInput.Blur()
-			m.statusMsg = err.Error()
-			return m, nil
+			return m, m.setStatus(err.Error())
 		}
 		m.mode = modeNormal
 		m.nameInput.Blur()
@@ -336,6 +334,10 @@ func (m Model) updateRunInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// stops a second enter+enter from dispatching concurrently. The
 		// command is deliberately not recorded in lastRun — it never ran.
 		if m.launchingFor != "" {
+			// Deliberately a direct assignment, not setStatus: this reports a
+			// launch that is *still in progress* (overwritten by launchDoneMsg).
+			// Letting a timer expire it mid-flight would hide the only sign the
+			// adapter is busy for up to launchTimeout.
 			m.statusMsg = "still launching " + m.launchingFor
 			return m, nil
 		}
@@ -349,7 +351,9 @@ func (m Model) updateRunInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, execToolCmd(mt.Name, command)
 		}
 		// In-flight feedback: the adapter can block for seconds, and without a
-		// statusMsg the prompt just closes and nothing visibly happens.
+		// statusMsg the prompt just closes and nothing visibly happens. A direct
+		// assignment, not setStatus: this must not expire mid-flight — it is
+		// extinguished by launchDoneMsg, not the clock.
 		m.launchingFor = mt.Name
 		m.statusMsg = "launching " + mt.Name + " in " + plan.Terminal + "…"
 		return m, startLaunchCmd(plan, mt.Name, command)
@@ -395,8 +399,7 @@ func flushPendingLaunch(mdl tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	}
 	name, command := m.pendingLaunchName, m.pendingLaunchCommand
 	m.pendingLaunchName, m.pendingLaunchCommand = "", ""
-	m.statusMsg = launchFallbackStatus(name)
-	return m, tea.Batch(cmd, execToolCmd(name, command))
+	return m, tea.Batch(cmd, m.setStatus(launchFallbackStatus(name)), execToolCmd(name, command))
 }
 
 // updateConfirmUpdate handles the modeConfirmUpdate dialog (modeled on

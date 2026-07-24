@@ -352,8 +352,7 @@ func (m *Model) refreshSelectedCmd(t loader.Tool) tea.Cmd {
 		return nil
 	}
 	if t.GitHub == "" {
-		m.statusMsg = "no repo to refresh"
-		return fetchInstalledCmd(t)
+		return tea.Batch(m.setStatus("no repo to refresh"), fetchInstalledCmd(t))
 	}
 	m.refreshingFor = t.Name
 	m.briefViewport.SetContent(m.renderCard())

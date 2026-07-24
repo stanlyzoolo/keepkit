@@ -80,12 +80,12 @@ Design approved in brainstorm (variant "divider line" chosen over "quiet label +
 - Modify: `internal/model/model.go`
 - Create: `internal/model/status_test.go`
 
-- [ ] add `statusSeq int` field to `Model`, `statusExpiredMsg{seq int}` msg type, `var statusMsgTTL = 2 * time.Second` (var, not const — test seam like `launchTimeout`)
-- [ ] add `func (m *Model) setStatus(s string) tea.Cmd` (increment seq, set msg, snapshot `seq` into a local, return `tea.Tick` whose closure reads no model state)
-- [ ] add `case statusExpiredMsg:` to `Update()` — clear `m.statusMsg` only when `msg.seq == m.statusSeq`
-- [ ] write tests: matching seq clears statusMsg; stale seq (superseded message) leaves it intact
-- [ ] write test: after expiry `renderStatusBar` shows the hints bar again (statusMsg branch no longer taken)
-- [ ] run `go test -race ./internal/model/` — must pass before task 2
+- [x] add `statusSeq int` field to `Model`, `statusExpiredMsg{seq int}` msg type, `var statusMsgTTL = 2 * time.Second` (var, not const — test seam like `launchTimeout`)
+- [x] add `func (m *Model) setStatus(s string) tea.Cmd` (increment seq, set msg, snapshot `seq` into a local, return `tea.Tick` whose closure reads no model state)
+- [x] add `case statusExpiredMsg:` to `Update()` — clear `m.statusMsg` only when `msg.seq == m.statusSeq`
+- [x] write tests: matching seq clears statusMsg; stale seq (superseded message) leaves it intact
+- [x] write test: after expiry `renderStatusBar` shows the hints bar again (statusMsg branch no longer taken)
+- [x] run `go test -race ./internal/model/` — must pass before task 2
 
 ### Task 2: Convert transient statusMsg sites to setStatus
 
@@ -98,14 +98,14 @@ Design approved in brainstorm (variant "divider line" chosen over "quiet label +
 - Modify: `internal/model/launch_test.go` (`cmd == nil` flips)
 - Modify: `internal/model/commands_test.go` (`cmd == nil` flips)
 
-- [ ] change `toggleGroupByTag()` to return `tea.Cmd`; route its three statusMsg exits through `setStatus`; return the cmd from the `space` case (model.go:1025)
-- [ ] convert model.go transient sites (:553, :581, :585, :596, :598, :640, :642, :691, :716, :1187, :1216, :1227) to `setStatus`, batching the tick into each branch's returned cmd
-- [ ] convert mode.go:187 (track result), :271 (rename error), :398 (`flushPendingLaunch` — `tea.Batch` with existing cmd) and commands.go:355 (`refreshSelectedCmd` — batch with `fetchInstalledCmd`)
-- [ ] leave mode.go:354/:339 (`launching…`/`still launching…`) as direct assignments; add a code comment marking them deliberately non-expiring (overwritten by `launchDoneMsg`, must not vanish mid-flight)
-- [ ] fix the five `cmd == nil` assertions that now receive the expiry tick — reword intent to "want only the expiry tick", verify no fetch/exec rides along: `render_test.go:1595` (no-repo `[o]`/`[c]`), `launch_test.go:432` (launched success), `:452` (non-zero exit), `:487` (not-found), `commands_test.go:224` (update failure must not re-fetch)
-- [ ] rewrite the inverted toggle assertion `group_test.go:195-196` ("want none — a view toggle fetches nothing" → the toggle now returns the timer, still no fetch; reword the comment too)
-- [ ] add test: toggle sets `grouped by tag`/`flat list` and returns a cmd producing `statusExpiredMsg` with the current seq (shrink `statusMsgTTL` per the `launchTimeout` pattern, `launch_test.go:131`)
-- [ ] run `go test -race ./internal/model/` — must pass before task 3
+- [x] change `toggleGroupByTag()` to return `tea.Cmd`; route its three statusMsg exits through `setStatus`; return the cmd from the `space` case (model.go:1025)
+- [x] convert model.go transient sites (:553, :581, :585, :596, :598, :640, :642, :691, :716, :1187, :1216, :1227) to `setStatus`, batching the tick into each branch's returned cmd
+- [x] convert mode.go:187 (track result), :271 (rename error), :398 (`flushPendingLaunch` — `tea.Batch` with existing cmd) and commands.go:355 (`refreshSelectedCmd` — batch with `fetchInstalledCmd`)
+- [x] leave mode.go:354/:339 (`launching…`/`still launching…`) as direct assignments; add a code comment marking them deliberately non-expiring (overwritten by `launchDoneMsg`, must not vanish mid-flight)
+- [x] fix the five `cmd == nil` assertions that now receive the expiry tick — reword intent to "want only the expiry tick", verify no fetch/exec rides along: `render_test.go:1595` (no-repo `[o]`/`[c]`), `launch_test.go:432` (launched success), `:452` (non-zero exit), `:487` (not-found), `commands_test.go:224` (update failure must not re-fetch)
+- [x] rewrite the inverted toggle assertion `group_test.go:195-196` ("want none — a view toggle fetches nothing" → the toggle now returns the timer, still no fetch; reword the comment too)
+- [x] add test: toggle sets `grouped by tag`/`flat list` and returns a cmd producing `statusExpiredMsg` with the current seq (shrink `statusMsgTTL` per the `launchTimeout` pattern, `launch_test.go:131`)
+- [x] run `go test -race ./internal/model/` — must pass before task 3
 
 ### Task 3: Tag-group headers as divider lines
 
@@ -114,26 +114,26 @@ Design approved in brainstorm (variant "divider line" chosen over "quiet label +
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/group_test.go`
 
-- [ ] add `TagHeaderStyle` (`Foreground(ColorDim)`) and `TagRuleStyle` (`Foreground(ColorBorder)`) to `internal/ui/styles.go`; `SectionLabelStyle` untouched
-- [ ] rewrite `tagHeaderLine`: `─ <label> ───…` to exactly `w = max(m.toolsW-1, 1)` cells (label ≤ `max(w-4,1)` cells via `truncateToWidth`, tail clamped to 0, bare-label degradation at `w < 4`); `flattenLine` kept; empty tag → `untagged` (no `#`)
-- [ ] update existing header assertions in `group_test.go` to the new format via `stripANSI`: `wantHeaders` map (:136–149), `strings.Count(content, "#CLI")` (:329 — hard fail, count becomes 0), direct `tagHeaderLine` tests (:555–570)
-- [ ] rewrite the three absence-checks that go vacuous after the reformat (they'd pass while guarding nothing): `group_test.go:98` (search suppresses headers), `:248-249` (lone-header refusal), `:332-333` (group not split) — assert against the new divider format (e.g. count `─ cli`, check `untagged` divider)
-- [ ] write tests: rendered header is exactly `w` cells wide (`lipgloss.Width` on stripped line); long tag and CJK tag truncate by display cells, never exceed `w`
-- [ ] write tests: narrow panel (`w < 4`) degrades without panic; untagged group renders `─ untagged ───…`; header stays a single line for a tag containing `\n`
-- [ ] run `go test -race ./internal/model/ ./internal/ui/` — must pass before task 4
+- [x] add `TagHeaderStyle` (`Foreground(ColorDim)`) and `TagRuleStyle` (`Foreground(ColorBorder)`) to `internal/ui/styles.go`; `SectionLabelStyle` untouched
+- [x] rewrite `tagHeaderLine`: `─ <label> ───…` to exactly `w = max(m.toolsW-1, 1)` cells (label ≤ `max(w-4,1)` cells via `truncateToWidth`, tail clamped to 0, bare-label degradation at `w < 4`); `flattenLine` kept; empty tag → `untagged` (no `#`)
+- [x] update existing header assertions in `group_test.go` to the new format via `stripANSI`: `wantHeaders` map (:136–149), `strings.Count(content, "#CLI")` (:329 — hard fail, count becomes 0), direct `tagHeaderLine` tests (:555–570)
+- [x] rewrite the three absence-checks that go vacuous after the reformat (they'd pass while guarding nothing): `group_test.go:98` (search suppresses headers), `:248-249` (lone-header refusal), `:332-333` (group not split) — assert against the new divider format (e.g. count `─ cli`, check `untagged` divider)
+- [x] write tests: rendered header is exactly `w` cells wide (`lipgloss.Width` on stripped line); long tag and CJK tag truncate by display cells, never exceed `w`
+- [x] write tests: narrow panel (`w < 4`) degrades without panic; untagged group renders `─ untagged ───…`; header stays a single line for a tag containing `\n`
+- [x] run `go test -race ./internal/model/ ./internal/ui/` — must pass before task 4
 
 ### Task 4: Verify acceptance criteria
 
-- [ ] verify: `space` toggle shows `grouped by tag`/`flat list`, hints bar returns by itself after ~2s (manual `go run .` check)
-- [ ] verify: `launching <name>…` does not expire mid-flight; keypress still clears any status instantly
-- [ ] verify: tag headers render as muted divider lines, tool names remain the only color accent
-- [ ] run full check matrix (preflight): `go build .`, `go vet ./...`, `go test -race ./...`, `golangci-lint run`
+- [x] verify: `space` toggle shows `grouped by tag`/`flat list`, hints bar returns by itself after ~2s (manual `go run .` check)
+- [x] verify: `launching <name>…` does not expire mid-flight; keypress still clears any status instantly
+- [x] verify: tag headers render as muted divider lines, tool names remain the only color accent
+- [x] run full check matrix (preflight): `go build .`, `go vet ./...`, `go test -race ./...`, `golangci-lint run`
 
 ### Task 5: [Final] Update documentation
 
-- [ ] update `CLAUDE.md`: tag-header description (`#<tag>`/`SectionLabelStyle` → divider line/`TagHeaderStyle`+`TagRuleStyle`) and the statusMsg lifecycle (blanket reset + TTL expiry, in-flight exceptions)
-- [ ] run docs-sync check for `README.md` drift on the same points (no ARCHITECTURE.md in this repo)
-- [ ] move this plan to `docs/plans/completed/`
+- [x] update `CLAUDE.md`: tag-header description (`#<tag>`/`SectionLabelStyle` → divider line/`TagHeaderStyle`+`TagRuleStyle`) and the statusMsg lifecycle (blanket reset + TTL expiry, in-flight exceptions)
+- [x] run docs-sync check for `README.md` drift on the same points — ⚠️ **deviation**: `ARCHITECTURE.md` **does** exist (the plan wrongly said it did not) and also carried the `#tag` header drift; fixed there too (`ARCHITECTURE.md:137`). README `#tag`/`#untagged` mentions fixed at lines 34, 79, 98–99. Status TTL not surfaced in README/ARCHITECTURE (digest/user docs — no drift to fix)
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 

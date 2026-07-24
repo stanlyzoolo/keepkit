@@ -419,6 +419,7 @@ func TestRunInputInFlightGuard(t *testing.T) {
 // (mode-neutral — Terminal.app and tmux open a window, not a tab) and
 // dispatches nothing further.
 func TestLaunchDoneMsgSuccess(t *testing.T) {
+	shrinkStatusTTL(t)
 	m := newTestModel(focusTools)
 	m.launchingFor = "git"
 	updated, cmd := m.Update(launchDoneMsg{toolName: "git", command: "git status"})
@@ -429,15 +430,15 @@ func TestLaunchDoneMsgSuccess(t *testing.T) {
 	if nm.launchingFor != "" {
 		t.Errorf("launchingFor = %q, want the guard cleared", nm.launchingFor)
 	}
-	if cmd != nil {
-		t.Error("cmd != nil, want no follow-up on success")
-	}
+	// Success dispatches nothing further — only the transient-status expiry tick.
+	assertOnlyExpiryTick(t, cmd)
 }
 
 // TestExecDoneMsg: the ExecProcess callback result. A non-zero exit surfaces
 // as a statusMsg and is never logged (the tool's exit status is not a keeptui
 // anomaly); a clean exit is silent.
 func TestExecDoneMsg(t *testing.T) {
+	shrinkStatusTTL(t)
 	t.Run("non-zero exit", func(t *testing.T) {
 		logDir := t.TempDir()
 		restore := logx.SetDirForTesting(logDir)
@@ -449,9 +450,8 @@ func TestExecDoneMsg(t *testing.T) {
 		if want := "git exited: exit status 1"; nm.statusMsg != want {
 			t.Errorf("statusMsg = %q, want %q", nm.statusMsg, want)
 		}
-		if cmd != nil {
-			t.Error("cmd != nil, want none")
-		}
+		// The status shows, but nothing else is dispatched — only its expiry tick.
+		assertOnlyExpiryTick(t, cmd)
 		if out := logx.ReadAllForTesting(logDir); out != "" {
 			t.Errorf("a tool's non-zero exit must not log, got:\n%s", out)
 		}
@@ -484,9 +484,8 @@ func TestExecDoneMsg(t *testing.T) {
 		if want := "git not found — is it installed?"; nm.statusMsg != want {
 			t.Errorf("statusMsg = %q, want %q", nm.statusMsg, want)
 		}
-		if cmd != nil {
-			t.Error("cmd != nil, want none")
-		}
+		// The status shows, but nothing else is dispatched — only its expiry tick.
+		assertOnlyExpiryTick(t, cmd)
 		if out := logx.ReadAllForTesting(logDir); out != "" {
 			t.Errorf("a not-found exit must not log, got:\n%s", out)
 		}
