@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stanlyzoolo/keeptui/internal/configdir"
 	"github.com/stanlyzoolo/keeptui/internal/loader"
 	"github.com/stanlyzoolo/keeptui/internal/logx"
 )
@@ -737,7 +738,7 @@ func cacheFilePath() (string, error) {
 	if testCacheDir != "" {
 		return filepath.Join(testCacheDir, "cache.json"), nil
 	}
-	base, err := os.UserConfigDir()
+	base, err := configdir.Base()
 	if err != nil {
 		return "", err
 	}

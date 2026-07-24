@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/stanlyzoolo/keeptui/internal/configdir"
 	"github.com/stanlyzoolo/keeptui/internal/logx"
 )
 
@@ -76,7 +77,7 @@ func MetaPath() string {
 	if testConfigDir != "" {
 		return filepath.Join(testConfigDir, "keeptui", "meta.yaml")
 	}
-	configDir, err := os.UserConfigDir()
+	configDir, err := configdir.Base()
 	if err != nil {
 		return ""
 	}

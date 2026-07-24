@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stanlyzoolo/keeptui/internal/configdir"
 	"github.com/stanlyzoolo/keeptui/internal/loader"
 	"github.com/stanlyzoolo/keeptui/internal/logx"
 	"github.com/stanlyzoolo/keeptui/internal/model"
@@ -83,16 +84,23 @@ func resolveVersion(ldflag, modVersion string) string {
 }
 
 // migrateConfigDir renames the pre-rename config directory (<UserConfigDir>/keys,
-// from when the app was called "keys") to <UserConfigDir>/keeptui. One-shot and
-// conservative: if the new directory already exists — even empty — nothing is
-// touched, so a half-adopted new install is never overwritten by old data.
+// from when the app was called "keys") to the current keeptui config dir. The
+// old "keys" data was written under os.UserConfigDir(); the new dir resolves via
+// configdir.Base() (~/.config/keeptui on macOS/Linux, %AppData%\keeptui on
+// Windows), i.e. wherever the app now reads. One-shot and conservative: if the
+// new directory already exists — even empty — nothing is touched, so a
+// half-adopted new install is never overwritten by old data.
 func migrateConfigDir() {
 	base, err := os.UserConfigDir()
 	if err != nil {
 		return
 	}
+	newBase, err := configdir.Base()
+	if err != nil {
+		return
+	}
 	oldDir := filepath.Join(base, "keys")
-	newDir := filepath.Join(base, "keeptui")
+	newDir := filepath.Join(newBase, "keeptui")
 	if _, err := os.Stat(newDir); err == nil {
 		return
 	}
