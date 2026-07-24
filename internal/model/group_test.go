@@ -95,8 +95,8 @@ func TestGroupingSuppressedWhileSearching(t *testing.T) {
 		t.Errorf("grouped() = true during a search, want the flat search behaviour")
 	}
 	content, toolLine, lineTool := m.buildToolRows()
-	if strings.Contains(stripANSI(content), "#cli") {
-		t.Errorf("search results carry a group header:\n%s", stripANSI(content))
+	if strings.Contains(stripANSI(content), "─ cli") {
+		t.Errorf("search results carry a group divider header:\n%s", stripANSI(content))
 	}
 	for i := range toolLine {
 		if toolLine[i] != i || lineTool[i] != i {
@@ -133,7 +133,7 @@ func TestBuildToolRowsMapsGrouped(t *testing.T) {
 	content, toolLine, lineTool := m.buildToolRows()
 	lines := strings.Split(strings.TrimRight(stripANSI(content), "\n"), "\n")
 
-	// #cli, rg, fd, #scm, git, lazygit, #untagged, jq
+	// cli header, rg, fd, scm header, git, lazygit, untagged header, jq
 	wantTool := []int{1, 2, 4, 5, 7}
 	if !sameInts(toolLine, wantTool) {
 		t.Fatalf("toolLine = %v, want %v", toolLine, wantTool)
@@ -146,14 +146,16 @@ func TestBuildToolRowsMapsGrouped(t *testing.T) {
 		t.Fatalf("rendered %d lines, lineTool covers %d", len(lines), len(lineTool))
 	}
 
-	wantHeaders := map[int]string{0: "#cli", 3: "#scm", 6: "#untagged"}
+	// Divider headers: "─ <label> ────…". Match by the framed label rather than
+	// the full line, whose dash count depends on the panel width.
+	wantHeaders := map[int]string{0: "cli", 3: "scm", 6: "untagged"}
 	for i, line := range lines {
-		if header, isHeader := wantHeaders[i]; isHeader {
+		if label, isHeader := wantHeaders[i]; isHeader {
 			if lineTool[i] != -1 {
 				t.Errorf("line %d (%q) maps to tool %d, want -1", i, line, lineTool[i])
 			}
-			if strings.TrimSpace(line) != header {
-				t.Errorf("line %d = %q, want header %q", i, line, header)
+			if !strings.Contains(line, "─ "+label+" ") {
+				t.Errorf("line %d = %q, want the %q divider header", i, line, label)
 			}
 			continue
 		}
@@ -180,6 +182,7 @@ func sameInts(got, want []int) bool {
 // and the cursor follows the *tool*, not the row — in both directions, and for
 // a tool whose position actually changes.
 func TestSpaceTogglesGroupingKeepsSelection(t *testing.T) {
+	shrinkStatusTTL(t)
 	m := groupTestModel(t)
 	// jq: index 2 flat, index 4 grouped (untagged, last).
 	m.metaSelected = 2
@@ -192,9 +195,9 @@ func TestSpaceTogglesGroupingKeepsSelection(t *testing.T) {
 	if !nm.groupByTag {
 		t.Fatalf("space did not turn grouping on")
 	}
-	if cmd != nil {
-		t.Errorf("space returned a command, want none (a view toggle fetches nothing)")
-	}
+	// The toggle returns only the "grouped by tag" status-expiry tick — a view
+	// toggle still fetches nothing.
+	assertOnlyExpiryTick(t, cmd)
 	if sel, _ := nm.selectedMeta(); sel.Name != "jq" {
 		t.Errorf("selected %q after grouping on, want jq", sel.Name)
 	}
@@ -216,7 +219,7 @@ func TestSpaceTogglesGroupingKeepsSelection(t *testing.T) {
 }
 
 // TestSpaceGroupingNeedsATag: turning the view on with nothing tagged would
-// draw a lone "#untagged" header over the unchanged list, so the toggle refuses
+// draw a lone "untagged" divider over the unchanged list, so the toggle refuses
 // and says why. Turning it *off* is never refused — otherwise removing the last
 // tag would strand the user in the tag view.
 func TestSpaceGroupingNeedsATag(t *testing.T) {
@@ -245,8 +248,8 @@ func TestSpaceGroupingNeedsATag(t *testing.T) {
 		if nm.groupByTag {
 			t.Errorf("space turned grouping on with no tagged tool")
 		}
-		if strings.Contains(stripANSI(nm.renderLeftContent()), "#untagged") {
-			t.Errorf("list drew a lone #untagged header:\n%s", stripANSI(nm.renderLeftContent()))
+		if strings.Contains(stripANSI(nm.renderLeftContent()), "─ untagged") {
+			t.Errorf("list drew a lone untagged divider header:\n%s", stripANSI(nm.renderLeftContent()))
 		}
 	})
 
@@ -254,15 +257,15 @@ func TestSpaceGroupingNeedsATag(t *testing.T) {
 		m := groupTestModel(t)
 		m.groupByTag = true
 		// Every tag gone (untagged by hand, or the tags editor emptied them):
-		// the view degrades to flat instead of showing one #untagged section...
+		// the view degrades to flat instead of showing one untagged section...
 		for i := range m.meta {
 			m.meta[i].Tags = nil
 		}
 		if m.grouped() {
 			t.Errorf("grouped() stayed true with no tagged tool")
 		}
-		if strings.Contains(stripANSI(m.renderLeftContent()), "#") {
-			t.Errorf("list still drew a header:\n%s", stripANSI(m.renderLeftContent()))
+		if strings.Contains(stripANSI(m.renderLeftContent()), "─ ") {
+			t.Errorf("list still drew a divider header:\n%s", stripANSI(m.renderLeftContent()))
 		}
 		// ...and space still turns the flag back off.
 		nm := mustModel(m.Update(keyRunes(" ")))
@@ -326,11 +329,13 @@ func TestGroupingIsCaseInsensitive(t *testing.T) {
 		t.Errorf("grouped order = %v, want %v (CLI and cli are one group)", got, want)
 	}
 	content := stripANSI(m.renderLeftContent())
-	if n := strings.Count(content, "#CLI"); n != 1 {
-		t.Errorf("content has %d #CLI headers, want 1:\n%s", n, content)
+	// The header shows the group's first spelling ("CLI"); the case-folded key
+	// keeps "cli" in the same section, so no second lowercase divider appears.
+	if n := strings.Count(content, "─ CLI "); n != 1 {
+		t.Errorf("content has %d CLI divider headers, want 1:\n%s", n, content)
 	}
-	if strings.Contains(content, "#cli") {
-		t.Errorf("content split the group into a second #cli section:\n%s", content)
+	if strings.Contains(content, "─ cli ") {
+		t.Errorf("content split the group into a second cli section:\n%s", content)
 	}
 }
 
@@ -504,7 +509,7 @@ func TestMouseClickGroupedList(t *testing.T) {
 		t.Errorf("click on git's row selected %q, want git", sel.Name)
 	}
 
-	// Screen line 3 is the #scm header.
+	// Screen line 3 is the scm divider header.
 	updated, _ = nm.Update(leftClick(1, 3+2))
 	after := updated.(Model)
 	if sel, _ := after.selectedMeta(); sel.Name != "git" {
@@ -556,15 +561,68 @@ func TestTagHeaderLineFitsOneLine(t *testing.T) {
 		if strings.ContainsAny(got, "\n\r") {
 			t.Errorf("header for %q = %q, want a single line", tag, got)
 		}
-		if w := lipgloss.Width(got); w > budget {
-			t.Errorf("header for %q = %q, width %d, want <= %d", tag, got, w, budget)
+		// The framed divider is built to exactly the panel width (w >= 4 here),
+		// so an overlong or CJK tag is cut, never allowed to overflow.
+		if w := lipgloss.Width(got); w != budget {
+			t.Errorf("header for %q = %q, width %d, want exactly %d", tag, got, w, budget)
 		}
 	}
 
-	// A tag that fits is untouched.
-	if got := stripANSI(m.tagHeaderLine("ab")); got != "#ab" {
-		t.Errorf("short header = %q, want %q", got, "#ab")
+	// A tag renders as a full-width divider with the label centered (odd
+	// remainder → extra dash on the right): "─ ab ──" at toolsW-1 = 7 cells.
+	if got, want := stripANSI(m.tagHeaderLine("ab")), "─ ab ──"; got != want {
+		t.Errorf("short header = %q, want %q", got, want)
 	}
+}
+
+// TestTagHeaderDividerFormat pins the divider look: "───… <label> ───…" to
+// exactly the panel width with the label centered, the empty-tag label is
+// "untagged" (no hashtag), and a panel too narrow to frame degrades to the bare
+// label without panicking.
+func TestTagHeaderDividerFormat(t *testing.T) {
+	m := groupTestModel(t)
+
+	t.Run("framed divider is exactly the panel width", func(t *testing.T) {
+		m.toolsW = 20
+		w := m.toolsW - 1
+		got := stripANSI(m.tagHeaderLine("dev"))
+		// Label centered: a rule on each side, the label spaced in the middle.
+		if !strings.HasPrefix(got, "─") || !strings.HasSuffix(got, "─") || !strings.Contains(got, " dev ") {
+			t.Errorf("header = %q, want the \"───… dev ───…\" divider (no hashtag)", got)
+		}
+		if strings.Contains(got, "#") {
+			t.Errorf("header = %q, want no hashtag", got)
+		}
+		if lw := lipgloss.Width(got); lw != w {
+			t.Errorf("header width = %d, want exactly %d", lw, w)
+		}
+	})
+
+	t.Run("empty tag renders untagged divider", func(t *testing.T) {
+		m.toolsW = 20
+		got := stripANSI(m.tagHeaderLine(""))
+		if !strings.HasPrefix(got, "─") || !strings.HasSuffix(got, "─") || !strings.Contains(got, " untagged ") {
+			t.Errorf("empty-tag header = %q, want the \"───… untagged ───…\" divider", got)
+		}
+		if lw := lipgloss.Width(got); lw != m.toolsW-1 {
+			t.Errorf("untagged header width = %d, want %d", lw, m.toolsW-1)
+		}
+	})
+
+	t.Run("panel too narrow to frame degrades to bare label", func(t *testing.T) {
+		// w = max(toolsW-1, 1) < 4 takes the degraded path.
+		for _, tw := range []int{1, 2, 3, 4} {
+			m.toolsW = tw
+			w := max(m.toolsW-1, 1)
+			got := stripANSI(m.tagHeaderLine("dev"))
+			if strings.ContainsAny(got, "\n\r") {
+				t.Errorf("toolsW=%d: header %q spans multiple lines", tw, got)
+			}
+			if lw := lipgloss.Width(got); lw > w {
+				t.Errorf("toolsW=%d: header %q width %d, want <= %d", tw, got, lw, w)
+			}
+		}
+	})
 }
 
 // TestGroupedRowsAreOneLineEach is the map-integrity guard behind the header

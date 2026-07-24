@@ -186,6 +186,7 @@ func updateDoneModel(t *testing.T) Model {
 // "updated <name>" status and returns a command that re-detects the installed
 // version (installedMsg for the same tool).
 func TestUpdateDoneSuccess(t *testing.T) {
+	shrinkStatusTTL(t)
 	m := updateDoneModel(t)
 	nm, cmd := m.Update(updateDoneMsg{tool: "rg", err: nil})
 	m2 := nm.(Model)
@@ -196,11 +197,11 @@ func TestUpdateDoneSuccess(t *testing.T) {
 		t.Errorf("statusMsg = %q, want %q", m2.statusMsg, "updated rg")
 	}
 	if cmd == nil {
-		t.Fatal("want a re-fetch command, got nil")
+		t.Fatal("want a re-fetch command (batched with the status tick), got nil")
 	}
-	msg, ok := cmd().(installedMsg)
-	if !ok || msg.toolName != "rg" {
-		t.Errorf("cmd produced %T (%+v), want installedMsg for rg", msg, msg)
+	// The success cmd batches the status-expiry tick with the installed re-detect.
+	if !batchProducesInstalled(cmd, "rg") {
+		t.Error("batched cmd does not re-detect the installed version for rg")
 	}
 }
 
@@ -208,6 +209,7 @@ func TestUpdateDoneSuccess(t *testing.T) {
 // "see [3]" status, writes a log line (manager + tool, never a token) and does
 // not re-fetch.
 func TestUpdateDoneFailure(t *testing.T) {
+	shrinkStatusTTL(t)
 	logDir := t.TempDir()
 	restore := logx.SetDirForTesting(logDir)
 	defer restore()
@@ -221,9 +223,9 @@ func TestUpdateDoneFailure(t *testing.T) {
 	if m2.statusMsg != "update failed — see [3]" {
 		t.Errorf("statusMsg = %q, want the see-[3] hint", m2.statusMsg)
 	}
-	if cmd != nil {
-		t.Error("failure must not re-fetch the installed version")
-	}
+	// Failure must not re-fetch the installed version — only the status-expiry
+	// tick rides along.
+	assertOnlyExpiryTick(t, cmd)
 	out := logx.ReadAllForTesting(logDir)
 	if !strings.Contains(out, "rg") || !strings.Contains(out, "brew") {
 		t.Errorf("log = %q, want tool and manager recorded", out)

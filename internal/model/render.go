@@ -608,17 +608,38 @@ func (m Model) renderLeftContent() string {
 	return content
 }
 
-// tagHeaderLine renders a tag-group header row ("#<tag>", "#untagged" for the
-// trailing group). One header must occupy exactly one screen line — every
-// consumer of the line maps assumes it — so the label is flattened (a tag from
-// a hand-edited meta.yaml can carry a newline, which would silently emit a
-// second row) and cut to the list width.
+// tagHeaderLine renders a tag-group header as a divider row with the label
+// centered: "──────── dev ────────" across the full list width, label in muted
+// TagHeaderStyle and the rule lines in the panel-frame TagRuleStyle (no hashtag)
+// — group boundaries read geometrically so the tool names stay the only color
+// accent. The trailing group's label is "untagged". One header must occupy
+// exactly one screen line — every consumer of the line maps assumes it — so the
+// label is flattened (a tag from a hand-edited meta.yaml can carry a newline,
+// which would silently emit a second row) and the whole line is built to exactly
+// w cells, so the viewport never wraps or truncates it.
 func (m Model) tagHeaderLine(tag string) string {
-	label := "#untagged"
+	label := "untagged"
 	if tag != "" {
-		label = "#" + flattenLine(tag)
+		label = flattenLine(tag)
 	}
-	return ui.SectionLabelStyle.Render(truncateToWidth(label, max(m.toolsW-1, 1)))
+	w := max(m.toolsW-1, 1)
+	// Too narrow to frame a "─ label ─" — degrade to the bare label, cut to the
+	// panel so it still occupies a single line no wider than w.
+	if w < 4 {
+		return ui.TagHeaderStyle.Render(truncateToWidth(label, w))
+	}
+	// Reserve a rule on each side (≥1) + the two spaces around the label = 4
+	// cells of frame, so the label gets w-4. The remaining rule is split evenly
+	// (odd remainder → the extra dash goes right). lipgloss.Width, not a rune
+	// count, so a CJK tag is cut by display cells (the same reason
+	// truncateToWidth exists).
+	label = truncateToWidth(label, max(w-4, 1))
+	rule := max(w-2-lipgloss.Width(label), 0)
+	head := rule / 2
+	tail := rule - head
+	return ui.TagRuleStyle.Render(strings.Repeat("─", head)+" ") +
+		ui.TagHeaderStyle.Render(label) +
+		ui.TagRuleStyle.Render(" "+strings.Repeat("─", tail))
 }
 
 // flattenLine collapses the line breaks (and the stray control characters that

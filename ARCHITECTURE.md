@@ -134,7 +134,7 @@ Key invariants:
   impossible. `meta.yaml` on disk is never reordered. Tag groups are keyed
   case-insensitively, matching the search predicate.
 - **The selection is a tool index, never a screen row.** The tag view inserts
-  non-selectable `#tag` header rows, so the two units diverge — but only inside the
+  non-selectable divider header rows (`────… <tag> ────…`), so the two units diverge — but only inside the
   maps `buildToolRows()` returns beside the content (`toolLine`, `lineTool`; the
   identity when grouping is off) and their consumers: `syncToolsViewport`, the mouse
   row mapping, and the page/half-page keys, whose step is a count of viewport rows.

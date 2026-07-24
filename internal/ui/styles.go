@@ -142,6 +142,18 @@ var (
 	InfoStyle = lipgloss.NewStyle().
 			Foreground(ColorMuted)
 
+	// TagHeaderStyle / TagRuleStyle draw the tag-group divider rows in the [1]
+	// tools list: "─ dev ────…". The label is muted (ColorDim), the rule lines
+	// the panel-frame gray (ColorBorder), so group boundaries read geometrically
+	// rather than by color — the tool names stay the only color accent in the
+	// list. Deliberately not SectionLabelStyle (its ColorCategory competes with
+	// the peach tool-name accent).
+	TagHeaderStyle = lipgloss.NewStyle().
+			Foreground(ColorDim)
+
+	TagRuleStyle = lipgloss.NewStyle().
+			Foreground(ColorBorder)
+
 	// Scrollbar thumb: peach when the panel is focused, dim otherwise.
 	ScrollThumbStyle = lipgloss.NewStyle().
 				Foreground(ColorPrimary)
