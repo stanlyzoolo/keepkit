@@ -14,6 +14,7 @@ subcommands; the only flags are `--version` and `--help`.
 - [Installation](#installation)
 - [Usage](#usage)
 - [Updating tools](#updating-tools)
+- [Updating keeptui itself](#updating-keeptui-itself)
 - [GitHub API and token](#github-api-and-token)
 - [Data storage](#data-storage)
 - [Architecture](#architecture)
@@ -28,6 +29,7 @@ subcommands; the only flags are `--version` and `--help`.
 - **Tool card** — repository, stars, languages, installed and latest version with release date, status, note and tags
 - **Versions** — the installed version is detected locally, the latest is fetched from GitHub; an outdated install is marked with `↑` in the list and on the card, and tools with an available update are grouped at the top of the list
 - **In-TUI updates** — `u` on the card detects the package manager (brew / go / cargo / pipx / npm) or uses `update_cmd` from `meta.yaml`, shows the command for confirmation and streams its output into panel `[3]` in real time
+- **Self-update** — when a newer `keeptui` release exists, the status bar offers it: `U` updates through the same pipeline, `X` folds the notice into a compact cell that keeps `U` working, and after the update `U` restarts `keeptui` in place, in the same terminal tab. Works whether or not `keeptui` is in your own tracker
 - **Run tools** — `enter` on a tool opens a one-line command prompt (it remembers the last command per tool for the session) and launches it in a new terminal tab (tmux / iTerm2 / kitty / WezTerm / Terminal.app); anywhere else the tool runs in the current window and `keeptui` resumes when it exits
 - **Help navigation** — in `--help` / `man` mode `j` / `k` walk through flags and subcommands with the current entry highlighted; `/` searches the text
 - **List search** — `/` filters by name and tag with match highlighting and an `N/M` counter
@@ -83,6 +85,7 @@ time for the hotkeys overlay — every keybinding, grouped by panel.
 | `enter` | run the tool: a one-line prompt opens, prefilled with the tool name (or the last command run for it this session — handy for appending arguments); the command opens in a new tab named after the tool where the terminal is scriptable (tmux, iTerm2, kitty; Terminal.app opens a window, WezTerm an unnamed tab), anywhere else it runs in the current window — `keeptui` suspends and resumes when the tool exits. If opening the tab fails, the command automatically runs in the current window instead |
 | `/` | search by name and tag: the matched substring is highlighted, tag-only matches show the tag dimmed, the status bar shows an `N/M` counter; `↑` / `↓` move through matches, `enter` opens the card, `esc` cancels and restores the previous selection |
 | `L` | GitHub API status — limits and token (see below) |
+| `U` / `X` | update `keeptui` itself / fold the notice away — active from any panel while a new `keeptui` release is offered (see [Updating keeptui itself](#updating-keeptui-itself)) |
 | `?` | hotkeys overlay — every keybinding, grouped by panel |
 | `esc`, `q`, `ctrl+c` | quit (`q` / `ctrl+c` quit from any panel; `esc` quits only here — in `[2]` / `[3]` it moves focus back instead) |
 
@@ -116,6 +119,7 @@ selected tool stays selected either way. Both views are display-only.
 | `t` | edit the tag — one tag per tool; text after the first comma is dropped, an empty value clears it |
 | `j / k`, `↑ / ↓` | scroll the card (3 lines) |
 | `ctrl+d / ctrl+u`, `ctrl+f / ctrl+b`, `PgUp / PgDn`, `space`, `g / G` | half-page / full-page scroll, top / bottom |
+| `U` / `X` | update `keeptui` itself / fold the notice away — see [Updating keeptui itself](#updating-keeptui-itself) |
 | `?` | hotkeys overlay |
 
 Statuses: `active` (●) · `trying` (○) · `inactive` (✕) — shown on the card.
@@ -147,6 +151,7 @@ not per tool — pick `--help` once and moving through the list keeps showing `-
 | `↑ / ↓` | scroll the text (3 lines) |
 | `ctrl+d / ctrl+u`, `ctrl+f / ctrl+b`, `PgUp / PgDn`, `space`, `g / G` | half-page / full-page scroll, top / bottom |
 | `/` | search the text (`n` / `N` — next / previous match); not available in README mode |
+| `U` / `X` | update `keeptui` itself / fold the notice away — see [Updating keeptui itself](#updating-keeptui-itself) |
 | `?` | hotkeys overlay |
 | `esc` | first turns off entry navigation, then moves focus away |
 
@@ -161,7 +166,11 @@ README, an exhausted quota or a failed fetch show a message with the way out
 adding a token in the `L` overlay retries the ones that hit the limit.
 
 While a tool is being updated, this panel (`[3] Update`) shows the live command log;
-the log stays available after completion — until the next update.
+the log stays available after completion — until the next update. For a tool the log
+belongs to its row: move away and you see that tool's docs again, come back and the log
+is there. A `keeptui` self-update log is shown whichever tool is selected (and with an
+empty tracker); once it has finished, moving the selection or switching the mode with
+`h` / `m` / `r` returns the panel to the docs.
 
 ## Updating tools
 
@@ -199,15 +208,78 @@ in `meta.yaml` always takes precedence over auto-detection and runs via `sh -c`
   update_cmd: mytool self-update
 ```
 
+## Updating keeptui itself
+
+`keeptui` watches its own releases too. On startup it checks the latest one — a single
+request, cached for 24 hours; on a build from a working copy the feature is off entirely
+— no request, no notice, no restart offer (that covers both `dev` and the pseudo-version
+a plain `go build` stamps, `v0.0.0-<date>-<commit>`, with or without `+dirty`). When a
+newer version exists, the status bar replaces the usual hints with a notice:
+
+```
+keeptui v0.5.0 available — [U] update  [X] dismiss
+```
+
+- `U` — detects how this `keeptui` was installed (the same brew / go / cargo / pipx /
+  npm detection tools get put through), shows the command for confirmation and streams
+  its output into panel `[3] Update`. That log is visible whichever tool is selected —
+  even with an empty tracker. While the update runs, a compact `keeptui updating…` cell
+  sits in the corner of the status bar.
+- `X` — folds the notice into a compact `keeptui ↑ [U]` cell next to the API gauge. `U`
+  keeps working from there for the rest of the session; nothing is written to disk, so a
+  dismissed notice comes back on the next launch.
+
+After a successful update the bar reads `keeptui updated — [U] restart  [X] later`.
+`U` replaces the running process with the new binary — same terminal tab, same tmux
+pane, same arguments — so there is nothing to reopen; `X` folds that offer into
+`keeptui [U] restart` for later in the session. On Windows there is no in-place restart:
+`keeptui` prints `keeptui updated — run keeptui again` and exits.
+
+`keeptui` does not need to be in your own tracker for any of this — the check is built
+in. If it *is* tracked, `update_cmd` from its `meta.yaml` entry governs the self-update
+exactly as it governs `u` on that row, and the release data is shared with its card, so
+once that card has been fetched the check costs nothing extra. Updating a tracked
+`keeptui` with `u` on its row is the same thing as `U` — it offers the restart too. On a
+working-copy build, where the whole feature is off, that row behaves like any other
+tool's: the update runs and its log stays with the row, but there is no notice and no
+restart offer — restarting a working copy would just bring back the binary you built.
+
+- One update at a time: while any update is running both `U` and `u` refuse out loud —
+  the bar says `another update is running` instead of starting a second one. (Without a
+  notice on screen, `U` is not a key at all: on a working-copy build it does nothing
+  whatsoever.)
+- If the manager cannot be detected (a hand-downloaded binary), the bar says
+  `no known updater for keeptui — update manually` and nothing else happens.
+- A Homebrew formula can lag behind the GitHub release: after updating, the installed
+  version may still be older than the latest tag, and the notice comes back. That is an
+  honest reflection of the state, not a bug.
+- If the release check fails (no network, exhausted quota), there is simply no notice —
+  everything else works as before. Updating a tracked `keeptui` with `u` still works and
+  still offers the restart afterwards; there was just no notice to start from.
+- If the update itself fails, the bar says `update failed — see [3]` and the reason stays
+  in panel `[3]`. The notice goes back to whatever it was before — `keeptui v0.5.0
+  available` (where `U` retries), the folded cell if you had folded it, a pending
+  `[U] restart` from an earlier successful update, or nothing at all if there was no
+  notice to begin with.
+- Quitting `keeptui` in the middle of a self-update is safe: the updater runs detached and
+  finishes on its own, exactly as for a tool update.
+- The update targets the `keeptui` on your `PATH`. If you launched a copy by path
+  (`./keeptui`) while a different one is installed, that installed one is what gets
+  updated — and the restart brings back the copy you launched, so the notice reappears.
+
 ## GitHub API and token
 
 `keeptui` fetches releases and repository cards through the GitHub REST API. Without a
 token the limit is **60 requests per hour** per IP, with a token — **5000**. Each
 tool with a `github` field costs 3 requests on startup, plus one more when you open
 its README in panel `[3]`; so a cold start with a large list and no token can hit the
-limit — cards stay empty until the window resets.
+limit — cards stay empty until the window resets. The `keeptui` release check adds one
+more request per 24 hours (none on a `dev` build).
 
-Quota usage is visible in the right corner of the status bar (`▮▮░░░░░░░░░░ 12/60`). The
+Quota usage is visible in the right corner of the status bar (`▮▮░░░░░░░░░░ 12/60`). It
+shares that corner with the folded self-update cell and yields to it: while the full
+`keeptui … available` notice is up the gauge stays put, but after `X` the compact
+`keeptui ↑ [U]` cell takes priority and can push the gauge off a narrow bar. The
 `L` key works from any panel (as long as no other input mode is active) and opens the
 API status overlay: token source, quota usage with an icon (`⚠` — low, `✕` —
 exhausted) and the reset time. Right in the overlay:
@@ -235,7 +307,7 @@ atomic.
 | What | Where |
 |------|-------|
 | Tracker metadata | `~/.config/keeptui/meta.yaml` |
-| Version and README cache (24h TTL) | `~/.config/keeptui/cache.json` |
+| Version, README and self-check cache (24h TTL each) | `~/.config/keeptui/cache.json` |
 | GitHub token (`0600`) | `~/.config/keeptui/token` |
 | Session error log | `~/.config/keeptui/logs/keeptui-<timestamp>.log` |
 | Copy of the tracker before the one-tag migration | `~/.config/keeptui/meta.yaml.bak` |

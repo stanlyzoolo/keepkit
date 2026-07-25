@@ -1093,9 +1093,12 @@ func TestUpdateKeyWithoutUpdate(t *testing.T) {
 	}
 }
 
-// TestUpdateKeyWhileUpdatingNoop: [u] while an update is already running is a
-// no-op — one update at a time, no queue.
+// TestUpdateKeyWhileUpdatingNoop: [u] while an update is already running starts
+// nothing — one update at a time, no queue — and says so, like every other
+// blocked action here (the running update's own indicator is a card spinner,
+// invisible unless that tool is selected).
 func TestUpdateKeyWhileUpdatingNoop(t *testing.T) {
+	shrinkStatusTTL(t)
 	m := newUpdateTestModel()
 	m.updatingFor = "rg"
 
@@ -1104,12 +1107,11 @@ func TestUpdateKeyWhileUpdatingNoop(t *testing.T) {
 	if nm.mode != modeNormal {
 		t.Errorf("mode = %d, want modeNormal (no confirm)", nm.mode)
 	}
-	if cmd != nil {
-		t.Errorf("cmd = %v, want nil (no detection while updating)", cmd)
+	if nm.statusMsg != updateBusyStatus {
+		t.Errorf("statusMsg = %q, want %q", nm.statusMsg, updateBusyStatus)
 	}
-	if nm.statusMsg != "" {
-		t.Errorf("statusMsg = %q, want empty", nm.statusMsg)
-	}
+	// Only the status expiry — no detection was fired.
+	assertOnlyExpiryTick(t, cmd)
 }
 
 // TestUpdateDetectedEntersConfirm: a successful detection for the selected tool
@@ -1125,6 +1127,10 @@ func TestUpdateDetectedEntersConfirm(t *testing.T) {
 	}
 	if nm.updatePlan.Display != "brew upgrade ripgrep" {
 		t.Errorf("updatePlan.Display = %q, want the detected command", nm.updatePlan.Display)
+	}
+	// The plan's target is fixed here, not re-read from the selection on enter.
+	if nm.updateTarget != "rg" {
+		t.Errorf("updateTarget = %q, want rg", nm.updateTarget)
 	}
 	if bar := nm.renderStatusBar(); !strings.Contains(bar, "brew upgrade ripgrep") {
 		t.Errorf("status bar = %q, want it to show the plan command", bar)
@@ -1205,6 +1211,7 @@ func TestUpdateConfirmEnterStarts(t *testing.T) {
 	m := newUpdateTestModel()
 	m.mode = modeConfirmUpdate
 	m.updatePlan = updater.Plan{Argv: []string{"true"}, Display: "true"}
+	m.updateTarget = "rg"
 	m.updateLog = []string{"stale"}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1232,6 +1239,7 @@ func TestUpdateConfirmEscCancels(t *testing.T) {
 	m := newUpdateTestModel()
 	m.mode = modeConfirmUpdate
 	m.updatePlan = updater.Plan{Argv: []string{"true"}, Display: "true"}
+	m.updateTarget = "rg"
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	nm := updated.(Model)
@@ -1240,6 +1248,35 @@ func TestUpdateConfirmEscCancels(t *testing.T) {
 	}
 	if nm.updatingFor != "" {
 		t.Errorf("updatingFor = %q, want empty (nothing started)", nm.updatingFor)
+	}
+	if nm.updateTarget != "" {
+		t.Errorf("updateTarget = %q, want it cleared with the cancelled dialog", nm.updateTarget)
+	}
+	// The plan is written with the target at the single detect site and read with
+	// it by the confirm bar, so cancelling has to drop both — otherwise "no
+	// pending plan" means something different here than on the dropped-result
+	// path (TestSelfDetectedAcceptance asserts both fields there).
+	if nm.updatePlan.Display != "" || nm.updatePlan.Manager != "" || nm.updatePlan.Argv != nil {
+		t.Errorf("updatePlan = %+v, want it cleared with the cancelled dialog", nm.updatePlan)
+	}
+}
+
+// TestUpdateConfirmKeepsDetectedTarget: the target is the one detection resolved,
+// so a selection that moved while detection ran cannot retarget the dialog onto
+// another tool's row.
+func TestUpdateConfirmKeepsDetectedTarget(t *testing.T) {
+	m := newUpdateTestModel()
+	m.meta = append(m.meta, loader.ToolMeta{Name: "fd"})
+	m.tools = loader.ToolsFromMeta(m.meta)
+	m.mode = modeConfirmUpdate
+	m.updatePlan = updater.Plan{Argv: []string{"true"}, Display: "brew upgrade ripgrep"}
+	m.updateTarget = "rg"
+	m.metaSelected = len(m.meta) - 1 // the user moved onto fd meanwhile
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	nm := updated.(Model)
+	if nm.updatingFor != "rg" || nm.updateLogFor != "rg" {
+		t.Errorf("updatingFor = %q, updateLogFor = %q, want both rg", nm.updatingFor, nm.updateLogFor)
 	}
 }
 

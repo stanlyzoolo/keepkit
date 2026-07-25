@@ -9,6 +9,7 @@ import (
 
 	"github.com/stanlyzoolo/keeptui/internal/launcher"
 	"github.com/stanlyzoolo/keeptui/internal/loader"
+	"github.com/stanlyzoolo/keeptui/internal/updater"
 	"github.com/stanlyzoolo/keeptui/internal/version"
 )
 
@@ -404,31 +405,49 @@ func flushPendingLaunch(mdl tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 
 // updateConfirmUpdate handles the modeConfirmUpdate dialog (modeled on
 // modeConfirmUntrack): enter launches the update — set updatingFor, reset the
-// live log to the target tool, and fire the streaming command plus the spinner
-// tick; esc (or any other key) cancels back to modeNormal. The plan awaiting
-// confirmation lives in m.updatePlan.
+// live log to the target, and fire the streaming command plus the spinner tick;
+// esc (or any other key) cancels back to modeNormal. The plan awaiting
+// confirmation lives in m.updatePlan and the name it belongs to in
+// m.updateTarget, so there is one path here for a tool and for keeptui itself:
+// reading the name off the selection instead would silently cancel a
+// self-update whenever the tracker is empty, and would retarget a tool's plan
+// onto whatever row the user moved to while detection was running.
 func (m Model) updateConfirmUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		m.mode = modeNormal
-		mt, ok := m.selectedMeta()
-		if !ok {
+		target := m.updateTarget
+		m.updateTarget = ""
+		if target == "" {
 			return m, nil
 		}
-		m.updatingFor = mt.Name
+		m.updatingFor = target
 		m.updateLog = nil
-		m.updateLogFor = mt.Name
+		m.updateLogFor = target
+		// keeptui's own log owns [3] under every selection — an untracked keeptui
+		// has no row of its own (see showsUpdateLog) — while a tool's log is
+		// per-tool sticky, so taking the single buffer over also releases a
+		// finished self-update's claim on the panel. Read off selfUpdating(), which
+		// is updatingFor (just set to target) through the feature's version gate:
+		// with the self-update off, keeptui's row keeps the same per-tool stickiness
+		// as any other row.
+		m.selfUpdateLog = m.selfUpdating()
 		m.briefViewport.SetContent(m.renderCard())
 		// Text-change transition: [3] switches from help to the live log, so
 		// the entry index empties and any spotlight cursor resets.
 		m.setHelpContent()
 		return m, tea.Batch(
 			m.spinner.Tick,
-			startUpdateCmd(m.updatePlan, mt.Name),
+			startUpdateCmd(m.updatePlan, target),
 		)
 	default:
-		// esc or any other key cancels.
+		// esc or any other key cancels. The plan goes with the target: the two
+		// are written together at the single detect site and read together by the
+		// confirm bar, so "no pending plan" has to mean the same thing here as it
+		// does on the path where the result was dropped before it ever landed.
 		m.mode = modeNormal
+		m.updateTarget = ""
+		m.updatePlan = updater.Plan{}
 		return m, nil
 	}
 }

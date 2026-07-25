@@ -319,6 +319,28 @@ type CacheEntry struct {
 	// deliberately stale (rate-limited) repo pass as fresh and serve a blank
 	// card for the whole TTL. Two timestamps keep the poison guards independent.
 	ReadmeCheckedAt time.Time `json:"readme_checked_at,omitzero"`
+	// ReleaseCheckedAt mirrors ReadmeCheckedAt for the release-only pass that
+	// SelfLatest makes (selfcheck.go), and is separate from CheckedAt for the
+	// same reason: getRepoData's freshness gate is CheckedAt-only with no content
+	// check, so a release-only pass stamping the shared timestamp would mark a
+	// never-fetched (or deliberately stale) repo card as fresh and serve a blank
+	// card for the whole TTL. Each poison guard owns its own timestamp.
+	ReleaseCheckedAt time.Time `json:"release_checked_at,omitzero"`
+	// ReleaseMissing records that the last conclusive release fetch answered 404
+	// ("no latest release"): a repo that never published one, a single release
+	// converted to a draft, or a repo the token cannot see. It exists so that
+	// negative can be remembered *without* clearing the release tuple
+	// (Latest/Body/HtmlUrl/PublishedAt), which belongs to the shared repo card and
+	// which every pass here preserves on a 404 — getRepoData writes the tuple only
+	// when the fetch succeeded, getChangelog falls back to the cached body, and
+	// SelfLatest would otherwise be the one writer that destroys another feature's
+	// content. Maintained by every release fetch — all three of SelfLatest,
+	// getRepoData and getChangelog set it on a 404 and clear it on a fetched
+	// release, including getChangelog's error path, which is the *only* pass that
+	// still reaches /releases/latest when CheckedAt is fresh and Body is empty.
+	// Read only by the self-check, whose banner must not offer an update to a
+	// release that is gone.
+	ReleaseMissing bool `json:"release_missing,omitempty"`
 }
 
 // RepoCard holds full repository metadata for display in the TUI.
@@ -461,12 +483,11 @@ func getRepoData(githubField string, force bool) RepoData {
 		if conclusive {
 			e.CheckedAt = time.Now()
 		}
-		if relErr == nil {
-			e.Latest = info.Tag
-			e.Body = info.Body
-			e.HtmlUrl = info.HtmlUrl
-			e.PublishedAt = info.PublishedAt
-		}
+		// The release half of the write — tuple on success, ReleaseMissing both
+		// ways — is applyReleaseOutcome's single definition, shared with the two
+		// other passes that fetch a release, so no writer can maintain one half of
+		// the flag's contract and forget the other.
+		e = applyReleaseOutcome(e, info, relErr)
 		if infoErr == nil {
 			e.RepoStatus = repoStatus
 			e.About = about
@@ -515,6 +536,17 @@ func getChangelog(githubField string, force bool) (ReleaseInfo, error) {
 
 	info, err := fetchRelease(repo)
 	if err != nil {
+		// A 404 is conclusive, so it is recorded as a flag here too — the tuple
+		// below is still served from cache, this pass destroys nothing (see
+		// CacheEntry.ReleaseMissing). It matters because this is the only pass
+		// that reaches /releases/latest when CheckedAt is fresh but Body is empty
+		// (a release published without notes): getRepoData short-circuits, so
+		// without this write nobody would observe a release that has since been
+		// deleted or drafted, and the self-check's cached-tag branch would keep
+		// offering it for the rest of the TTL.
+		if errors.Is(err, errNoReleases) {
+			markReleaseMissing(repo)
+		}
 		if cached {
 			return ReleaseInfo{Tag: entry.Latest, Body: entry.Body, HtmlUrl: entry.HtmlUrl, PublishedAt: entry.PublishedAt}, nil
 		}
@@ -523,13 +555,11 @@ func getChangelog(githubField string, force bool) (ReleaseInfo, error) {
 
 	// Mutate a copy of the existing entry instead of building a literal: a
 	// literal only carries the fields it knows about and silently wipes every
-	// other one (Readme/ReadmeCheckedAt) on each changelog fetch.
+	// other one (Readme/ReadmeCheckedAt) on each changelog fetch. The release half
+	// of the write is applyReleaseOutcome's, shared with the two other passes that
+	// fetch a release; this one only adds its own freshness stamp.
 	updateCacheEntry(repo, func(existing CacheEntry) CacheEntry {
-		e := existing
-		e.Latest = info.Tag
-		e.Body = info.Body
-		e.HtmlUrl = info.HtmlUrl
-		e.PublishedAt = info.PublishedAt
+		e := applyReleaseOutcome(existing, info, nil)
 		e.CheckedAt = time.Now()
 		return e
 	})
@@ -778,6 +808,41 @@ func updateCacheEntry(repo string, mutate func(existing CacheEntry) CacheEntry) 
 	cache := LoadCache()
 	cache[repo] = mutate(cache[repo])
 	SaveCache(cache)
+}
+
+// applyReleaseOutcome folds the result of one /releases/latest fetch into a cache
+// entry. It is the single definition of what a release fetch does to the entry,
+// used by all three passes that make one (getRepoData, getChangelog, SelfLatest)
+// so the two halves of the ReleaseMissing contract — set on a 404, cleared on a
+// fetched release — cannot be maintained by one writer and forgotten by the next.
+//
+// The release tuple is written only on success: it belongs to the shared repo
+// card, and a 404 records the negative in the flag instead of destroying content
+// another feature displays (see CacheEntry.ReleaseMissing). A transient failure
+// (rate limit, network, 5xx) touches nothing at all — the entry stays as it was so
+// the next pass retries. Freshness timestamps are the caller's business: each pass
+// stamps its own (CheckedAt / ReleaseCheckedAt) under its own conclusiveness rule.
+func applyReleaseOutcome(e CacheEntry, info ReleaseInfo, err error) CacheEntry {
+	switch {
+	case err == nil:
+		e.Latest = info.Tag
+		e.Body = info.Body
+		e.HtmlUrl = info.HtmlUrl
+		e.PublishedAt = info.PublishedAt
+		e.ReleaseMissing = false
+	case errors.Is(err, errNoReleases):
+		e.ReleaseMissing = true
+	}
+	return e
+}
+
+// markReleaseMissing records a 404 on its own, for the one caller that observes
+// the negative outside an entry write it was making anyway (getChangelog's error
+// path, which serves the cached tuple and has nothing else to store).
+func markReleaseMissing(repo string) {
+	updateCacheEntry(repo, func(existing CacheEntry) CacheEntry {
+		return applyReleaseOutcome(existing, ReleaseInfo{}, errNoReleases)
+	})
 }
 
 func SaveCache(c Cache) {

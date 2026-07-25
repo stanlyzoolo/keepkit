@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stanlyzoolo/keeptui/internal/loader"
 	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keeptui/internal/model"
 )
 
 func TestHandleCLI(t *testing.T) {
@@ -83,12 +85,86 @@ func TestResolveVersion(t *testing.T) {
 	}
 }
 
+// TestNewRootModelInjectsAppVersion: the model the shipped binary runs must
+// carry this build's version — that injection is the only thing that turns the
+// self-update feature on, and without it every release would ship with no
+// self-check, no banner and no restart offer while the model package's own tests
+// stayed green. Observed through Init's batch, which is where the version has its
+// first user-visible effect: a release build queues the self-check command, a dev
+// build queues nothing extra.
+//
+// The batch is only counted, never executed: the elements are live network
+// fetches. The tool carries no GitHub ref for the same reason (it keeps Init's
+// remote seeds out of the batch) and exists at all so the batch always holds two
+// or more commands — tea.Batch hands back a single command unwrapped, and this
+// asserts on the tea.BatchMsg.
+func TestNewRootModelInjectsAppVersion(t *testing.T) {
+	meta := []loader.ToolMeta{{Name: "localtool"}}
+	batchLen := func(ver string) int {
+		msg := newRootModel(meta, ver).Init()()
+		batch, ok := msg.(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("Init() with version %q produced %T, want a tea.BatchMsg", ver, msg)
+		}
+		return len(batch)
+	}
+	dev := batchLen("dev")
+	if got := batchLen("v0.4.2"); got != dev+1 {
+		t.Errorf("Init queued %d cmds on a release build and %d on a dev build, want exactly one more (the self-check) — is WithAppVersion still wired?", got, dev)
+	}
+}
+
+// TestRestartIfRequested pins the other half of the production wiring: the model
+// p.Run() returns decides whether keeptui re-execs itself. A stand-in supplies
+// the flag because model.Model can only reach it through unexported state.
+func TestRestartIfRequested(t *testing.T) {
+	tests := []struct {
+		name  string
+		final tea.Model
+		want  bool
+	}{
+		{name: "restart requested", final: fakeFinal{restart: true}, want: true},
+		{name: "quit without the restart flag", final: fakeFinal{}},
+		{name: "a real model carries no flag by default", final: model.New(nil)},
+		{name: "a model that cannot answer at all", final: plainFinal{}},
+		{name: "no final model"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			restartIfRequested(tt.final, func() { called = true })
+			if called != tt.want {
+				t.Errorf("restart called = %v, want %v", called, tt.want)
+			}
+		})
+	}
+}
+
+// fakeFinal stands in for the model p.Run() returns after [U] restart.
+type fakeFinal struct{ restart bool }
+
+func (f fakeFinal) Init() tea.Cmd                       { return nil }
+func (f fakeFinal) Update(tea.Msg) (tea.Model, tea.Cmd) { return f, nil }
+func (f fakeFinal) View() string                        { return "" }
+func (f fakeFinal) RestartRequested() bool              { return f.restart }
+
+// plainFinal is a tea.Model with no restart flag at all — the `ok` half of the
+// type assertion, which must not restart.
+type plainFinal struct{}
+
+func (p plainFinal) Init() tea.Cmd                       { return nil }
+func (p plainFinal) Update(tea.Msg) (tea.Model, tea.Cmd) { return p, nil }
+func (p plainFinal) View() string                        { return "" }
+
 // TestMain isolates the files this package can reach for the whole test binary:
 // main calls loader.LoadMeta, and a test here must never touch the developer's
 // real tracker. Mirrors the TestMain in internal/loader, internal/model and
-// internal/version. (The version package's cache/token are reached only through
-// the model, which isolates them in its own TestMain; importing it here would
-// collide with main.go's `version` ldflag variable.)
+// internal/version. (The version package's cache/token are not redirected here:
+// nothing in this package reaches them, because the two tests that build a model
+// only construct it and count Init's batch — no model command is ever executed.
+// A test that does execute one has to redirect them itself, aliasing the import
+// the way main.go does: a plain `version` name would collide with main.go's
+// ldflag variable.)
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "keeptui-main-logs")
 	if err != nil {

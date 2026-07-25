@@ -2,10 +2,20 @@
 
 `keeptui` is a terminal TUI tracker for CLI tools built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 It is a pure TUI: `main.go` is a thin launcher that reads the tracker (`loader.LoadMeta()`),
-sets up the error journal (`logx`) and starts the Bubble Tea model (`model.New(meta)`).
+sets up the error journal (`logx`) and starts the Bubble Tea model
+(`model.New(meta).WithAppVersion(ver)` — the running binary's version, which drives the
+self-check).
 The only CLI surface is `--version`/`-V` and `--help`/`-h` (handled in `main.go`
 before the TUI starts, so `keeptui` can be probed by version detectors — including
 itself); any other argument errors out instead of booting the TUI.
+`main.go` keeps the model `p.Run()` returns for one purpose: `RestartRequested()` is how
+`[U] restart` after a self-update reaches `restartSelf()` (`restart.go` — the shared
+`restartHint` const, the only piece both platforms use; `restart_unix.go` — `syscall.Exec`
+plus the pure `resolveSelfPath` core, none of which the Windows build calls;
+`restart_windows.go` — the print-and-exit degradation).
+Both ends of that wiring sit in named functions outside `runTUI` — `newRootModel(meta, ver)`
+and `restartIfRequested(final, restart)` — because `runTUI` needs a terminal and cannot be
+tested, and those two lines are the whole path from the model logic to the user.
 
 ## Package map
 
@@ -45,7 +55,7 @@ graph TD
 | `internal/proc` | `DetachTTY` — run probes without a controlling terminal; `KillGroup` — process-group SIGKILL (plain `Kill` on Windows) |
 | `internal/ui` | Lip Gloss styles, `PlaceOverlay`, `StripANSI` |
 | `internal/updater` | Detect the package manager that owns an installed binary and produce an update `Plan{Manager, Argv, Display}` |
-| `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`) |
+| `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`); keeptui's own release check (`SelfRepo`, `SelfLatest`) |
 
 `configdir`, `launcher`, `logx`, `proc`, `ui`, `updater` and `version` sit at the bottom of the import graph:
 they know nothing about the TUI (`ui`, `updater` and `version` reach only into
@@ -99,6 +109,11 @@ Message handlers merge without clobbering (installed never resets latest and vic
 versa). On selection change `autoFetchCmdsForSelected()` fills in what's missing —
 the pure predicates `needsInstalled`/`needsRemote`/`needsReadme` skip what is already
 cached.
+
+Two commands in the `Init()` batch belong to no tool: `fetchRateCmd` (seeds the quota
+gauge — warm-cache starts make no other request) and, on release builds only,
+`selfCheckCmd` (keeptui's own latest release; see *Self-update and restart*). Both sit
+at the front of the batch — the README seed has to stay its last element.
 
 ### Probe sandbox
 
@@ -170,6 +185,13 @@ Key invariants:
 - **`m.helpCache` is a `map[string][2]string` whose values are indexed by `m.helpMode`.** README content lives in
   a separate map (`m.readmeData`), so every index site is guarded by a README branch
   first — mode `2` would otherwise run off the end of the array.
+- **One predicate decides who owns panel `[3]`.** An update log can claim the panel
+  either per tool (the buffered tool is the selected one) or regardless of the
+  selection (a self-update — keeptui is typically not tracked and the tracker may be
+  empty). Both cases are the single argument-less `showsUpdateLog()`, used by the inset
+  title, the render branch, the per-chunk repaint, the `setHelpContent` entry gate and
+  the help fetch, so they cannot disagree. Releasing a *completed* self-update's claim
+  is `dismissSelfLog()`.
 
 ## Updating a tool (`u`)
 
@@ -192,6 +214,79 @@ is mandatory, `Wait` before the pipe is drained is forbidden by `os/exec`.
 `waitForChunkCmd` does one receive from the channel and re-creates itself. The log
 lives in `[3] Update` (a ~500-line buffer); the 10-minute deadline ends with
 `proc.KillGroup` on the process group.
+
+## Self-update and restart (`U` / `X`)
+
+keeptui watches its own releases and installs one through the same pipeline as `[u]`.
+**The main case is a keeptui that is not tracked**, which is what shapes the design: no
+step in this path may depend on `meta.yaml`, on a selection or on a card.
+
+`WithAppVersion(v)` injects the running binary's version (a builder, not a `New`
+parameter — the zero value leaves the feature off, so the hundred-odd existing `New(`
+call sites in tests were untouched). `selfCheckEnabled()` — non-empty, not `"dev"`, and not a
+working-copy version (a Go pseudo-version tail or any `+dirty` build metadata, both of
+which `go build .` stamps since Go 1.24) — is the one gate: a dev build makes no request
+and shows no UI. `selfCheckCmd` calls
+`version.SelfLatest()` (one release-only request per 24-hour window, with its own
+`ReleaseCheckedAt` timestamp so it can never mark a repo card as fresh-but-blank) and
+the handler compares the tag against `appVersion` — deliberately not against the
+locally detected installed version, whose fallbacks can report a version that is not
+the one this process is running.
+
+The banner is a five-state machine (`selfState`: none → offered → dismissed, and
+updated → later) with **no "updating" member**: whether a self-update is in flight is
+derived from the pipeline itself (`selfUpdating()`), so the two cannot drift. Every
+site that asks "is this keeptui's own update?" asks one predicate,
+`isSelfUpdate(name)` = the target name *and* the version gate — the name says which
+kind of update it is, the gate says whether that kind exists on this build, and a
+name-only test would switch the entire feature on for a dev build through `u` on a
+tracked `keeptui` row. `U` acts
+(detect, or restart once updated), `X` folds the banner into a compact cell next to the
+quota gauge — a fold, not a cancel, since `U` stays reachable there for the rest of the
+session, and the cell outranks both the gauge and the trailing hints so it survives the
+80-column baseline. Nothing is written to disk. One update runs at a time in both
+directions: `U` and `u` both refuse — with a status message, not silently — while any
+update is running. `U` checks the banner state *before* that refusal, though: with no
+banner up the key is unbound, and since `selfNone` is the only state a dev build ever
+reaches, answering there would give a build with the feature off one audible piece of
+it.
+
+Detection, the confirm dialog and the streaming log are the `[u]` machinery, and the way
+the self case fits into it is a **name**, not a parallel path: the detection result
+carries the target, the handler stores it as `updateTarget`, and everything downstream —
+the confirm dialog, its status bar, the log's claim on panel `[3]`, the completion
+handler — keys off that name instead of `selectedMeta()`, which an untracked keeptui (or
+an empty tracker) cannot answer. So an update of keeptui is a self-update whichever key
+started it, `u` on a tracked keeptui row included — on a build where the feature is
+live; with it gated off that same keypress stays a plain tool update end to end (no
+panel-owning log, no banner, no restart to offer). Two gates still differ: a landed
+detection must match the selection only on the tool path (`acceptsUpdateDetect`; both
+paths refuse while an update runs or an input mode owns the keyboard, since the answer
+can arrive seconds later and a dialog opening under an editor would steal its
+keystrokes), and the completion handler settles the self case ahead of the `toolByName`
+lookup whose early return would otherwise drop the message for an untracked keeptui —
+leaving the update silently finished and `[U] restart` unreachable. Failure writes no
+banner state at all: the banner reappears by itself once the in-flight flag clears, so
+`U` is the retry, a fold stays folded, and an earlier restart offer survives — while
+forcing "offered" there could only walk one of those back, or announce an update with
+no version behind it.
+
+Restart itself is a flag, not an exec: `U` sets `restartRequested` and returns
+`tea.Quit`, and `main` re-execs only after `p.Run()` returned — Bubble Tea has restored
+the terminal by then, whereas exec'ing from inside `Update` would hand the new process
+an alt screen it never opened. `syscall.Exec` with the same argv and environment keeps
+the pid, the terminal tab and the tmux pane. Which binary to exec is decided by the
+pure `resolveSelfPath`, mirroring how a shell resolves the typed command: an argv0
+carrying a path separator is used as-is when it exists, a bare argv0 goes through
+`LookPath` **first** (accepting the hit only when it names the same program as
+`os.Executable()`, since argv0 comes from the parent and a wrapper could point it at
+anything), and `os.Executable()` is only the fallback. That order matters on
+Linux, where `os.Executable()` reads `/proc/self/exe` symlink-resolved and can still
+name the live *old* binary after a keg-style upgrade — exec'ing it would loop restart
+into the same banner. On Windows there is no image-replacing exec, so `restartSelf`
+degrades to printing `keeptui updated — run keeptui again` and exiting; the same hint
+covers a unix resolution or exec failure (on stdout, exit code 0 — the update did
+succeed).
 
 ## Running a tool (`enter`)
 
@@ -223,7 +318,9 @@ Without a token — 60 requests/hour per IP, with a token — 5000. A tool with 
 costs 3 requests at startup, plus one lazy request for the README of the tool opened
 in panel `[3]` (`GET /repos/{owner}/{repo}/readme` with
 `Accept: application/vnd.github.raw+json` — `doGH` only defaults `Accept` when the
-caller left it empty). Token: `GITHUB_TOKEN` from the environment always wins over the
+caller left it empty). On a release build the self-check adds one release-only request
+per 24-hour window; a tracked keeptui shares that cache entry, so a fresh full pass
+makes the check free. Token: `GITHUB_TOKEN` from the environment always wins over the
 `~/.config/keeptui/token` file (`0600`); a token entered in the TUI is validated with a
 `/rate_limit` request before being written to disk.
 
@@ -240,10 +337,19 @@ caller left it empty). Token: `GITHUB_TOKEN` from the environment always wins ov
   back; parallel startup goroutines never clobber each other's repositories. `mutate`
   always mutates a copy of the existing entry instead of building a `CacheEntry{…}`
   literal — a literal silently drops the fields that writer does not know about. The
-  README has its own freshness timestamp (`ReadmeCheckedAt`), separate from the
-  card's `CheckedAt`, so the two poison-guards stay independent. Force refresh (`r`)
-  skips only the freshness check, keeping the merge and the guard against poisoning
-  the cache with an empty response.
+  README and the self-check each have their own freshness timestamp
+  (`ReadmeCheckedAt`, `ReleaseCheckedAt`), separate from the card's `CheckedAt`, so the
+  three poison-guards stay independent: the card's gate has no content check, and a
+  narrower pass stamping the shared timestamp would serve a blank card for the whole
+  TTL. No pass may destroy another's content either: a 404 on `/releases/latest` is
+  remembered in a flag (`ReleaseMissing`, maintained by all three release writers —
+  including the changelog fetch, which is the only one still asking once the card is
+  fresh — through the one shared `applyReleaseOutcome`, so no writer can keep half of
+  the contract) and never by clearing the release tuple the card shows, so the self-check's
+  banner goes quiet while a tracked keeptui keeps its `latest:` line, its date and its
+  changelog.
+  Force refresh (`r`) skips only the freshness check, keeping the merge and the
+  guard against poisoning the cache with an empty response.
 
 ## Storage
 
@@ -252,7 +358,7 @@ The base dir comes from `configdir.Base()`: `~/.config/keeptui` on macOS and Lin
 | Data | Path |
 |---|---|
 | Tracker metadata | `~/.config/keeptui/meta.yaml` |
-| Version + README cache (24h TTL each, separate timestamps) | `~/.config/keeptui/cache.json` |
+| Version, README and self-check cache (24h TTL each, separate timestamps) | `~/.config/keeptui/cache.json` |
 | GitHub token (`0600`) | `~/.config/keeptui/token` |
 | Session error log | `~/.config/keeptui/logs/keeptui-<timestamp>.log` |
 | Pre-migration tracker copy (written once, when a load dropped tags) | `~/.config/keeptui/meta.yaml.bak` |
@@ -291,8 +397,11 @@ Per-test setup still uses the internal seams: `testConfigDir`, `testCacheDir`,
 `testTokenDir`, `testAPIBase`, `testBrewPrefix` (one copy in `version`, a second in
 `updater` — each private to its package), `updater`'s `testHomeDir`, and
 `model`'s `testReadmeStyle` (forces the glamour construction failure so the
-plain-text fallback is covered). The races are real (mutexes in `version`, `logx`),
-so tests always run with `-race`:
+plain-text fallback is covered). `testAPIBase` is private to `version`, so a `model`
+test cannot redirect a fetch at an httptest server — a network command is executed
+there only when the cache can answer it (`seedSelfReleaseCache` for the self-check);
+otherwise `Init` batches are asserted by length, never run. The races are real (mutexes
+in `version`, `logx`), so tests always run with `-race`:
 
 ```bash
 go test -race ./...

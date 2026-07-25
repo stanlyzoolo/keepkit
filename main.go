@@ -132,11 +132,12 @@ func runTUI() {
 		ver, runtime.GOOS, runtime.GOARCH, len(meta), verpkg.TokenSource()))
 
 	p := tea.NewProgram(
-		model.New(meta),
+		newRootModel(meta, ver),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
-	if _, err := p.Run(); err != nil {
+	final, err := p.Run()
+	if err != nil {
 		if errors.Is(err, tea.ErrProgramPanic) {
 			logx.Errorf("tea.Run ended in panic: %v", err)
 		} else {
@@ -144,5 +145,43 @@ func runTUI() {
 		}
 		fmt.Fprintf(os.Stderr, "error running: %v\n", err)
 		os.Exit(1)
+	}
+	restartIfRequested(final, restartSelf)
+}
+
+// newRootModel builds the model tea.NewProgram runs. It is a named function
+// rather than an expression inline in runTUI for the reason resolveSelfPath and
+// shellCommand are: runTUI itself needs a terminal and cannot be tested, so
+// everything it decides without one lives outside it.
+//
+// WithAppVersion hands the model the version of this very binary: it is what the
+// self-check compares against keeptui's latest release, and a dev build
+// (ver == "dev") switches the whole feature off — no request, no banner. Dropping
+// it would leave the self-update feature silently dead in every shipped binary,
+// which is exactly what TestNewRootModelInjectsAppVersion is there to catch.
+func newRootModel(meta []loader.ToolMeta, ver string) model.Model {
+	return model.New(meta).WithAppVersion(ver)
+}
+
+// restarter is the one thing runTUI reads off the model p.Run() returns. It is
+// an interface rather than a model.Model type assertion so the decision below
+// can be exercised with a stand-in: the flag sits in the model's unexported
+// state behind a key press that needs unexported messages to become reachable,
+// so from here no real model can ever answer true. The compile-time assertion
+// below is what pins the real model to it — a renamed method breaks the build
+// instead of the feature.
+type restarter interface{ RestartRequested() bool }
+
+var _ restarter = model.Model{}
+
+// restartIfRequested runs the [U] restart the user accepted after a self-update.
+// The key quits with a flag instead of exec'ing from inside Update: only here,
+// after p.Run() returned, is the terminal restored and the alt screen gone, so
+// the new process starts on a clean one. restart is injected — the same seam
+// idiom as restartSelfWith — because the decision is testable and syscall.Exec
+// is not.
+func restartIfRequested(final tea.Model, restart func()) {
+	if r, ok := final.(restarter); ok && r.RestartRequested() {
+		restart()
 	}
 }
