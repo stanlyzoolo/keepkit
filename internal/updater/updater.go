@@ -142,6 +142,16 @@ func Detect(t loader.Tool) (Plan, error) {
 
 	plan, err := detectFromPath(realPath, buildinfo)
 	if err != nil {
+		// The chain can exhaust with the binary found: a Homebrew cask app keeps
+		// its launcher on PATH while the executable lives inside the .app bundle
+		// (agterm), which matches neither the Cellar regex nor any other manager.
+		// The same self-validating brew-by-name check as the LookPath miss above:
+		// it fires only when a keg/cask directory of that name actually exists.
+		if errors.Is(err, ErrUnknownManager) {
+			if plan, ok := brewNamePlan(t.Name); ok {
+				return plan, nil
+			}
+		}
 		return Plan{}, err
 	}
 
