@@ -7,7 +7,7 @@ Require keepkit
 
 Set Shell "zsh"
 Set FontSize 18
-Set Width 1600
+Set Width 1880
 Set Height 960
 Set Padding 16
 Set Framerate 30
