@@ -1,56 +1,61 @@
-# keepkit hero demo — overview: list, card, README + help nav, search, hotkeys overlay.
+# keepkit hero demo — track a repo, tag it, group by tag, run the tool from the
+# list, then refresh the card while the GitHub API gauge counts the requests.
 # Render: vhs demo/hero.tape  (outputs demo/hero.gif)
 Output demo/hero.gif
 Require keepkit
 
 Set Shell "zsh"
-Set FontSize 16
-Set Width 1200
-Set Height 720
+Set FontSize 18
+Set Width 1600
+Set Height 960
 Set Padding 16
-Set TypingSpeed 55ms
+Set Framerate 30
+Set TypingSpeed 35ms
 
-# clean, neutral prompt for the intro line
+# clean, neutral prompt; force the in-window launch path regardless of the
+# terminal vhs was started from
 Hide
+Type "unset TMUX TERM_PROGRAM KITTY_LISTEN_ON" Enter
 Type "PS1='$ '" Enter
 Type "clear" Enter
 Show
-Sleep 800ms
+Sleep 600ms
 
-Type "keepkit" Sleep 400ms Enter
-Sleep 4s
+Type "keepkit" Sleep 300ms Enter
+Sleep 3s
 
-# browse the tracker list
-Type "j" Sleep 850ms
-Type "j" Sleep 850ms
-Type "j" Sleep 850ms
-Type "j" Sleep 1100ms
-Type "k" Sleep 1100ms
+# track a new tool by GitHub URL
+Type "t" Sleep 300ms
+Type "https://github.com/Epistates/treemd" Sleep 300ms
+Enter Sleep 2.5s
 
-# focus the brief card [2]
-Type "2" Sleep 2600ms
+# tag it: [2] focuses the card, [t] edits the tag
+Type "2" Sleep 300ms
+Type "t" Sleep 300ms
+Type "viewers" Sleep 300ms
+Enter Sleep 1s
 
-# focus the docs panel [3]: it opens on the rendered README, scroll it a bit
-Type "3" Sleep 2000ms
-Type "j" Sleep 700ms
-Type "j" Sleep 1400ms
+# back to the list, [space] groups by tag — treemd sits under its new header
+Type "1" Sleep 300ms
+Space Sleep 2s
+Type "k" Sleep 300ms
+Type "j" Sleep 1s
 
-# switch to --help with [h] and walk entries with j/k (the entry spotlight)
-Type "h" Sleep 1500ms
-Type "j" Sleep 700ms
-Type "j" Sleep 700ms
-Type "j" Sleep 1400ms
+# run it right from keepkit: the prompt is prefilled with the tool name
+Enter Sleep 300ms
+Type " README.md" Sleep 300ms
+Enter Sleep 3.5s
 
-# back to tools [1], live search narrows the list by name
-Type "1" Sleep 800ms
-Type "/" Sleep 700ms
-Type "g" Sleep 900ms
-Type "l" Sleep 2400ms
-Escape Sleep 1200ms
+# a couple of moves inside treemd, then quit — keepkit resumes
+Type "j" Sleep 300ms
+Type "j" Sleep 1.2s
+Type "q" Sleep 1.5s
 
-# hotkeys overlay [?]
-Type "?" Sleep 3500ms
-Escape Sleep 800ms
+# refresh the card a few times — the GitHub API gauge in the corner counts up
+Type "2" Sleep 300ms
+Type "r" Sleep 1.5s
+Type "r" Sleep 1.5s
+Type "r" Sleep 3s
 
 Type "q"
-Sleep 1200ms
+Sleep 1s

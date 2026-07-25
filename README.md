@@ -15,7 +15,7 @@ It keeps your kit in one list: installed and latest versions side by side, repos
 cards, notes and tags — and updates an outdated tool right from the interface.
 Pure TUI, no subcommands; the only flags are `--version` and `--help`.
 
-![keepkit — three-panel overview: tracker list, tool card, docs viewer (README / --help / man), live search and the hotkeys overlay](demo/hero.gif)
+![keepkit — track a repo by URL, tag it, group the list by tag, run the tool right from the tracker, then refresh the card while the GitHub API gauge counts requests](demo/hero.gif)
 
 ## Contents
 
@@ -132,7 +132,7 @@ A new tool gets the `trying` status.
 
 ## Updating tools
 
-![in-TUI update — detect the manager, confirm the command, stream the log into panel [3]](demo/update.gif)
+![in-TUI update — the card shows installed vs latest, [u] detects the manager, the log streams into panel [3], refresh confirms the new version](demo/update.gif)
 
 When the installed version lags behind the latest release (the `↑` marker), press `u`
 on the tool card. keepkit detects the package manager the binary was installed with:
@@ -143,10 +143,12 @@ on the tool card. keepkit detects the package manager the binary was installed w
 - `pipx` — a venv in `~/.local/pipx/venvs/<pkg>/` → `pipx upgrade <pkg>`;
 - `npm` — a global `node_modules/<pkg>` → `npm install -g <pkg>`.
 
-If the tool has no binary of its own on `PATH`, one more check runs before giving up:
-a Homebrew keg or cask named after the tool → `brew upgrade <name>`. That covers
-formulae whose binaries are named differently — `rust` installs `rustc` and `cargo`,
-so there is no `rust` binary to detect from.
+If the binary cannot be attributed to any of those — or the tool has no binary of
+its own on `PATH` at all — one more check runs before giving up: a Homebrew keg or
+cask named after the tool → `brew upgrade <name>`. That covers formulae whose
+binaries are named differently (`rust` installs `rustc` and `cargo`, so there is no
+`rust` binary to detect from) and cask apps whose executable lives inside the `.app`
+bundle, where the path itself names no manager.
 
 The command is shown in the status bar for confirmation; its output streams into
 panel `[3] Update` in real time and the TUI stays responsive. After a successful
