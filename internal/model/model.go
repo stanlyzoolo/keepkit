@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -123,14 +124,69 @@ const (
 // final "installed"/error lines); older output can be dropped without loss.
 const updateLogMaxLines = 500
 
+// updateBusyStatus is what [u] and [U] report while another update runs (one at
+// a time, no queue). Shared so the two refusals cannot word it differently.
+const updateBusyStatus = "another update is running"
+
+// selfToolName is the name keeptui uses for itself inside the update pipeline:
+// the updater's detection target, the updatingFor/updateLogFor guard value and
+// the label the confirm bar and status messages show. A constant rather than a
+// meta.yaml lookup — the feature's main case is a keeptui that is not tracked.
+const selfToolName = "keeptui"
+
+// selfState is the self-update banner's state machine. There is deliberately no
+// "updating" member: whether a self-update is in flight is derived from the
+// update pipeline itself (selfUpdating), so the two can never disagree.
+//
+//	selfNone         no newer release known — no banner at all
+//	selfOffered      full banner: "keeptui <v> available — [U] update  [X] dismiss"
+//	selfDismissed    collapsed to a compact "keeptui ↑ [U]" cell by the gauge
+//	selfUpdated      full banner: "keeptui updated — [U] restart  [X] later"
+//	selfUpdatedLater collapsed to a compact "keeptui [U] restart" cell
+//
+// Five sites switch on it — [U] (selfUpdateKey), [X], selfBannerCells,
+// selfCompactCell and the [?] Self group — and .golangci.yml carries no
+// exhaustiveness linter, so a sixth member would compile while silently missing
+// some of them. Every one of those switches therefore enumerates the whole enum
+// and ends in a default (the two key handlers log there), and
+// TestSelfStateSitesAreExhaustive walks selfNone..selfStateCount through all
+// five. selfStateCount must stay last.
+type selfState int
+
+const (
+	selfNone selfState = iota
+	selfOffered
+	selfDismissed
+	selfUpdated
+	selfUpdatedLater
+	selfStateCount
+)
+
+// selfCheckMsg carries the result of the startup self-check — keeptui's own
+// latest release tag. An empty latest with a nil error is the conclusive answer
+// "no release published", not a failure. The comparison deliberately lives in
+// the handler rather than the command, so it runs against the model's
+// appVersion (the version of the running binary).
+type selfCheckMsg struct {
+	latest string
+	err    error
+}
+
 // updateDetectedMsg carries the result of updater.Detect for a tool, run in a
 // tea.Cmd because detection spawns subprocesses (go version -m, cargo install
 // --list) and must never run on the Update thread. The handler enters the
 // confirm mode on success and shows a hint on ErrUnknownManager.
+//
+// self marks a detection fired by the self-update banner ([U]) rather than by
+// [u] on a tracked tool row. The two differ in what makes a landed result still
+// relevant: a tool result must match the selection, while keeptui's own has no
+// selection to match (the main case is a keeptui that is not tracked) — see
+// acceptsUpdateDetect.
 type updateDetectedMsg struct {
 	tool string
 	plan updater.Plan
 	err  error
+	self bool
 }
 
 // updateChunkMsg carries one segment of the running update's merged
@@ -237,14 +293,37 @@ type Model struct {
 	// updatingFor twins refreshingFor for the in-TUI update flow: it holds the
 	// name of the tool currently being updated (empty = idle), drives the card
 	// spinner and doubles as the single-update-at-a-time guard. updatePlan is
-	// the plan awaiting confirmation in modeConfirmUpdate. updateLog is the live
-	// merged stdout+stderr buffer for panel [3]; updateLogFor is the tool it
-	// belongs to, so navigating away shows normal help and navigating back shows
-	// the log again (the buffer survives until the next update starts).
+	// the plan awaiting confirmation in modeConfirmUpdate and updateTarget the
+	// name it belongs to — resolved when the plan was detected, not when enter
+	// is pressed, so the dialog cannot be retargeted by a selection move and
+	// keeptui's own update (which has no row, and no selection when the tracker
+	// is empty) needs no separate identity. updateLog is the live merged
+	// stdout+stderr buffer for panel [3]; updateLogFor is the tool it belongs to,
+	// so navigating away shows normal help and navigating back shows the log
+	// again (the buffer survives until the next update starts).
 	updatingFor  string
 	updatePlan   updater.Plan
+	updateTarget string
 	updateLog    []string
 	updateLogFor string
+
+	// appVersion is the version of the running binary (ldflag or buildinfo,
+	// injected by WithAppVersion) and the gate for the whole self-update
+	// feature: empty or "dev" means no self-check request and no banner. It is
+	// also what the latest release is compared against — deliberately not
+	// m.versions[selfToolName].Installed, whose three detection fallbacks
+	// (--version, brew dir, cargo install --list) can report a version that is
+	// not the one this process is running.
+	appVersion string
+	// selfLatest is keeptui's own latest release tag and selfState the banner
+	// state machine (see selfState). selfUpdateLog marks the live [3] log as
+	// keeptui's own, so it stays visible regardless of the selection — an
+	// untracked keeptui has no row to select. restartRequested is the exit flag
+	// main reads off the model p.Run() returns.
+	selfLatest       string
+	selfState        selfState
+	selfUpdateLog    bool
+	restartRequested bool
 
 	meta []loader.ToolMeta
 	// metaSelected is an index into filteredMeta() — a tool index, never a
@@ -387,11 +466,222 @@ func New(meta []loader.ToolMeta) Model {
 	return m
 }
 
+// WithAppVersion injects the running binary's version (main.buildVersion) and is
+// what switches the self-update feature on. A builder rather than a New
+// parameter because New( is called from a hundred-odd tests: the zero value
+// leaves the feature off, so none of them had to change.
+func (m Model) WithAppVersion(v string) Model {
+	m.appVersion = v
+	return m
+}
+
+// RestartRequested reports whether the user accepted [U] restart after a
+// successful self-update. main reads it off the model p.Run() returns — after
+// Bubble Tea has restored the terminal — and re-execs the new binary.
+func (m Model) RestartRequested() bool { return m.restartRequested }
+
+// selfCheckEnabled gates the self-check: a build with no release behind it has
+// no version worth comparing against a release tag, so it makes no request and
+// shows no banner.
+//
+// "dev" is the ldflag default, but it is not the only shape a working copy
+// reports. Since Go 1.24 a plain `go build .` / `go install .` stamps the module
+// version from VCS, so this project's own documented dev commands yield a
+// pseudo-version (v0.0.0-20260725115912-1be4bafa79c8) or, with uncommitted
+// changes, a +dirty suffix. Those canonicalize as valid semver pre-releases that
+// sort below every real tag, so without this check a developer's own build would
+// announce an update and offer to overwrite itself with the latest release.
+func (m Model) selfCheckEnabled() bool {
+	return m.appVersion != "" && m.appVersion != "dev" && !isDevVersion(m.appVersion)
+}
+
+// pseudoVersionRe matches the Go pseudo-version suffix — a 14-digit UTC
+// timestamp plus a 12-char commit prefix — which is common to all three of its
+// forms (vX.0.0-<ts>-<hash>, vX.Y.Z-0.<ts>-<hash>, vX.Y.Z-pre.0.<ts>-<hash>).
+// The separator before the timestamp is a dash in the first form and a dot in
+// the other two, where the timestamp extends an existing pre-release.
+var pseudoVersionRe = regexp.MustCompile(`[-.][0-9]{14}-[0-9a-f]{12}$`)
+
+// isDevVersion reports whether v describes a working copy rather than a release.
+// Build metadata is enough on its own: buildinfo appends +dirty for uncommitted
+// changes and no release tag of this project carries a + at all.
+func isDevVersion(v string) bool {
+	if strings.Contains(v, "+") {
+		return true
+	}
+	return pseudoVersionRe.MatchString(v)
+}
+
+// isSelfUpdate reports whether an update of the named tool is keeptui's own
+// self-update — the one that owns panel [3] under every selection and ends in the
+// [U] restart offer — rather than a plain tool update. Every update of keeptui is
+// a self-update regardless of which key started it, so the target name decides
+// which *kind* of update it is; but the feature as a whole is gated on the running
+// build having a release behind it, exactly like the startup check
+// (selfCheckEnabled), and the name alone would smuggle it past that gate.
+//
+// The gate is not cosmetic. On a dev build there is no check, no banner and
+// nothing to compare, so [u] on a tracked keeptui row must stay what it is for
+// every other row: a plain tool update. Announcing a restart there would also be
+// a lie — a working copy's argv0 carries a path separator, so resolveSelfPath
+// re-execs that very binary and would silently return the user to the pre-update
+// version.
+func (m Model) isSelfUpdate(name string) bool {
+	return name == selfToolName && m.selfCheckEnabled()
+}
+
+// selfUpdating reports whether the update currently in flight is keeptui's own.
+// Derived from the update pipeline's own state instead of a selfState member, so
+// "a self-update is running" can never drift out of sync with updatingFor.
+func (m Model) selfUpdating() bool {
+	return m.isSelfUpdate(m.updatingFor)
+}
+
+// selfTool is the updater's detection target for keeptui itself. A tracked
+// keeptui is used as tracked, so a update_cmd override in meta.yaml governs the
+// self-update exactly as it governs a [u] on that row; otherwise the entry is
+// synthesized — the feature's main case is a keeptui that is not in the tracker
+// at all, and updater.Detect only needs the name (plus the override).
+func (m Model) selfTool() loader.Tool {
+	if t, ok := m.toolByName(selfToolName); ok {
+		return t
+	}
+	// The GitHub field carries the same host-prefixed form every tracked tool
+	// has ("github.com/owner/repo"), the shape openURLCmd and NormalizeRepo
+	// expect — updater.Detect ignores it, but a wrong-shaped value here would be
+	// a trap for the next reader of the synthesized entry.
+	return loader.Tool{Name: selfToolName, GitHub: "github.com/" + version.SelfRepo}
+}
+
+// showsUpdateLog reports whether panel [3] currently belongs to an update log
+// instead of help. Two ways to own the panel: the selected tool is the one whose
+// log is buffered (the tool path — the buffer is sticky per tool, so navigating
+// away shows normal help and navigating back shows the log again), or the log is
+// keeptui's own, which stays visible regardless of the selection because an
+// untracked keeptui has no row to select and the tracker can even be empty.
+//
+// The single predicate every updateLogFor-bound site shares — the inset title,
+// the renderHelpContent branch, the per-chunk repaint, the setHelpContent entry
+// gate and the help fetch — so they can never disagree about who owns [3].
+func (m Model) showsUpdateLog() bool {
+	if m.selfUpdateLog {
+		return true
+	}
+	if m.updateLogFor == "" {
+		return false
+	}
+	mt, ok := m.selectedMeta()
+	return ok && mt.Name == m.updateLogFor
+}
+
+// dismissSelfLog releases a *completed* self-update log's claim on panel [3],
+// reporting whether it did. A live self-update keeps the panel — the log is the
+// only place its output is visible. Called from the paths that mean "show me
+// something else": an explicit [h]/[m]/[r] and a selection move.
+//
+// Only the override is dropped, not updateLogFor: a tracked keeptui keeps the
+// same per-tool stickiness every other tool has.
+func (m *Model) dismissSelfLog() bool {
+	if !m.selfUpdateLog || m.selfUpdating() {
+		return false
+	}
+	m.selfUpdateLog = false
+	return true
+}
+
+// selfUpdateKey is what [U] does: start the offered self-update, or quit into the
+// restart once one has finished. A named helper like every other multi-step key
+// (toggleGroupByTag, switchHelpMode), so the normal-mode switch keeps one line
+// per key instead of the two guards plus a nested switch this needs.
+//
+// With no banner on screen (selfNone) the key is unbound — and on a dev build
+// that is the only reachable state, where the feature is documented as absent end
+// to end. So the "one update at a time" refusal is checked *after* the state,
+// never before it: answering `another update is running` there would make U the
+// one audible piece of a self-update surface that is supposed to be off.
+func (m *Model) selfUpdateKey() tea.Cmd {
+	if m.selfState == selfNone {
+		return nil
+	}
+	// One update at a time, self or tool: while updatingFor is set the key
+	// reports itself instead of doing nothing — the banner on screen still
+	// advertises [U], and during a *tool* update the only other indicator is a
+	// card spinner that is invisible unless that tool is selected.
+	if m.updatingFor != "" {
+		return m.setStatus(updateBusyStatus)
+	}
+	switch m.selfState {
+	case selfOffered, selfDismissed:
+		// Detection spawns subprocesses (go version -m, cargo install --list),
+		// so it can only run as a command. The banner state is deliberately left
+		// alone — until the confirm dialog takes over, U stays a retry.
+		return detectUpdateCmd(m.selfTool(), true)
+	case selfUpdated, selfUpdatedLater:
+		// The new binary is on disk; only this process is still the old one.
+		// Quitting is the whole restart from the model's side: the flag rides the
+		// final model out of p.Run(), and main re-execs after Bubble Tea has
+		// restored the terminal — doing it from inside Update would exec on top
+		// of the alt screen.
+		m.restartRequested = true
+		return tea.Quit
+	case selfNone:
+		// Unreachable — the early return above owns it — but named so that the
+		// switch enumerates the whole enum like every other selfState site.
+	default:
+		logx.Errorf("self-update: [U] on unhandled selfState %d", m.selfState)
+	}
+	return nil
+}
+
+// acceptsUpdateDetect reports whether a landed detection result may still open
+// the confirm dialog. Both paths refuse while an update runs (one at a time, no
+// queue) and while any input mode owns the keyboard: detection spawns
+// subprocesses and the answer can arrive seconds later, so a confirm dialog
+// opening under an editor, a search or an overlay would steal the keystroke
+// aimed at it (the same reasoning as launchDoneMsg's mode gate). Beyond that a
+// tool result must still match the selection — the user may have moved on —
+// while keeptui's own has no selection to match: it is typically untracked and
+// the tracker may be empty.
+func (m Model) acceptsUpdateDetect(msg updateDetectedMsg) bool {
+	if m.updatingFor != "" || m.mode != modeNormal {
+		return false
+	}
+	if msg.self {
+		return true
+	}
+	mt, ok := m.selectedMeta()
+	return ok && mt.Name == msg.tool
+}
+
+// recordUpdateFailure seeds the live log with the exit error when the command
+// produced no output at all (empty argv, missing manager binary,
+// StdoutPipe/Start error, immediate non-zero exit) — otherwise [3] would still
+// read "starting update…" while the status bar points there for the reason — and
+// records the failure for post-hoc research. The update argv never carries the
+// token and msg.err is an exec/exit error, so both stay token-free.
+func (m *Model) recordUpdateFailure(msg updateDoneMsg) {
+	if m.updateLogFor == msg.tool && len(m.updateLog) == 0 {
+		m.updateLog = append(m.updateLog, "update failed: "+msg.err.Error())
+		if m.showsUpdateLog() {
+			m.helpViewport.SetContent(m.renderHelpContent())
+			m.helpViewport.GotoBottom()
+		}
+	}
+	logx.Errorf("update failed: tool=%s manager=%s err=%v tail=%q",
+		msg.tool, m.updatePlan.Manager, msg.err, tailLines(m.updateLog, 5))
+}
+
 func (m Model) Init() tea.Cmd {
 	cmds := make([]tea.Cmd, 0, len(m.tools)*2+1)
 	// Seed the rate-limit signal up front; on warm-cache starts remote fetches
 	// make no request, so this is the only observation that populates m.rate.
 	cmds = append(cmds, fetchRateCmd())
+	// Right after the rate seed and deliberately not last: the README seed at the
+	// end of this function has to stay the final element of the batch
+	// (TestInitFetchesReadmeForSelected executes it).
+	if m.selfCheckEnabled() {
+		cmds = append(cmds, selfCheckCmd())
+	}
 	for _, t := range m.tools {
 		cmds = append(cmds, fetchInstalledCmd(t))
 		if t.GitHub != "" {
@@ -532,6 +822,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case selfCheckMsg:
+		// The startup self-check answered. A failure (rate limit, network, 5xx)
+		// leaves the state at selfNone: no banner, the rest of the app is
+		// unaffected, and the record was already written inside version (doGH /
+		// classifyStatus) — selfCheckCmd itself logs nothing, see its comment.
+		// An empty tag is the conclusive "no release published" answer and means
+		// no banner either. Only a state that has not been acted on is written —
+		// in either direction: neither the "not newer" path nor a newer tag may
+		// walk back a dismissal, a finished update or a pending restart, and the
+		// check answers once per session anyway.
+		if msg.err != nil || msg.latest == "" || m.selfState != selfNone {
+			return m, nil
+		}
+		if version.IsNewer(m.appVersion, msg.latest) {
+			m.selfLatest = msg.latest
+			m.selfState = selfOffered
+		}
+		return m, nil
+
 	case spinner.TickMsg:
 		// Animate while a refresh ([r]) or an update ([u]) is in flight; once
 		// both refreshingFor and updatingFor are cleared (by the remoteMsg /
@@ -656,22 +965,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case updateDetectedMsg:
-		// Detection result for a [u] press. Drop it if the target is no longer
-		// the selected tool (the user moved on) or an update is already running.
-		// ErrUnknownManager is not a dead-end dialog — just a hint pointing at
-		// update_cmd / manual install. On success, stash the plan and open the
-		// confirm dialog.
-		mt, ok := m.selectedMeta()
-		if !ok || mt.Name != msg.tool || m.updatingFor != "" {
+		// Detection result for a [u] (tool) or [U] (keeptui itself) press; the
+		// relevance gate differs per path, see acceptsUpdateDetect. A dropped
+		// result changes nothing — for the self path the banner stays at
+		// selfOffered, where [U] is a retry. ErrUnknownManager is not a dead-end
+		// dialog either, just a hint: the tool path can point at update_cmd, while
+		// keeptui's own manual route is whatever installed it. On success, stash
+		// the plan together with the name it was detected for (which the confirm
+		// dialog and its status bar read) and open the confirm dialog.
+		if !m.acceptsUpdateDetect(msg) {
 			return m, nil
 		}
 		if msg.err != nil {
 			if errors.Is(msg.err, updater.ErrUnknownManager) {
+				// The wording branches on what the target *is*, not on which key
+				// asked: the same failure of the same binary must read the same
+				// way from [U] and from [u] on a tracked keeptui row (see
+				// isSelfUpdate). msg.self keeps the one meaning only it has — "no
+				// selection to match" — in acceptsUpdateDetect.
+				if m.isSelfUpdate(msg.tool) {
+					return m, m.setStatus("no known updater for " + selfToolName + " — update manually")
+				}
 				return m, m.setStatus("no known updater for " + msg.tool + " — set update_cmd or [o] releases")
 			}
 			return m, m.setStatus("update detect failed: " + msg.err.Error())
 		}
 		m.updatePlan = msg.plan
+		m.updateTarget = msg.tool
 		m.mode = modeConfirmUpdate
 		return m, nil
 
@@ -692,10 +1012,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.updateLog) > updateLogMaxLines {
 				m.updateLog = m.updateLog[len(m.updateLog)-updateLogMaxLines:]
 			}
-			// Repaint [3] and autoscroll only when the updating tool is the one
-			// selected; a chunk for a backgrounded update leaves the visible
-			// panel (another tool's help) untouched.
-			if mt, ok := m.selectedMeta(); ok && mt.Name == m.updateLogFor {
+			// Repaint [3] and autoscroll only while the log is the panel's
+			// content; a chunk for a backgrounded tool update leaves the visible
+			// panel (another tool's help) untouched, while a self-update's log
+			// owns the panel regardless of the selection.
+			if m.showsUpdateLog() {
 				m.helpViewport.SetContent(m.renderHelpContent())
 				m.helpViewport.GotoBottom()
 			}
@@ -708,6 +1029,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// rescheduling itself; the live log in [3] survives until the next
 		// update begins. Re-render the card so its title drops the spinner.
 		m.updatingFor = ""
+		// keeptui's own update is settled first, ahead of the toolByName lookup:
+		// that early return drops the message whenever the tool is not tracked,
+		// which for keeptui is the normal case — the update would finish silently
+		// and the [U] restart offer would never appear. The discriminator is
+		// isSelfUpdate, not the bare name: an update of keeptui is a self-update
+		// whichever key started it (so [u] on a tracked keeptui row ends here too
+		// and offers the same restart instead of leaving a banner that contradicts
+		// the card), but only on a build where the feature is live at all — on a dev
+		// build the same keypress falls through to the plain tool path below.
+		if m.isSelfUpdate(msg.tool) {
+			m.briefViewport.SetContent(m.renderCard())
+			if msg.err != nil {
+				// selfState is deliberately left exactly as it was found. Whatever
+				// the banner showed before the update it shows again the moment
+				// updatingFor clears: the offer, where [U] is the retry, or the
+				// compact cell when [X] folded it mid-update, or nothing at all when
+				// the check never offered anything. Forcing selfOffered here instead
+				// announced "keeptui  available" with no version behind it whenever
+				// the update started from selfNone (a rate-limited or offline startup
+				// check, a check that said "not newer", or [u] on a tracked row), and
+				// it replaced a pending [U] restart from an earlier successful update
+				// with that same empty banner.
+				statusCmd := m.setStatus("update failed — see [3]")
+				m.recordUpdateFailure(msg)
+				return m, statusCmd
+			}
+			m.selfState = selfUpdated
+			statusCmd := m.setStatus("updated " + selfToolName)
+			// The new binary is on disk, but this process is still the old one —
+			// only a tracked keeptui has a card and a ↑ marker for the re-detect
+			// to update.
+			if t, tracked := m.toolByName(msg.tool); tracked {
+				return m, tea.Batch(statusCmd, fetchInstalledCmd(t))
+			}
+			return m, statusCmd
+		}
 		// A tool untracked mid-update is no longer in m.tools: just drop the
 		// guard — no re-fetch, no statusMsg reaching into a card that is gone.
 		t, ok := m.toolByName(msg.tool)
@@ -717,24 +1074,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			statusCmd := m.setStatus("update failed — see [3]")
-			// A command that fails before emitting any output (empty argv, missing
-			// manager binary, StdoutPipe/Start error, immediate non-zero exit)
-			// leaves updateLog empty, so [3] would still read "starting update…"
-			// while the status bar points there for the reason. Seed the log with
-			// the error so [3] shows it. The argv never carries the token and
-			// msg.err is an exec/exit error, so this stays token-free.
-			if m.updateLogFor == msg.tool && len(m.updateLog) == 0 {
-				m.updateLog = append(m.updateLog, "update failed: "+msg.err.Error())
-				if mt, ok := m.selectedMeta(); ok && mt.Name == msg.tool {
-					m.helpViewport.SetContent(m.renderHelpContent())
-					m.helpViewport.GotoBottom()
-				}
-			}
-			// Record the failure for post-hoc research: manager, exit error and
-			// the tail of the log. The update argv never carries the token, and
-			// nothing here reads it, so the log stays token-free.
-			logx.Errorf("update failed: tool=%s manager=%s err=%v tail=%q",
-				msg.tool, m.updatePlan.Manager, msg.err, tailLines(m.updateLog, 5))
+			m.recordUpdateFailure(msg)
 			m.briefViewport.SetContent(m.renderCard())
 			return m, statusCmd
 		}
@@ -1213,16 +1553,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.focus == focusBrief {
 				// Update the selected tool: only when it has a pending release
 				// (else a hint) and no update is already running (one at a time,
-				// no queue). Detection spawns subprocesses, so it runs in a
+				// no queue — the refusal reports itself like every other blocked
+				// action here). Detection spawns subprocesses, so it runs in a
 				// tea.Cmd — the updateDetectedMsg handler opens the confirm mode.
 				if m.updatingFor != "" {
-					return m, nil
+					return m, m.setStatus(updateBusyStatus)
 				}
 				if t, ok := m.selectedTool(); ok {
 					if !m.hasUpdate(t.Name) {
 						return m, m.setStatus("no update available for " + t.Name)
 					}
-					return m, detectUpdateCmd(t)
+					return m, detectUpdateCmd(t, false)
 				}
 			}
 
@@ -1288,6 +1629,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// every input mode's handler returns earlier, so ? typed into a
 			// search/note/token field stays literal text.
 			m.mode = modeHotkeys
+			return m, nil
+
+		case "U":
+			// The self-update banner's action key, live in every focus and in
+			// both the full banner and its collapsed cell. Reached only in
+			// modeNormal — like L, every input mode's handler returns earlier,
+			// so a capital U typed into a search/note/token field stays text.
+			return m, m.selfUpdateKey()
+
+		case "X":
+			// Fold the banner into its compact right-group cell. Session-only —
+			// nothing is written to disk, and [U] stays reachable there.
+			switch m.selfState {
+			case selfOffered:
+				m.selfState = selfDismissed
+			case selfUpdated:
+				m.selfState = selfUpdatedLater
+			case selfNone, selfDismissed, selfUpdatedLater:
+				// Nothing to fold: no banner, or it is already the compact cell.
+			default:
+				logx.Errorf("self-update: [X] on unhandled selfState %d", m.selfState)
+			}
 			return m, nil
 		}
 		// No keyboard fall-through into viewport.Update: every scroll key is bound
@@ -1559,6 +1922,10 @@ func (m Model) filteredMeta() []loader.ToolMeta {
 // cannot drift between call sites.
 func (m *Model) selectMeta(idx int) tea.Cmd {
 	m.metaSelected = idx
+	// Moving to a tool is intent to see that tool: a completed self-update log
+	// would otherwise hold [3] for every row (it is selection-independent by
+	// design), with no way back to help. A live one keeps the panel.
+	m.dismissSelfLog()
 	m.setToolsContent()
 	m.briefViewport.GotoTop()
 	m.briefViewport.SetContent(m.renderCard())
@@ -1597,10 +1964,12 @@ func (m *Model) setHelpContent() {
 	m.helpEntries = nil
 	m.helpNavIdx = -1
 	m.helpBase = ""
-	// The update log and the loading state render instead of help text; both
-	// leave the entry index empty so j/k stay plain scroll. A cache miss or
-	// stored "No --help output…" fallback yields no entries via the parser.
-	if mt, ok := m.selectedMeta(); ok && m.updateLogFor != mt.Name {
+	// The update log (a tool's or keeptui's own — showsUpdateLog covers both) and
+	// the loading state render instead of help text; both leave the entry index
+	// empty so j/k stay plain scroll instead of driving a spotlight over log
+	// lines. A cache miss or stored "No --help output…" fallback yields no
+	// entries via the parser.
+	if mt, ok := m.selectedMeta(); ok && !m.showsUpdateLog() {
 		switch {
 		case m.helpMode == helpModeReadme:
 			// README mode: helpBase holds the glamour render (memoized — this
@@ -1630,13 +1999,21 @@ func (m *Model) setHelpContent() {
 // caller: [h]/[m] fire from [2] as well and move focus, [r] is focusHelp-only.
 func (m *Model) switchHelpMode(mode int) tea.Cmd {
 	m.helpMode = mode
+	// An explicit mode switch is intent to leave a completed update log
+	// (otherwise sticky), keeptui's own included — and that one is not tied to a
+	// selection, so it is released before the guard below, which returns early on
+	// an empty tracker. There the repaint has to happen here: nothing else
+	// re-renders [3] with no tool to select.
+	dropped := m.dismissSelfLog()
 	mt, ok := m.selectedMeta()
 	if !ok {
+		if dropped {
+			m.setHelpContent()
+		}
 		return nil
 	}
-	// An explicit mode switch is intent to leave a completed update log
-	// (otherwise sticky on re-selection); a live update (updatingFor == name)
-	// keeps the panel.
+	// The same intent for a tool's log; a live update (updatingFor == name) keeps
+	// the panel.
 	if m.updateLogFor == mt.Name && m.updatingFor != mt.Name {
 		m.updateLogFor = ""
 	}

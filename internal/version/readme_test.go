@@ -11,44 +11,6 @@ import (
 	"time"
 )
 
-// readmeServer spins up an httptest server that answers /readme from a
-// caller-controlled handler and every other endpoint with plausible repo data,
-// wiring testAPIBase/testCacheDir to it for the duration of the test.
-func readmeServer(t *testing.T, readme http.HandlerFunc) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/readme"):
-			readme(w, r)
-		case strings.HasSuffix(r.URL.Path, "/languages"):
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]int{"Go": 100})
-		case strings.HasSuffix(r.URL.Path, "/latest"):
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v1.0.0", "body": "notes"})
-		default:
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"archived": false, "description": "tool", "stargazers_count": 3,
-			})
-		}
-	}))
-	origAPIBase := testAPIBase
-	origCacheDir := testCacheDir
-	testAPIBase = srv.URL
-	testCacheDir = t.TempDir()
-	// Redirect the token too: without this the tests read the developer's real
-	// ~/.config/keeptui/token and doGH sends it to this local server.
-	t.Setenv("GITHUB_TOKEN", "")
-	resetTokenState(t, t.TempDir())
-	t.Cleanup(func() {
-		srv.Close()
-		testAPIBase = origAPIBase
-		testCacheDir = origCacheDir
-	})
-	return srv
-}
-
 // TestGetReadmeSuccessAndCache verifies the raw markdown round-trip, that the
 // raw media type reaches the API, and that a second call within TTL is served
 // from cache.json without a second request.
@@ -57,14 +19,14 @@ func TestGetReadmeSuccessAndCache(t *testing.T) {
 	var mu sync.Mutex
 	requests := 0
 	accepts := []string{}
-	readmeServer(t, func(w http.ResponseWriter, r *http.Request) {
+	apiServer(t, apiHandlers{readme: func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		requests++
 		accepts = append(accepts, r.Header.Get("Accept"))
 		mu.Unlock()
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(body))
-	})
+	}})
 
 	got, err := GetReadme("github.com/owner/repo")
 	if err != nil {
@@ -110,9 +72,9 @@ func TestGetReadmeSuccessAndCache(t *testing.T) {
 
 // TestGetReadmeNotFound verifies a 404 maps to the typed ErrNoReadme.
 func TestGetReadmeNotFound(t *testing.T) {
-	readmeServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	apiServer(t, apiHandlers{readme: func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	})
+	}})
 
 	_, err := GetReadme("github.com/owner/repo")
 	if !errors.Is(err, ErrNoReadme) {
@@ -123,10 +85,10 @@ func TestGetReadmeNotFound(t *testing.T) {
 // TestGetReadmeRateLimited verifies a 403 with an exhausted quota maps to
 // ErrRateLimited, the same classification the other fetchers produce.
 func TestGetReadmeRateLimited(t *testing.T) {
-	readmeServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	apiServer(t, apiHandlers{readme: func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-RateLimit-Remaining", "0")
 		w.WriteHeader(http.StatusForbidden)
-	})
+	}})
 
 	_, err := GetReadme("github.com/owner/repo")
 	if !errors.Is(err, ErrRateLimited) {
@@ -139,13 +101,13 @@ func TestRefreshReadmeBypassesTTL(t *testing.T) {
 	var mu sync.Mutex
 	body := "first"
 	requests := 0
-	readmeServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	apiServer(t, apiHandlers{readme: func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		requests++
 		b := body
 		mu.Unlock()
 		_, _ = w.Write([]byte(b))
-	})
+	}})
 
 	if _, err := GetReadme("github.com/owner/repo"); err != nil {
 		t.Fatalf("setup GetReadme: %v", err)
@@ -175,7 +137,7 @@ func TestRefreshReadmeBypassesTTL(t *testing.T) {
 func TestGetReadmeFailureKeepsCached(t *testing.T) {
 	var mu sync.Mutex
 	fail := false
-	readmeServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	apiServer(t, apiHandlers{readme: func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		f := fail
 		mu.Unlock()
@@ -184,7 +146,7 @@ func TestGetReadmeFailureKeepsCached(t *testing.T) {
 			return
 		}
 		_, _ = w.Write([]byte("# cached docs"))
-	})
+	}})
 
 	if _, err := GetReadme("github.com/owner/repo"); err != nil {
 		t.Fatalf("setup GetReadme: %v", err)
@@ -220,9 +182,9 @@ func TestGetReadmeFailureKeepsCached(t *testing.T) {
 // README fields over from the existing entry — a CacheEntry{...} literal there
 // silently wiped them on every changelog fetch.
 func TestGetChangelogPreservesReadme(t *testing.T) {
-	readmeServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	apiServer(t, apiHandlers{readme: func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("# keep me"))
-	})
+	}})
 
 	if _, err := GetReadme("github.com/owner/repo"); err != nil {
 		t.Fatalf("setup GetReadme: %v", err)
@@ -248,42 +210,22 @@ func TestGetChangelogPreservesReadme(t *testing.T) {
 func TestGetReadmeDoesNotRefreshRepoCard(t *testing.T) {
 	var mu sync.Mutex
 	infoRequests := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/readme"):
-			_, _ = w.Write([]byte("# docs"))
-		case strings.HasSuffix(r.URL.Path, "/languages"):
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]int{"Go": 1})
-		case strings.HasSuffix(r.URL.Path, "/latest"):
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v2.0.0"})
-		default:
-			mu.Lock()
-			infoRequests++
-			n := infoRequests
-			mu.Unlock()
-			if n == 1 {
-				// First repo-info pass is rate-limited: the entry must stay stale.
-				w.Header().Set("X-RateLimit-Remaining", "0")
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"archived": false, "description": "recovered", "stargazers_count": 7,
-			})
+	apiServer(t, apiHandlers{repoInfo: func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		infoRequests++
+		n := infoRequests
+		mu.Unlock()
+		if n == 1 {
+			// First repo-info pass is rate-limited: the entry must stay stale.
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.WriteHeader(http.StatusForbidden)
+			return
 		}
-	}))
-	origAPIBase := testAPIBase
-	origCacheDir := testCacheDir
-	testAPIBase = srv.URL
-	testCacheDir = t.TempDir()
-	defer func() {
-		srv.Close()
-		testAPIBase = origAPIBase
-		testCacheDir = origCacheDir
-	}()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"archived": false, "description": "recovered", "stargazers_count": 7,
+		})
+	}})
 
 	// Partial failure: release succeeds, repo-info rate-limited → entry stale.
 	if d := GetRepoData("github.com/owner/repo"); d.About != "" {
@@ -311,9 +253,9 @@ func TestGetReadmeDoesNotRefreshRepoCard(t *testing.T) {
 // startup and every refresh, so a CacheEntry{...} literal there would wipe a
 // cached README on the very next version poll.
 func TestGetRepoDataPreservesReadme(t *testing.T) {
-	readmeServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	apiServer(t, apiHandlers{readme: func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("# keep me"))
-	})
+	}})
 
 	if _, err := GetReadme("github.com/owner/repo"); err != nil {
 		t.Fatalf("setup GetReadme: %v", err)
@@ -338,9 +280,9 @@ func TestGetRepoDataPreservesReadme(t *testing.T) {
 // is cut off and marked rather than carried whole.
 func TestFetchReadmeTruncatesOversized(t *testing.T) {
 	huge := strings.Repeat("x", readmeMaxBytes+4096)
-	readmeServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	apiServer(t, apiHandlers{readme: func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(huge))
-	})
+	}})
 
 	md, err := GetReadme("github.com/owner/repo")
 	if err != nil {

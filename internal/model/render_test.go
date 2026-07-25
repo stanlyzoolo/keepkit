@@ -3292,26 +3292,30 @@ func TestHelpBaseCache(t *testing.T) {
 }
 
 // hotkeysViewModel builds a ready 80x24 model in modeHotkeys for View-level
-// overlay assertions.
-func hotkeysViewModel() Model {
+// overlay assertions. The self state governs the one state-dependent group, so
+// it is a parameter: selfNone lists no Self group at all (both keys are unbound
+// there), and the two live states word it differently.
+func hotkeysViewModel(state selfState) Model {
 	m := New([]loader.ToolMeta{{Name: "git"}})
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 	m.mode = modeHotkeys
+	m.selfState = state
 	return m
 }
 
 // TestRenderHotkeysOverlayContent: View in modeHotkeys shows every group header
 // and a per-group spot-check key/description.
 func TestRenderHotkeysOverlayContent(t *testing.T) {
-	m := hotkeysViewModel()
+	m := hotkeysViewModel(selfOffered)
 	view := m.View()
 	for _, want := range []string{
 		"Keyboard shortcuts",
-		"Global", "[1] Tools", "[2] Brief", "[3] Help / Man / Readme", "Scrolling",
+		"Global", "[1] Tools", "[2] Brief", "Self", "[3] Help / Man / Readme", "Scrolling",
 		"focus panel", // Global
 		"select tool", // [1] Tools
 		"open repo",   // [2] Brief
+		"self-update", // Self
 		"entry nav",   // [3] Help / Man / Readme
 		"readme",      // [3] the third panel source
 		"3 lines",     // Scrolling
@@ -3324,12 +3328,43 @@ func TestRenderHotkeysOverlayContent(t *testing.T) {
 	}
 }
 
+// TestRenderHotkeysSelfGroupFollowsState: the Self group documents the bindings
+// that are actually live. With no banner (every dev build) U and X do nothing and
+// the group is absent; after a successful update they mean restart/later, not
+// update/dismiss — one fixed wording would document half the state machine.
+func TestRenderHotkeysSelfGroupFollowsState(t *testing.T) {
+	tests := []struct {
+		state  selfState
+		want   []string
+		absent []string
+	}{
+		{state: selfNone, absent: []string{"Self", "self-update", "restart"}},
+		{state: selfOffered, want: []string{"Self", "self-update", "dismiss"}, absent: []string{"restart"}},
+		{state: selfDismissed, want: []string{"Self", "self-update", "dismiss"}},
+		{state: selfUpdated, want: []string{"Self", "restart", "later"}, absent: []string{"self-update"}},
+		{state: selfUpdatedLater, want: []string{"Self", "restart", "later"}},
+	}
+	for _, tt := range tests {
+		view := hotkeysViewModel(tt.state).renderHotkeys()
+		for _, want := range tt.want {
+			if !strings.Contains(view, want) {
+				t.Errorf("state %v: overlay missing %q", tt.state, want)
+			}
+		}
+		for _, absent := range tt.absent {
+			if strings.Contains(view, absent) {
+				t.Errorf("state %v: overlay should not contain %q", tt.state, absent)
+			}
+		}
+	}
+}
+
 // TestRenderHotkeysDimsBackground: the overlay dims the composited background,
 // mirroring the [L] overlay.
 func TestRenderHotkeysDimsBackground(t *testing.T) {
 	forceColorProfile(t)
 	const dimSeq = "38;2;136;136;136" // ui.ColorDim #888888
-	m := hotkeysViewModel()
+	m := hotkeysViewModel(selfNone)
 	if !strings.Contains(m.View(), dimSeq) {
 		t.Errorf("hotkeys overlay did not dim the background")
 	}
@@ -3339,7 +3374,9 @@ func TestRenderHotkeysDimsBackground(t *testing.T) {
 // with no PlaceOverlay clipping — both the top title's close hint and the
 // bottom Scrolling row survive.
 func TestRenderHotkeysSizeBudget(t *testing.T) {
-	m := hotkeysViewModel()
+	// selfOffered is the widest variant of the one state-dependent group
+	// ("self-update", 11 cells against the column's 12-cell "cycle status").
+	m := hotkeysViewModel(selfOffered)
 	view := m.View()
 	// Title row (top of the overlay).
 	if !strings.Contains(view, "close") {
@@ -3355,12 +3392,20 @@ func TestRenderHotkeysSizeBudget(t *testing.T) {
 	if !strings.Contains(view, "readme") {
 		t.Errorf("size budget: [3] readme row clipped")
 	}
-	// The framed overlay must be <= the 20-row background height.
-	if h := lipgloss.Height(m.renderHotkeys()); h > 20 {
-		t.Errorf("overlay framed height = %d, want <= 20 (80x24 background)", h)
+	// Last row of the Self group — the newest addition, in the shortest column.
+	if !strings.Contains(view, "dismiss") {
+		t.Errorf("size budget: Self group's last row clipped")
 	}
-	if w := lipgloss.Width(m.renderHotkeys()); w > 76 {
-		t.Errorf("overlay framed width = %d, want <= 76", w)
+	// The framed overlay must be <= the 20-row background height — in every self
+	// state, since the Self group's wording (and presence) varies with it.
+	for _, state := range []selfState{selfNone, selfOffered, selfDismissed, selfUpdated, selfUpdatedLater} {
+		overlay := hotkeysViewModel(state).renderHotkeys()
+		if h := lipgloss.Height(overlay); h > 20 {
+			t.Errorf("state %v: overlay framed height = %d, want <= 20 (80x24 background)", state, h)
+		}
+		if w := lipgloss.Width(overlay); w > 76 {
+			t.Errorf("state %v: overlay framed width = %d, want <= 76", state, w)
+		}
 	}
 }
 
@@ -3591,34 +3636,96 @@ func maxLineWidth(s string) int {
 // returns more rows than the terminal has (an over-tall View scrolls the top
 // border off the alt screen). renderHintsBar drops trailing hint cells to get
 // there; only the presence of a wrap is a bug.
+// The self-update cases additionally seed a known rate snapshot: without one the
+// gauge is not drawn at all and the right group's geometry — where the banner's
+// compact cell competes with it for the corner — would go unchecked.
 func TestStatusBarNeverWraps(t *testing.T) {
 	cases := []struct {
-		name     string
-		focus    int
-		helpMode int
-		nav      bool
+		name      string
+		focus     int
+		helpMode  int
+		nav       bool
+		self      selfState
+		selfTag   string
+		updating  bool
+		knownRate bool
+		width     int
 	}{
-		{"tools", focusTools, helpModeHelp, false},
-		{"brief", focusBrief, helpModeHelp, false},
-		{"help mode", focusHelp, helpModeHelp, false},
-		{"man mode", focusHelp, helpModeMan, false},
-		{"readme mode", focusHelp, helpModeReadme, false},
-		{"help mode with entry nav", focusHelp, helpModeHelp, true},
+		{name: "tools", focus: focusTools, helpMode: helpModeHelp},
+		{name: "brief", focus: focusBrief, helpMode: helpModeHelp},
+		{name: "help mode", focus: focusHelp, helpMode: helpModeHelp},
+		{name: "man mode", focus: focusHelp, helpMode: helpModeMan},
+		{name: "readme mode", focus: focusHelp, helpMode: helpModeReadme},
+		{name: "help mode with entry nav", focus: focusHelp, helpMode: helpModeHelp, nav: true},
+		{name: "self offered banner", focus: focusTools, helpMode: helpModeHelp, self: selfOffered, knownRate: true},
+		{name: "self offered banner in brief", focus: focusBrief, helpMode: helpModeHelp, self: selfOffered, knownRate: true},
+		{name: "self dismissed cell", focus: focusTools, helpMode: helpModeHelp, self: selfDismissed, knownRate: true},
+		{name: "self dismissed cell in help", focus: focusHelp, helpMode: helpModeReadme, self: selfDismissed, knownRate: true},
+		{name: "self updated banner", focus: focusTools, helpMode: helpModeHelp, self: selfUpdated, knownRate: true},
+		{name: "self restart later cell", focus: focusBrief, helpMode: helpModeHelp, self: selfUpdatedLater, knownRate: true},
+		{name: "self updating cell", focus: focusTools, helpMode: helpModeHelp, self: selfOffered, updating: true, knownRate: true},
+		// Narrow terminals: the fused banner cell is undroppable (a dropped [U]
+		// would leave an announcement with no way to act on it), so below its own
+		// width it must be cut rather than allowed to wrap. 40 is around the
+		// threshold for the default tag, 36 below it, and a long upstream tag
+		// pushes the same cell over the edge at a comfortable width.
+		{name: "self banner at 40 cols", focus: focusTools, helpMode: helpModeHelp, self: selfOffered, width: 40},
+		{name: "self banner at 36 cols", focus: focusTools, helpMode: helpModeHelp, self: selfOffered, width: 36},
+		{name: "self banner at 24 cols", focus: focusBrief, helpMode: helpModeHelp, self: selfUpdated, width: 24},
+		{
+			name: "long tag in the banner", focus: focusTools, helpMode: helpModeHelp,
+			self: selfOffered, selfTag: "v2026.07.25-nightly.1+build.42", width: 44, knownRate: true,
+		},
+		// The collapsed cell has to fit the 80x24 baseline: after [X] it is the
+		// feature's only visible surface for the rest of the session, so it drops
+		// hint cells rather than itself.
+		{name: "self dismissed cell at 80 cols", focus: focusTools, helpMode: helpModeHelp, self: selfDismissed, knownRate: true, width: 80},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			m := New([]loader.ToolMeta{{Name: "rg", GitHub: "BurntSushi/ripgrep"}})
-			m = mustModel(m.Update(tea.WindowSizeMsg{Width: 80, Height: 24}))
+			width := tc.width
+			if width == 0 {
+				width = 80
+			}
+			// WithAppVersion is what main injects and what selfCheckEnabled gates
+			// the whole feature on. Without it selfUpdating() is false whatever
+			// updatingFor says, so the updating case below would silently render the
+			// offered banner instead of the compact "keeptui updating…" cell.
+			m := New([]loader.ToolMeta{{Name: "rg", GitHub: "BurntSushi/ripgrep"}}).WithAppVersion("v0.4.2")
+			m = mustModel(m.Update(tea.WindowSizeMsg{Width: width, Height: 24}))
 			m.focus = tc.focus
 			m.helpMode = tc.helpMode
 			if tc.nav {
 				m.helpEntries = []entryRange{{start: 0, end: 1}}
 				m.helpNavIdx = 0
 			}
+			m.selfState = tc.self
+			m.selfLatest = "v0.5.0"
+			if tc.selfTag != "" {
+				m.selfLatest = tc.selfTag
+			}
+			if tc.updating {
+				m.updatingFor = selfToolName
+				m.selfUpdateLog = true
+				if !m.selfUpdating() {
+					t.Fatal("fixture: the model must be mid-self-update, " +
+						"else this case renders the offered banner and duplicates the case above")
+				}
+			}
+			if tc.knownRate {
+				m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
+			}
 
 			if got := lipgloss.Height(m.renderStatusBar()); got != 3 {
 				t.Errorf("status bar height = %d, want 3 (border + one hint line)", got)
+			}
+			// Only at the baseline width and above: the three panels have their
+			// own minimum widths (15+30+30 plus borders), so below ~80 columns the
+			// layout overflows on its own — with or without a banner — and that is
+			// a separate, pre-existing limit, not the bar wrapping.
+			if width < 80 {
+				return
 			}
 			if got := lipgloss.Height(m.View()); got > m.height {
 				t.Errorf("View() height = %d, want at most the terminal height %d", got, m.height)

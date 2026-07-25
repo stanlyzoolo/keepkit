@@ -117,13 +117,13 @@ func (m Model) renderStatusBar() string {
 		))
 	}
 	if m.mode == modeConfirmUpdate {
-		name := ""
-		if mt, ok := m.selectedMeta(); ok {
-			name = mt.Name
-		}
+		// The name comes from the plan's own target, not the selection: for
+		// keeptui's own update the selection is a foreign tool — or nothing at
+		// all, with an empty tracker — and for a tool's it may have moved while
+		// detection ran.
 		return style.Render(fmt.Sprintf(
 			"%s  %s run  %s cancel",
-			ui.SearchPromptStyle.Render("update "+name+": "+m.updatePlan.Display),
+			ui.SearchPromptStyle.Render("update "+m.updateTarget+": "+m.updatePlan.Display),
 			keyHint("enter"),
 			keyHint("esc"),
 		))
@@ -139,6 +139,13 @@ func (m Model) renderStatusBar() string {
 	}
 	if m.statusMsg != "" {
 		return style.Render(ui.SearchPromptStyle.Render(m.statusMsg))
+	}
+	// The self-update banner replaces the hint cells in all three normal focus
+	// states — one check here rather than one per focus branch, since those are
+	// the only paths left below. A transient statusMsg outranks it (branch
+	// above) and expires on its own after statusMsgTTL.
+	if cells, ok := m.selfBannerCells(); ok {
+		return m.renderHintsBar(style, cells)
 	}
 	if m.focus == focusBrief {
 		hints := []string{
@@ -204,7 +211,8 @@ const rateGaugeMinGap = 2
 // hintSep separates two hint cells in the status bar.
 const hintSep = "  "
 
-// renderHintsBar lays out the left-aligned hint cells with the API-usage gauge
+// renderHintsBar lays out the left-aligned hint cells with the right group (the
+// API-usage gauge plus, when there is one, the collapsed self-update cell)
 // pinned to the right corner. inner is HelpStyle's content width (m.width-2, the
 // border sits outside it).
 //
@@ -213,31 +221,131 @@ const hintSep = "  "
 // lines — one row past the terminal, which scrolls the top border off the alt
 // screen. Cells are therefore dropped from the right (they are ordered
 // most-important first) until the joined hints fit; the least useful reminders
-// ([?] keys, [q] quit) are the first to go on a narrow terminal. Only then is
-// the gauge placed, downgrading full → compact → hidden.
+// ([?] keys, [q] quit) are the first to go on a narrow terminal. A collapsed
+// self cell keeps dropping them: it is the only remaining surface of a pending
+// update, so it outranks the trailing reminders as well as the gauge, and at 80
+// columns it would otherwise never fit at all. The leading cell is never
+// dropped, and when even it is too wide (the fused banner cell on a very narrow
+// terminal) it is truncated rather than allowed to wrap.
+//
+// Only then is the right group placed, degrading in a fixed order: full gauge +
+// self cell → compact gauge + self cell → self cell alone → compact gauge. (The
+// full gauge is not a step after the self cell: place() fails monotonically in
+// width and the full gauge is always wider than the cell, so it could never fit
+// where the cell did not.)
 func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 	inner := m.width - 2
-	for len(cells) > 1 && lipgloss.Width(strings.Join(cells, hintSep)) > inner {
+	joined := func(cs []string) int { return lipgloss.Width(strings.Join(cs, hintSep)) }
+	// The self cell is reserved for before any dropping starts: it lives in the
+	// right group and is never dropped itself, so the hints have to fit around
+	// it. One loop, one rule — a plain "fit the hints" pass ahead of it would be
+	// dead work whose predicate has to be kept in sync with this one by hand.
+	self := m.selfCompactCell()
+	reserve := 0
+	if self != "" {
+		reserve = rateGaugeMinGap + lipgloss.Width(self)
+	}
+	for len(cells) > 1 && joined(cells)+reserve > inner {
 		cells = cells[:len(cells)-1]
 	}
 	hints := strings.Join(cells, hintSep)
-	place := func(gauge string) (string, bool) {
-		if gauge == "" {
+	if lipgloss.Width(hints) > inner {
+		// One cell wider than the whole bar — the fused banner cell on a very
+		// narrow terminal. Styling is stripped before the cut: a cut landing
+		// inside an escape sequence would be re-emitted to the terminal verbatim.
+		hints = truncateToWidth(stripANSI(hints), max(inner, 1))
+	}
+	place := func(right string) (string, bool) {
+		if right == "" {
 			return "", false
 		}
-		gap := inner - lipgloss.Width(hints) - lipgloss.Width(gauge)
+		gap := inner - lipgloss.Width(hints) - lipgloss.Width(right)
 		if gap < rateGaugeMinGap {
 			return "", false
 		}
-		return hints + strings.Repeat(" ", gap) + gauge, true
+		return hints + strings.Repeat(" ", gap) + right, true
 	}
-	if line, ok := place(m.renderRateGauge(false)); ok {
-		return style.Render(line)
+	// withGauge pairs a gauge with the self cell, or yields "" when that gauge
+	// form is unavailable (no known rate snapshot) so place() skips the
+	// candidate instead of rendering a stray separator.
+	withGauge := func(gauge string) string {
+		if gauge == "" {
+			return ""
+		}
+		return gauge + hintSep + self
 	}
-	if line, ok := place(m.renderRateGauge(true)); ok {
-		return style.Render(line)
+	full, compact := m.renderRateGauge(false), m.renderRateGauge(true)
+	candidates := []string{full, compact}
+	if self != "" {
+		candidates = []string{withGauge(full), withGauge(compact), self, compact}
+	}
+	for _, c := range candidates {
+		if line, ok := place(c); ok {
+			return style.Render(line)
+		}
 	}
 	return style.Render(hints)
+}
+
+// selfBannerCells returns the self-update banner as most-important-first hint
+// cells (the shape renderHintsBar drops from the right) and whether it replaces
+// the normal hints. The announcement and its main action are deliberately fused
+// into one cell: a separate "[U] update" cell would be the first thing dropped
+// on a narrow terminal, leaving an announcement with no way to act on it.
+//
+// While the self-update itself runs there is no banner — the compact
+// "keeptui updating…" cell in the right group is the only in-flight indicator
+// besides the live log in [3] (an untracked keeptui has no card, so the card
+// spinner never fires), and the normal hints stay usable meanwhile.
+func (m Model) selfBannerCells() ([]string, bool) {
+	if m.selfUpdating() {
+		return nil, false
+	}
+	switch m.selfState {
+	case selfOffered:
+		return []string{
+			selfToolName + " " + ui.UpdateAvailableStyle.Render(m.selfLatest) + " available — " + keyHint("U") + " update",
+			keyHint("X") + " dismiss",
+		}, true
+	case selfUpdated:
+		return []string{
+			selfToolName + " updated — " + keyHint("U") + " restart",
+			keyHint("X") + " later",
+		}, true
+	case selfNone, selfDismissed, selfUpdatedLater:
+		// No full banner: nothing was offered, or [X] folded it into the compact
+		// cell selfCompactCell renders instead.
+	default:
+		// Enumerated rather than left to fall through: a new selfState must be
+		// decided here, and TestSelfStateSitesAreExhaustive is what says so.
+	}
+	return nil, false
+}
+
+// selfCompactCell returns the collapsed self-update cell for the status bar's
+// right group, or "" when the banner is either absent or shown in full. It is
+// what keeps [U] reachable for the rest of the session after [X], so the dismiss
+// is a fold, not a cancel.
+//
+// The ↑ glyph is East-Asian Ambiguous (two cells under RUNEWIDTH_EASTASIAN=1),
+// the same accepted class as the tool list's ⏺/↑ markers. renderHintsBar
+// measures the cell with lipgloss.Width, so an over-wide measurement can only
+// drop the cell earlier, never overflow the line.
+func (m Model) selfCompactCell() string {
+	if m.selfUpdating() {
+		return selfToolName + " updating…"
+	}
+	switch m.selfState {
+	case selfDismissed:
+		return selfToolName + " " + ui.UpdateAvailableStyle.Render("↑") + " " + keyHint("U")
+	case selfUpdatedLater:
+		return selfToolName + " " + keyHint("U") + " restart"
+	case selfNone, selfOffered, selfUpdated:
+		// Nothing to collapse: no banner at all, or the full one is on screen.
+	default:
+		// See selfBannerCells: a new state has to be decided at every site.
+	}
+	return ""
 }
 
 func keyHint(k string) string {
@@ -516,7 +624,17 @@ func (m Model) renderHotkeys() string {
 		}},
 	})
 
-	col2 := renderColumn([]hotkeyGroup{
+	// Self lives in column 2 because it is the shortest one: column 1 is exactly
+	// at the 20-row budget, so a group there would clip. Descriptions must stay
+	// <= 12 cells (the column's current widest, "cycle status") or the column —
+	// and with it the overlay — grows past 76 columns.
+	//
+	// It is the one state-dependent group: U and X are bound only while a banner
+	// is on screen, and the two live states bind them differently (update/dismiss
+	// vs restart/later). Listing one fixed wording would document half the state
+	// machine and, on a build with no banner at all (any dev build), advertise two
+	// dead keys.
+	groups2 := []hotkeyGroup{
 		{"[2] Brief", []hotkeyRow{
 			{"o", "open repo"},
 			{"c", "changelog"},
@@ -528,7 +646,24 @@ func (m Model) renderHotkeys() string {
 			{"h", "--help"},
 			{"m", "man page"},
 		}},
-	})
+	}
+	switch m.selfState {
+	case selfOffered, selfDismissed:
+		groups2 = append(groups2, hotkeyGroup{"Self", []hotkeyRow{
+			{"U", "self-update"},
+			{"X", "dismiss"},
+		}})
+	case selfUpdated, selfUpdatedLater:
+		groups2 = append(groups2, hotkeyGroup{"Self", []hotkeyRow{
+			{"U", "restart"},
+			{"X", "later"},
+		}})
+	case selfNone:
+		// No banner, so U/X are unbound and the group would document dead keys.
+	default:
+		// See selfBannerCells: a new state has to be decided at every site.
+	}
+	col2 := renderColumn(groups2)
 
 	col3 := renderColumn([]hotkeyGroup{
 		{"[3] Help / Man / Readme", []hotkeyRow{
@@ -926,9 +1061,10 @@ func (m Model) renderHelp() string {
 	case helpModeReadme:
 		title = "[3] Readme"
 	}
-	// While the selected tool's live update log is showing, the panel is the
-	// update log, not help — mirror that in the inset title.
-	if mt, ok := m.selectedMeta(); ok && m.updateLogFor != "" && m.updateLogFor == mt.Name {
+	// While an update log is showing — the selected tool's, or keeptui's own,
+	// which is selection-independent — the panel is the log, not help. Mirror
+	// that in the inset title.
+	if m.showsUpdateLog() {
 		title = "[3] Update"
 	}
 	panel := panelStyle.
@@ -1406,22 +1542,24 @@ func (m Model) readmeContent(name string) (string, bool) {
 }
 
 func (m Model) renderHelpContent() string {
-	mt, ok := m.selectedMeta()
-	if !ok {
-		return ui.MetaNoteStyle.Render("No tool selected")
-	}
-
-	// Live update log: while the selected tool is (or was just) being updated,
-	// [3] shows the merged stdout+stderr buffer instead of help. This branch
-	// sits ahead of the helpLoadingFor/cache branches so re-selecting the
-	// updating tool never paints "Loading..." (autoFetchCmdsForSelected also
-	// skips the help fetch for this tool, so no late helpOutputMsg clobbers it).
-	// The buffer survives until the next update starts.
-	if m.updateLogFor != "" && m.updateLogFor == mt.Name {
+	// Live update log: while a tool is (or was just) being updated, [3] shows the
+	// merged stdout+stderr buffer instead of help. This branch sits ahead of the
+	// helpLoadingFor/cache branches so re-selecting the updating tool never paints
+	// "Loading..." (autoFetchCmdsForSelected also skips the help fetch, so no late
+	// helpOutputMsg clobbers it), and ahead of the "no tool selected" guard: a
+	// self-update's log is not tied to a selection at all — keeptui is typically
+	// untracked and the tracker may even be empty. The buffer survives until the
+	// next update starts.
+	if m.showsUpdateLog() {
 		if len(m.updateLog) == 0 {
 			return ui.MetaNoteStyle.Render("starting update…")
 		}
 		return wrapText(strings.Join(m.updateLog, "\n"), m.helpWrapWidth())
+	}
+
+	mt, ok := m.selectedMeta()
+	if !ok {
+		return ui.MetaNoteStyle.Render("No tool selected")
 	}
 
 	// README mode: content comes from readmeData (glamour-rendered into helpBase

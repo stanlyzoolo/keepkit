@@ -223,6 +223,24 @@ func fetchRateCmd() tea.Cmd {
 	})
 }
 
+// selfCheckCmd fetches keeptui's own latest release tag — one release-only
+// request per cache TTL window (see version.SelfLatest) — and emits a
+// selfCheckMsg. It takes no parameters: the repo is a constant and the
+// is-it-newer comparison belongs to the handler, which knows m.appVersion.
+func selfCheckCmd() tea.Cmd {
+	return safeCmd("selfCheckCmd", func() tea.Msg {
+		// No logging here, the same as remoteCmd: version owns it end to end
+		// (doGH logs a transport failure, classifyStatus a bad status, both with
+		// more detail than this layer has), and a second line per failure would
+		// mean every offline launch writes two — inflating the "a log file means
+		// something went wrong" signal instead of sharpening it. "No release
+		// published" is not a failure at all: it arrives as an empty tag with a
+		// nil error.
+		latest, err := version.SelfLatest()
+		return selfCheckMsg{latest: latest, err: err}
+	})
+}
+
 func fetchChangelogCmd(githubField, toolName string) tea.Cmd {
 	return changelogCmd(githubField, toolName, false)
 }
@@ -396,11 +414,12 @@ func (m *Model) autoFetchCmdsForSelected() tea.Cmd {
 	}
 	if mt, ok := m.selectedMeta(); ok {
 		switch {
-		case m.updateLogFor == mt.Name:
-			// The tool's live update log owns [3]: don't fetch help (and don't
-			// set helpLoadingFor) — a late helpOutputMsg or the "Loading..."
-			// state would clobber the log. Just render the log branch, scrolled
-			// to the tail so the newest output is visible on re-selection.
+		case m.showsUpdateLog():
+			// A live update log owns [3] — this tool's, or keeptui's own, which is
+			// selection-independent: don't fetch help (and don't set
+			// helpLoadingFor) — a late helpOutputMsg or the "Loading..." state
+			// would clobber the log. Just render the log branch, scrolled to the
+			// tail so the newest output is visible on re-selection.
 			m.setHelpContent()
 			m.helpViewport.GotoBottom()
 		case m.helpMode == helpModeReadme:
@@ -453,10 +472,15 @@ const updateTimeout = 10 * time.Minute
 // updater.Detect spawns subprocesses (go version -m, cargo install --list) and
 // must never run inside Update(), like every other probe. Emits an
 // updateDetectedMsg; the handler enters the confirm mode or shows a hint.
-func detectUpdateCmd(t loader.Tool) tea.Cmd {
+//
+// self marks a [U] press on the self-update banner rather than a [u] on a tool
+// row: the same detection, but the result belongs to a banner with no row behind
+// it, which is what the handler's relevance gate needs to know (see
+// acceptsUpdateDetect).
+func detectUpdateCmd(t loader.Tool, self bool) tea.Cmd {
 	return safeCmd("detectUpdateCmd", func() tea.Msg {
 		plan, err := updater.Detect(t)
-		return updateDetectedMsg{tool: t.Name, plan: plan, err: err}
+		return updateDetectedMsg{tool: t.Name, plan: plan, err: err, self: self}
 	})
 }
 

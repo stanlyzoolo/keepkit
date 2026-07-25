@@ -230,7 +230,7 @@ func TestWaitForChunkCmd(t *testing.T) {
 // plan without any detection subprocess, and detectUpdateCmd surfaces it as an
 // updateDetectedMsg.
 func TestDetectUpdateCmdCustom(t *testing.T) {
-	msg := detectUpdateCmd(loader.Tool{Name: "git", UpdateCmd: "brew upgrade git"})()
+	msg := detectUpdateCmd(loader.Tool{Name: "git", UpdateCmd: "brew upgrade git"}, false)()
 	det, ok := msg.(updateDetectedMsg)
 	if !ok {
 		t.Fatalf("got %T, want updateDetectedMsg", msg)
@@ -240,6 +240,9 @@ func TestDetectUpdateCmdCustom(t *testing.T) {
 	}
 	if det.tool != "git" || det.plan.Manager != "custom" || det.plan.Display != "brew upgrade git" {
 		t.Errorf("unexpected plan: %#v", det.plan)
+	}
+	if det.self {
+		t.Error("self = true for a tool detection, want false")
 	}
 }
 
