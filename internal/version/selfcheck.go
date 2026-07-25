@@ -5,26 +5,26 @@ import (
 	"time"
 )
 
-// SelfRepo is keeptui's own GitHub repository. The self-check does not depend on
-// meta.yaml — an untracked keeptui is the feature's main case — so the ref is a
+// SelfRepo is keepkit's own GitHub repository. The self-check does not depend on
+// meta.yaml — an untracked keepkit is the feature's main case — so the ref is a
 // constant rather than a tool field.
-const SelfRepo = "stanlyzoolo/keeptui"
+const SelfRepo = "stanlyzoolo/keepkit"
 
-// SelfLatest returns keeptui's own latest release tag. It is a release-only pass:
+// SelfLatest returns keepkit's own latest release tag. It is a release-only pass:
 // unlike GetRepoData it never touches /repos/{repo} or /languages, so a startup
 // self-check costs one request per TTL window instead of three.
 //
 // The tag is served from cache.json when the entry is fresh, and freshness has
 // its own timestamp (ReleaseCheckedAt) so this pass can never mark a repo card as
 // fresh-but-blank — the same independence ReadmeCheckedAt buys the README. A
-// tracked keeptui shares the cache entry with the full repo pass in both
+// tracked keepkit shares the cache entry with the full repo pass in both
 // directions: a fresh full pass makes the self-check free, and a self-check never
 // refreshes the card.
 //
 // An empty tag with a nil error means the answer is conclusively "no release
 // published" (a 404 on /releases/latest). That is not a failure, and it is
 // remembered for the TTL like any other answer (in CacheEntry.ReleaseMissing, not
-// by wiping the tuple a tracked keeptui's card shows), so a repo without releases
+// by wiping the tuple a tracked keepkit's card shows), so a repo without releases
 // is not re-probed on every launch. A transient failure (rate limit, network,
 // 5xx) returns the error and stamps nothing, so the next launch retries.
 func SelfLatest() (string, error) {
@@ -48,7 +48,7 @@ func SelfLatest() (string, error) {
 	// the fetch does to the entry itself (the tuple on success, ReleaseMissing
 	// either way) is applyReleaseOutcome's single definition, shared with the two
 	// passes that fetch a release alongside the card, so a 404 records the negative
-	// without destroying content a tracked keeptui's card shows.
+	// without destroying content a tracked keepkit's card shows.
 	updateCacheEntry(repo, func(existing CacheEntry) CacheEntry {
 		e := applyReleaseOutcome(existing, info, err)
 		e.ReleaseCheckedAt = time.Now()

@@ -11,7 +11,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/stanlyzoolo/keeptui/internal/ui"
+	"github.com/stanlyzoolo/keepkit/internal/ui"
 )
 
 // formatStars formats a star count with K suffix for thousands.
@@ -298,7 +298,7 @@ var helpEntryFlagRe = regexp.MustCompile(`^\s*--?[a-zA-Z]`)
 
 // helpEntrySubcmdRe: an indented subcommand row — a word not starting with a
 // dash followed by 2+ spaces and description text (the shape of cobra/clap
-// command blocks). Indentation is required so unindented prose ("Usage: keeptui
+// command blocks). Indentation is required so unindented prose ("Usage: keepkit
 // [flags]", section text) never starts an entry; the word class has no ':' so
 // inline labels like "Note:" don't match, and no '.' so justified man-page
 // prose ("tree.  See also git-log(1)" — two spaces after a sentence period)

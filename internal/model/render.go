@@ -12,10 +12,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
-	"github.com/stanlyzoolo/keeptui/internal/ui"
-	"github.com/stanlyzoolo/keeptui/internal/version"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/ui"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 func (m Model) View() string {
@@ -118,7 +118,7 @@ func (m Model) renderStatusBar() string {
 	}
 	if m.mode == modeConfirmUpdate {
 		// The name comes from the plan's own target, not the selection: for
-		// keeptui's own update the selection is a foreign tool — or nothing at
+		// keepkit's own update the selection is a foreign tool — or nothing at
 		// all, with an empty tracker — and for a tool's it may have moved while
 		// detection ran.
 		return style.Render(fmt.Sprintf(
@@ -294,8 +294,8 @@ func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 // on a narrow terminal, leaving an announcement with no way to act on it.
 //
 // While the self-update itself runs there is no banner — the compact
-// "keeptui updating…" cell in the right group is the only in-flight indicator
-// besides the live log in [3] (an untracked keeptui has no card, so the card
+// "keepkit updating…" cell in the right group is the only in-flight indicator
+// besides the live log in [3] (an untracked keepkit has no card, so the card
 // spinner never fires), and the normal hints stay usable meanwhile.
 func (m Model) selfBannerCells() ([]string, bool) {
 	if m.selfUpdating() {
@@ -1061,7 +1061,7 @@ func (m Model) renderHelp() string {
 	case helpModeReadme:
 		title = "[3] Readme"
 	}
-	// While an update log is showing — the selected tool's, or keeptui's own,
+	// While an update log is showing — the selected tool's, or keepkit's own,
 	// which is selection-independent — the panel is the log, not help. Mirror
 	// that in the inset title.
 	if m.showsUpdateLog() {
@@ -1547,7 +1547,7 @@ func (m Model) renderHelpContent() string {
 	// helpLoadingFor/cache branches so re-selecting the updating tool never paints
 	// "Loading..." (autoFetchCmdsForSelected also skips the help fetch, so no late
 	// helpOutputMsg clobbers it), and ahead of the "no tool selected" guard: a
-	// self-update's log is not tied to a selection at all — keeptui is typically
+	// self-update's log is not tied to a selection at all — keepkit is typically
 	// untracked and the tracker may even be empty. The buffer survives until the
 	// next update starts.
 	if m.showsUpdateLog() {

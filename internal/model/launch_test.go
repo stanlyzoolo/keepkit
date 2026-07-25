@@ -11,8 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stanlyzoolo/keeptui/internal/launcher"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/launcher"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 )
 
 // assertExecMsg pins the ExecProcess path: the cmd's message must be Bubble
@@ -99,7 +99,7 @@ func TestStartLaunchCmd(t *testing.T) {
 		}
 	})
 	t.Run("missing adapter binary", func(t *testing.T) {
-		msg, ok := startLaunchCmd(launcher.Plan{Argv: []string{"keeptui-no-such-adapter-xyz"}}, "git", "git status")().(launchDoneMsg)
+		msg, ok := startLaunchCmd(launcher.Plan{Argv: []string{"keepkit-no-such-adapter-xyz"}}, "git", "git status")().(launchDoneMsg)
 		if !ok {
 			t.Fatalf("unexpected msg type %T", msg)
 		}
@@ -180,7 +180,7 @@ func TestRunInputDispatchAdapter(t *testing.T) {
 		t.Skip("invoking the adapter cmd needs a unix tmux/exec environment")
 	}
 	clearTerminalEnv(t)
-	t.Setenv("TMUX", "/nonexistent/keeptui-test-socket,99999,0")
+	t.Setenv("TMUX", "/nonexistent/keepkit-test-socket,99999,0")
 	m := newTestModel(focusTools)
 	nm, cmd := enterRun(m, "git status")
 	if got := nm.lastRun["git"]; got != "git status" {
@@ -435,7 +435,7 @@ func TestLaunchDoneMsgSuccess(t *testing.T) {
 }
 
 // TestExecDoneMsg: the ExecProcess callback result. A non-zero exit surfaces
-// as a statusMsg and is never logged (the tool's exit status is not a keeptui
+// as a statusMsg and is never logged (the tool's exit status is not a keepkit
 // anomaly); a clean exit is silent.
 func TestExecDoneMsg(t *testing.T) {
 	shrinkStatusTTL(t)

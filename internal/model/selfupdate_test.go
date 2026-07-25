@@ -9,10 +9,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
-	"github.com/stanlyzoolo/keeptui/internal/updater"
-	"github.com/stanlyzoolo/keeptui/internal/version"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/updater"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 // ---- fixtures ----
@@ -46,7 +46,7 @@ func selfModel(t *testing.T, meta []loader.ToolMeta, width int, state selfState)
 }
 
 // selfBarTools is the tracker the status-bar tests run against: exactly one
-// tool, deliberately not named keeptui, so every "keeptui" in a rendered bar can
+// tool, deliberately not named keepkit, so every "keepkit" in a rendered bar can
 // only have come from the self-update banner.
 func selfBarTools() []loader.ToolMeta {
 	return []loader.ToolMeta{{Name: "rg", GitHub: "BurntSushi/ripgrep"}}
@@ -65,7 +65,7 @@ func startedSelfUpdate(t *testing.T, meta []loader.ToolMeta, state selfState) Mo
 	return m
 }
 
-// seedSelfReleaseCache adds a fresh release-only cache entry for keeptui's own
+// seedSelfReleaseCache adds a fresh release-only cache entry for keepkit's own
 // repo. It is what lets selfCheckCmd actually be executed in this package:
 // version.SelfLatest answers from cache.json without a request, and version's
 // httptest seam (testAPIBase) is unexported there.
@@ -382,9 +382,9 @@ func TestSelfStateSitesAreExhaustive(t *testing.T) {
 
 // TestSelfUpdatingPredicate: "a self-update is in flight" is derived from the
 // update pipeline's own state, not a selfState member, and every update of
-// keeptui counts whichever key started it — so the target name decides which kind
+// keepkit counts whichever key started it — so the target name decides which kind
 // of update it is, and the version gate decides whether the kind exists at all: on
-// a build with the feature off an update of keeptui is a plain tool update.
+// a build with the feature off an update of keepkit is a plain tool update.
 func TestSelfUpdatingPredicate(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -395,9 +395,9 @@ func TestSelfUpdatingPredicate(t *testing.T) {
 		{"idle", "v0.4.2", "", false},
 		{"self update running", "v0.4.2", selfToolName, true},
 		{"another tool updating", "v0.4.2", "rg", false},
-		{"keeptui updating on a dev build", "dev", selfToolName, false},
-		{"keeptui updating on a pseudo-version build", "v0.0.0-20260725115912-1be4bafa79c8", selfToolName, false},
-		{"keeptui updating with no version injected", "", selfToolName, false},
+		{"keepkit updating on a dev build", "dev", selfToolName, false},
+		{"keepkit updating on a pseudo-version build", "v0.0.0-20260725115912-1be4bafa79c8", selfToolName, false},
+		{"keepkit updating with no version injected", "", selfToolName, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -429,41 +429,41 @@ func TestSelfBannerInStatusBar(t *testing.T) {
 			name:   "no banner",
 			state:  selfNone,
 			want:   []string{"[t] track"},
-			absent: []string{"keeptui"},
+			absent: []string{"keepkit"},
 		},
 		{
 			name:   "offer replaces the hints",
 			state:  selfOffered,
-			want:   []string{"keeptui v0.5.0 available", "[U] update", "[X] dismiss"},
+			want:   []string{"keepkit v0.5.0 available", "[U] update", "[X] dismiss"},
 			absent: []string{"[t] track"},
 		},
 		{
 			name:     "dismissed keeps the hints and folds to a cell",
 			state:    selfDismissed,
-			want:     []string{"[t] track", "keeptui ↑ [U]"},
+			want:     []string{"[t] track", "keepkit ↑ [U]"},
 			absent:   []string{"available", "dismiss"},
-			wantCell: "keeptui ↑ [U]",
+			wantCell: "keepkit ↑ [U]",
 		},
 		{
 			name:   "updated offers the restart",
 			state:  selfUpdated,
-			want:   []string{"keeptui updated", "[U] restart", "[X] later"},
+			want:   []string{"keepkit updated", "[U] restart", "[X] later"},
 			absent: []string{"[t] track", "available"},
 		},
 		{
 			name:     "restart later folds to a cell",
 			state:    selfUpdatedLater,
-			want:     []string{"[t] track", "keeptui [U] restart"},
+			want:     []string{"[t] track", "keepkit [U] restart"},
 			absent:   []string{"later", "available"},
-			wantCell: "keeptui [U] restart",
+			wantCell: "keepkit [U] restart",
 		},
 		{
 			name:     "in flight shows neither banner",
 			state:    selfOffered,
 			updating: true,
-			want:     []string{"[t] track", "keeptui updating…"},
+			want:     []string{"[t] track", "keepkit updating…"},
 			absent:   []string{"available", "[X] dismiss"},
-			wantCell: "keeptui updating…",
+			wantCell: "keepkit updating…",
 		},
 	}
 	for _, tt := range tests {
@@ -498,7 +498,7 @@ func TestSelfBannerInEveryNormalFocus(t *testing.T) {
 		m := selfModel(t, selfBarTools(), 120, selfOffered)
 		m.focus = focus
 		bar := stripANSI(m.renderStatusBar())
-		if !strings.Contains(bar, "keeptui v0.5.0 available") || !strings.Contains(bar, "[U] update") {
+		if !strings.Contains(bar, "keepkit v0.5.0 available") || !strings.Contains(bar, "[U] update") {
 			t.Errorf("focus %d bar = %q, want the self-update banner", focus, bar)
 		}
 	}
@@ -514,7 +514,7 @@ func TestSelfBannerYieldsToStatusMsg(t *testing.T) {
 	if !strings.Contains(bar, "no repo for rg") {
 		t.Errorf("status bar = %q, want the transient message", bar)
 	}
-	if strings.Contains(bar, "keeptui") {
+	if strings.Contains(bar, "keepkit") {
 		t.Errorf("status bar = %q, want the banner suppressed under a status message", bar)
 	}
 }
@@ -528,14 +528,14 @@ func TestSelfCompactCellRightGroupDegradation(t *testing.T) {
 	wide := selfModel(t, selfBarTools(), 160, selfDismissed)
 	wide.rate = rate
 	bar := stripANSI(wide.renderStatusBar())
-	if !strings.Contains(bar, "GitHub API Usage") || !strings.Contains(bar, "keeptui ↑ [U]") {
+	if !strings.Contains(bar, "GitHub API Usage") || !strings.Contains(bar, "keepkit ↑ [U]") {
 		t.Errorf("wide status bar = %q, want the full gauge and the self cell", bar)
 	}
 
 	tight := selfModel(t, selfBarTools(), 100, selfDismissed)
 	tight.rate = rate
 	bar = stripANSI(tight.renderStatusBar())
-	if !strings.Contains(bar, "keeptui ↑ [U]") {
+	if !strings.Contains(bar, "keepkit ↑ [U]") {
 		t.Errorf("tight status bar = %q, want the self cell to outrank the gauge", bar)
 	}
 	if strings.Contains(bar, "GitHub API Usage") || strings.Contains(bar, "GH 18/60") {
@@ -554,7 +554,7 @@ func TestSelfCompactCellFitsBaselineTerminal(t *testing.T) {
 		m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
 
 		bar := stripANSI(m.renderStatusBar())
-		if !strings.Contains(bar, "keeptui ↑ [U]") {
+		if !strings.Contains(bar, "keepkit ↑ [U]") {
 			t.Errorf("focus %d: 80-col bar = %q, want the collapsed self cell", focus, bar)
 		}
 		// A dropped hint cell is the price; the leading one must survive.
@@ -591,7 +591,7 @@ func TestRateGaugeUnaffectedWithoutSelfCell(t *testing.T) {
 func TestSelfKeys(t *testing.T) {
 	// The command [U] returns, by kind. A detect command is deliberately not
 	// executed: driving updater.Detect would spawn subprocesses and resolve the
-	// developer's own keeptui — TestSelfUpdateKeyDetectsSelf executes it under an
+	// developer's own keepkit — TestSelfUpdateKeyDetectsSelf executes it under an
 	// update_cmd override instead.
 	const (
 		noCmd  = ""
@@ -658,10 +658,10 @@ func TestSelfKeys(t *testing.T) {
 }
 
 // TestSelfUpdateKeyDetectsSelf executes the command [U] returns: it must be a
-// *self*-tagged detection of keeptui. Without this the two mutations that kill
+// *self*-tagged detection of keepkit. Without this the two mutations that kill
 // the feature's main case both survive — a detection of the selected tool, or one
 // missing the self flag, is dropped by acceptsUpdateDetect's selection check
-// whenever keeptui is untracked, leaving [U] silently dead forever.
+// whenever keepkit is untracked, leaving [U] silently dead forever.
 //
 // Both halves keep updater.Detect subprocess-free: an update_cmd short-circuits
 // detection entirely, and a name that cannot be on PATH answers from the LookPath
@@ -680,7 +680,7 @@ func TestSelfUpdateKeyDetectsSelf(t *testing.T) {
 		t.Fatalf("[U] command produced %T, want updateDetectedMsg", cmd())
 	}
 	if !msg.self {
-		t.Error("updateDetectedMsg.self = false — an untracked keeptui's result would be dropped")
+		t.Error("updateDetectedMsg.self = false — an untracked keepkit's result would be dropped")
 	}
 	if msg.tool != selfToolName {
 		t.Errorf("updateDetectedMsg.tool = %q, want %q", msg.tool, selfToolName)
@@ -688,11 +688,11 @@ func TestSelfUpdateKeyDetectsSelf(t *testing.T) {
 
 	// The command itself, driven directly with a name no PATH can resolve: no
 	// subprocess, and the self tag still rides along.
-	direct, ok := detectUpdateCmd(loader.Tool{Name: "keeptui-no-such-binary"}, true)().(updateDetectedMsg)
+	direct, ok := detectUpdateCmd(loader.Tool{Name: "keepkit-no-such-binary"}, true)().(updateDetectedMsg)
 	if !ok {
 		t.Fatalf("detectUpdateCmd produced %T, want updateDetectedMsg", direct)
 	}
-	if !direct.self || direct.tool != "keeptui-no-such-binary" {
+	if !direct.self || direct.tool != "keepkit-no-such-binary" {
 		t.Errorf("detectUpdateCmd msg = %+v, want it tagged self for the given tool", direct)
 	}
 	if !errors.Is(direct.err, updater.ErrUnknownManager) {
@@ -775,7 +775,7 @@ func TestSelfUpdateKeyInertWithoutBanner(t *testing.T) {
 
 // TestToolUpdateKeyBlockedBySelfUpdate: one update at a time in the other
 // direction too — [u] on a tool with a pending release must not start a second
-// one while keeptui updates itself. Same updatingFor guard, mirrored by
+// one while keepkit updates itself. Same updatingFor guard, mirrored by
 // TestSelfUpdateKeyInertWithoutBanner's blocked rows for [U] under one.
 func TestToolUpdateKeyBlockedBySelfUpdate(t *testing.T) {
 	shrinkStatusTTL(t)
@@ -837,9 +837,9 @@ func TestSelfKeysAreNormalModeOnly(t *testing.T) {
 func TestSelfToolInheritsTrackedEntry(t *testing.T) {
 	tracked := New([]loader.ToolMeta{
 		{Name: "rg"},
-		{Name: selfToolName, GitHub: version.SelfRepo, UpdateCmd: "brew upgrade keeptui"},
+		{Name: selfToolName, GitHub: version.SelfRepo, UpdateCmd: "brew upgrade keepkit"},
 	}).selfTool()
-	if tracked.Name != selfToolName || tracked.UpdateCmd != "brew upgrade keeptui" {
+	if tracked.Name != selfToolName || tracked.UpdateCmd != "brew upgrade keepkit" {
 		t.Errorf("selfTool() = %#v, want the tracked entry with its update_cmd", tracked)
 	}
 
@@ -847,7 +847,7 @@ func TestSelfToolInheritsTrackedEntry(t *testing.T) {
 	// tracked tool has, not the bare owner/repo of version.SelfRepo.
 	synthetic := New([]loader.ToolMeta{{Name: "rg"}}).selfTool()
 	if synthetic.Name != selfToolName || synthetic.GitHub != "github.com/"+version.SelfRepo || synthetic.UpdateCmd != "" {
-		t.Errorf("selfTool() = %#v, want a synthesized keeptui entry", synthetic)
+		t.Errorf("selfTool() = %#v, want a synthesized keepkit entry", synthetic)
 	}
 	if loader.NormalizeRepo(synthetic.GitHub) != version.SelfRepo {
 		t.Errorf("NormalizeRepo(%q) = %q, want %q",
@@ -856,11 +856,11 @@ func TestSelfToolInheritsTrackedEntry(t *testing.T) {
 }
 
 // TestSelfDetectedAcceptance: a self detection result has no selection to match
-// (keeptui is typically untracked, the tracker may be empty), so it is gated on
+// (keepkit is typically untracked, the tracker may be empty), so it is gated on
 // the input mode and the update guard instead. A dropped result must leave the
 // offer intact — [U] is the retry.
 func TestSelfDetectedAcceptance(t *testing.T) {
-	plan := updater.Plan{Manager: "brew", Argv: []string{"brew", "upgrade", "keeptui"}, Display: "brew upgrade keeptui"}
+	plan := updater.Plan{Manager: "brew", Argv: []string{"brew", "upgrade", "keepkit"}, Display: "brew upgrade keepkit"}
 	tests := []struct {
 		name        string
 		meta        []loader.ToolMeta
@@ -928,7 +928,7 @@ func TestSelfDetectedAcceptance(t *testing.T) {
 // TestSelfDetectedUnknownManager: a hand-installed binary has no manager to
 // drive, which is a hint and not a dead-end dialog — the offer stays up. The
 // wording is chosen by what the target *is* (isSelfUpdate), not by which key
-// asked: keeptui's manual route is whatever installed it, a tool's is update_cmd,
+// asked: keepkit's manual route is whatever installed it, a tool's is update_cmd,
 // and the identical failure of the identical binary must not read two ways
 // depending on whether [U] or [u] started it.
 func TestSelfDetectedUnknownManager(t *testing.T) {
@@ -939,9 +939,9 @@ func TestSelfDetectedUnknownManager(t *testing.T) {
 		want       string
 	}{
 		{name: "U", appVersion: "v0.4.2", self: true, want: "manually"},
-		// [u] on a tracked keeptui row is the same self-update, so it gets the
+		// [u] on a tracked keepkit row is the same self-update, so it gets the
 		// same wording even though msg.self is false.
-		{name: "u on a tracked keeptui row", appVersion: "v0.4.2", want: "manually"},
+		{name: "u on a tracked keepkit row", appVersion: "v0.4.2", want: "manually"},
 		// ...but only where the feature is live at all: on a dev build that press
 		// is a plain tool update and gets the tool wording.
 		{name: "u on a dev build", appVersion: "v0.0.0-20260725115912-1be4bafa79c8", want: "update_cmd"},
@@ -975,7 +975,7 @@ func TestSelfDetectedUnknownManager(t *testing.T) {
 func TestSelfConfirmEnterStartsWithEmptyTracker(t *testing.T) {
 	m := selfModel(t, nil, 100, selfOffered)
 	m.mode = modeConfirmUpdate
-	m.updatePlan = updater.Plan{Manager: "brew", Argv: []string{"true"}, Display: "brew upgrade keeptui"}
+	m.updatePlan = updater.Plan{Manager: "brew", Argv: []string{"true"}, Display: "brew upgrade keepkit"}
 	m.updateTarget = selfToolName
 	m.updateLog = []string{"stale output from a previous run"}
 
@@ -1003,7 +1003,7 @@ func TestSelfConfirmEnterStartsWithEmptyTracker(t *testing.T) {
 func TestSelfConfirmCancelClearsTarget(t *testing.T) {
 	m := selfModel(t, []loader.ToolMeta{{Name: "rg"}}, 100, selfOffered)
 	m.mode = modeConfirmUpdate
-	m.updatePlan = updater.Plan{Argv: []string{"true"}, Display: "brew upgrade keeptui"}
+	m.updatePlan = updater.Plan{Argv: []string{"true"}, Display: "brew upgrade keepkit"}
 	m.updateTarget = selfToolName
 
 	m = mustModel(m.Update(tea.KeyMsg{Type: tea.KeyEsc}))
@@ -1039,19 +1039,19 @@ func TestToolConfirmEnterReleasesSelfLog(t *testing.T) {
 	}
 }
 
-// TestSelfConfirmBarNamesKeeptui: the confirm bar names the plan's own target,
-// which for keeptui's update is neither the selected tool nor — with an empty
+// TestSelfConfirmBarNamesKeepkit: the confirm bar names the plan's own target,
+// which for keepkit's update is neither the selected tool nor — with an empty
 // tracker — anything at all.
-func TestSelfConfirmBarNamesKeeptui(t *testing.T) {
+func TestSelfConfirmBarNamesKeepkit(t *testing.T) {
 	for _, meta := range [][]loader.ToolMeta{{{Name: "rg"}}, nil} {
 		m := selfModel(t, meta, 100, selfOffered)
 		m.mode = modeConfirmUpdate
-		m.updatePlan = updater.Plan{Display: "brew upgrade keeptui"}
+		m.updatePlan = updater.Plan{Display: "brew upgrade keepkit"}
 		m.updateTarget = selfToolName
 
 		bar := stripANSI(m.renderStatusBar())
-		if !strings.Contains(bar, "update keeptui: brew upgrade keeptui") {
-			t.Errorf("tracker %v: confirm bar = %q, want it to name keeptui", meta, bar)
+		if !strings.Contains(bar, "update keepkit: brew upgrade keepkit") {
+			t.Errorf("tracker %v: confirm bar = %q, want it to name keepkit", meta, bar)
 		}
 		if strings.Contains(bar, "update rg") {
 			t.Errorf("tracker %v: confirm bar = %q, want no selected-tool name", meta, bar)
@@ -1071,33 +1071,33 @@ func TestSelfConfirmBarNamesKeeptui(t *testing.T) {
 // ---- completion: success, failure and the restart offer ----
 
 // TestSelfUpdateDoneSuccessUntracked: the self branch sits ahead of the
-// toolByName early return, so an untracked keeptui's update actually completes —
+// toolByName early return, so an untracked keepkit's update actually completes —
 // with the tool path it would finish silently and [U] restart would never appear.
 func TestSelfUpdateDoneSuccessUntracked(t *testing.T) {
 	shrinkStatusTTL(t)
 	m := startedSelfUpdate(t, []loader.ToolMeta{{Name: "rg"}}, selfOffered)
-	m.updateLog = []string{"==> Upgrading keeptui", "installed"}
+	m.updateLog = []string{"==> Upgrading keepkit", "installed"}
 
 	updated, cmd := m.Update(updateDoneMsg{tool: selfToolName})
 	m = updated.(Model)
 	if m.selfState != selfUpdated {
 		t.Errorf("selfState = %v, want selfUpdated (the restart offer)", m.selfState)
 	}
-	if m.statusMsg != "updated keeptui" {
-		t.Errorf("statusMsg = %q, want %q", m.statusMsg, "updated keeptui")
+	if m.statusMsg != "updated keepkit" {
+		t.Errorf("statusMsg = %q, want %q", m.statusMsg, "updated keepkit")
 	}
 	if m.updatingFor != "" || m.selfUpdating() {
 		t.Errorf("updatingFor = %q, selfUpdating() = %v, want the guard cleared", m.updatingFor, m.selfUpdating())
 	}
-	// Nothing to re-detect: an untracked keeptui has no card and no ↑ marker, and
+	// Nothing to re-detect: an untracked keepkit has no card and no ↑ marker, and
 	// this process is still the old binary either way.
 	assertOnlyExpiryTick(t, cmd)
 }
 
-// TestSelfUpdateDoneSuccessTracked: a tracked keeptui does have a card and a ↑
+// TestSelfUpdateDoneSuccessTracked: a tracked keepkit does have a card and a ↑
 // marker, so the installed re-detect rides along. The batch is deliberately not
 // executed — fetchInstalledCmd for this tool name would run the developer's own
-// keeptui binary, making the test depend on the machine it runs on.
+// keepkit binary, making the test depend on the machine it runs on.
 func TestSelfUpdateDoneSuccessTracked(t *testing.T) {
 	shrinkStatusTTL(t)
 	m := startedSelfUpdate(t, []loader.ToolMeta{{Name: selfToolName, GitHub: "github.com/" + version.SelfRepo}}, selfOffered)
@@ -1108,8 +1108,8 @@ func TestSelfUpdateDoneSuccessTracked(t *testing.T) {
 	if m.selfState != selfUpdated {
 		t.Errorf("selfState = %v, want selfUpdated", m.selfState)
 	}
-	if m.statusMsg != "updated keeptui" {
-		t.Errorf("statusMsg = %q, want %q", m.statusMsg, "updated keeptui")
+	if m.statusMsg != "updated keepkit" {
+		t.Errorf("statusMsg = %q, want %q", m.statusMsg, "updated keepkit")
 	}
 	if m.selfUpdating() {
 		t.Error("selfUpdating() = true after completion, want the guard cleared")
@@ -1180,7 +1180,7 @@ func TestUpdateFailureSeedsOnlyItsOwnLog(t *testing.T) {
 
 	m = mustModel(m.Update(updateDoneMsg{tool: selfToolName, err: errors.New("exit status 1")}))
 	if len(m.updateLog) != 0 {
-		t.Errorf("updateLog = %#v, want rg's buffer untouched by keeptui's failure", m.updateLog)
+		t.Errorf("updateLog = %#v, want rg's buffer untouched by keepkit's failure", m.updateLog)
 	}
 	// The record still happens — only the on-screen seed is owner-gated.
 	if log := logx.ReadAllForTesting(logDir); !strings.Contains(log, "exit status 1") {
@@ -1194,11 +1194,11 @@ func TestUpdateFailureSeedsOnlyItsOwnLog(t *testing.T) {
 // four non-trivial prior states are ways to get that wrong: an [X] folded
 // mid-update is a deliberate "not now"; a pending [U] restart from an earlier
 // successful update is still valid (that binary is on disk either way); and
-// selfNone — reachable with no [U] press at all, since [u] on a tracked keeptui row
+// selfNone — reachable with no [U] press at all, since [u] on a tracked keepkit row
 // is a self-update too and hasUpdate comes from the locally detected version,
 // independent of a startup check that may have been rate-limited, offline, or
 // simply said "not newer" — has no version behind it, so forcing "offered" there
-// rendered a banner with a hole in it ("keeptui  available") that no later
+// rendered a banner with a hole in it ("keepkit  available") that no later
 // selfCheckMsg could fill, the handler writing only from selfNone.
 func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 	logDir := t.TempDir()
@@ -1212,11 +1212,11 @@ func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 		wantContains string
 		wantAbsent   string
 	}{
-		{name: "never offered", state: selfNone, wantAbsent: "keeptui"},
+		{name: "never offered", state: selfNone, wantAbsent: "keepkit"},
 		{name: "offered", state: selfOffered, latest: "v0.5.0", wantContains: "v0.5.0 available"},
-		{name: "folded offer", state: selfDismissed, latest: "v0.5.0", wantContains: "keeptui ↑"},
-		{name: "restart pending", state: selfUpdated, wantContains: "keeptui updated"},
-		{name: "restart folded", state: selfUpdatedLater, wantContains: "keeptui [U] restart"},
+		{name: "folded offer", state: selfDismissed, latest: "v0.5.0", wantContains: "keepkit ↑"},
+		{name: "restart pending", state: selfUpdated, wantContains: "keepkit updated"},
+		{name: "restart folded", state: selfUpdatedLater, wantContains: "keepkit [U] restart"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1241,7 +1241,7 @@ func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 	}
 }
 
-// TestKeeptuiUpdateSelfHandlingGatedOnBuild: [u] on a tracked keeptui row reaches
+// TestKeepkitUpdateSelfHandlingGatedOnBuild: [u] on a tracked keepkit row reaches
 // the completion handler on every build, so the version gate — not the target name
 // — is what decides whether it is treated as a self-update. On a release build it
 // is one (the restart offer appears even though the startup check never got to
@@ -1249,7 +1249,7 @@ func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 // stays a plain tool update: no panel-owning log, no banner, no Self group in [?],
 // and [U] raises no restart request — which on such a build would re-exec the
 // working copy and silently hand back the pre-update binary.
-func TestKeeptuiUpdateSelfHandlingGatedOnBuild(t *testing.T) {
+func TestKeepkitUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 	tests := []struct {
 		name       string
 		appVersion string
@@ -1270,10 +1270,10 @@ func TestKeeptuiUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 				t.Fatalf("selfState = %v, want selfNone before anything ran", m.selfState)
 			}
 
-			// The tool route, exactly as [u] on the keeptui row leaves it.
+			// The tool route, exactly as [u] on the keepkit row leaves it.
 			m.mode = modeConfirmUpdate
 			m.updateTarget = selfToolName
-			m.updatePlan = updater.Plan{Manager: "brew", Argv: []string{"true"}, Display: "brew upgrade keeptui"}
+			m.updatePlan = updater.Plan{Manager: "brew", Argv: []string{"true"}, Display: "brew upgrade keepkit"}
 			m = mustModel(m.Update(tea.KeyMsg{Type: tea.KeyEnter}))
 			if m.selfUpdateLog != tt.wantSelf || m.selfUpdating() != tt.wantSelf {
 				t.Fatalf("selfUpdateLog = %v, selfUpdating() = %v, want both %v",
@@ -1281,10 +1281,10 @@ func TestKeeptuiUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 			}
 
 			// The batch is deliberately not executed: fetchInstalledCmd for this name
-			// would run the developer's own keeptui binary.
+			// would run the developer's own keepkit binary.
 			m = mustModel(m.Update(updateDoneMsg{tool: selfToolName}))
-			if m.statusMsg != "updated keeptui" {
-				t.Errorf("statusMsg = %q, want %q on both paths", m.statusMsg, "updated keeptui")
+			if m.statusMsg != "updated keepkit" {
+				t.Errorf("statusMsg = %q, want %q on both paths", m.statusMsg, "updated keepkit")
 			}
 			wantState := selfNone
 			if tt.wantSelf {
@@ -1299,7 +1299,7 @@ func TestKeeptuiUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 			overlay := stripANSI(m.renderHotkeys())
 			m = mustModel(m.Update(keyRunes("U")))
 			if tt.wantSelf {
-				if !strings.Contains(bar, "keeptui updated") {
+				if !strings.Contains(bar, "keepkit updated") {
 					t.Errorf("status bar = %q, want the restart offer", bar)
 				}
 				if !strings.Contains(overlay, "restart") {
@@ -1310,7 +1310,7 @@ func TestKeeptuiUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 				}
 				return
 			}
-			if strings.Contains(bar, "keeptui updated") || strings.Contains(bar, "[U]") {
+			if strings.Contains(bar, "keepkit updated") || strings.Contains(bar, "[U]") {
 				t.Errorf("status bar = %q, want no self-update surface on a dev build", bar)
 			}
 			if strings.Contains(overlay, "Self") {
@@ -1320,7 +1320,7 @@ func TestKeeptuiUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 				t.Error("RestartRequested() = true on a dev build, want [U] unbound (it would re-exec the working copy)")
 			}
 			// A plain tool update also keeps the log per-tool sticky, so moving off
-			// the keeptui row hands [3] back.
+			// the keepkit row hands [3] back.
 			m.focus = focusTools
 			if moved := mustModel(m.Update(keyRunes("j"))); moved.showsUpdateLog() {
 				t.Error("showsUpdateLog() = true under another row, want the plain per-tool log")
@@ -1375,14 +1375,14 @@ func TestShowsUpdateLog(t *testing.T) {
 }
 
 // TestSelfUpdateLogOwnsHelpPanel: the log and the [3] Update title are reachable
-// with keeptui untracked and even with an empty tracker — where selectedMeta,
+// with keepkit untracked and even with an empty tracker — where selectedMeta,
 // which used to gate both, has nothing to return.
 func TestSelfUpdateLogOwnsHelpPanel(t *testing.T) {
 	for _, meta := range [][]loader.ToolMeta{{{Name: "rg"}}, nil} {
 		m := startedSelfUpdate(t, meta, selfOffered)
-		m.updateLog = []string{"==> Upgrading keeptui"}
+		m.updateLog = []string{"==> Upgrading keepkit"}
 
-		if content := stripANSI(m.renderHelpContent()); !strings.Contains(content, "==> Upgrading keeptui") {
+		if content := stripANSI(m.renderHelpContent()); !strings.Contains(content, "==> Upgrading keepkit") {
 			t.Errorf("tracker %v: [3] = %q, want the self-update log", meta, content)
 		}
 		if panel := stripANSI(m.renderHelp()); !strings.Contains(panel, "[3] Update") {
@@ -1446,7 +1446,7 @@ func TestSelfUpdateLogReleasedWhenDone(t *testing.T) {
 }
 
 // TestSelfUpdateLogSuppressesHelpNav covers the setHelpContent site of
-// showsUpdateLog: keeptui's own log owns [3] regardless of the selection, so the
+// showsUpdateLog: keepkit's own log owns [3] regardless of the selection, so the
 // entry index must stay empty even though the selected tool has cached --help —
 // otherwise j/k would drive a spotlight computed for that help over log lines.
 func TestSelfUpdateLogSuppressesHelpNav(t *testing.T) {
@@ -1472,7 +1472,7 @@ func TestSelfUpdateLogSuppressesHelpNav(t *testing.T) {
 	m.updatingFor = selfToolName
 	m.updateLogFor = selfToolName
 	m.selfUpdateLog = true
-	m.updateLog = []string{"==> Upgrading keeptui"}
+	m.updateLog = []string{"==> Upgrading keepkit"}
 	m.setHelpContent()
 
 	if len(m.helpEntries) != 0 {
@@ -1481,7 +1481,7 @@ func TestSelfUpdateLogSuppressesHelpNav(t *testing.T) {
 	if m.helpBase != "" {
 		t.Errorf("helpBase = %q, want empty (the log is not colorized help)", m.helpBase)
 	}
-	if content := stripANSI(m.renderHelpContent()); !strings.Contains(content, "==> Upgrading keeptui") {
+	if content := stripANSI(m.renderHelpContent()); !strings.Contains(content, "==> Upgrading keepkit") {
 		t.Errorf("[3] = %q, want the self-update log", content)
 	}
 	// With no entries j is plain scroll, so the spotlight cursor stays off.
@@ -1497,13 +1497,13 @@ func TestSelfUpdateLogSuppressesHelpNav(t *testing.T) {
 func TestSelfUpdateLogSkipsHelpFetch(t *testing.T) {
 	live := startedSelfUpdate(t, []loader.ToolMeta{{Name: "rg"}}, selfOffered)
 	live.helpMode = helpModeHelp
-	live.updateLog = []string{"==> Upgrading keeptui"}
+	live.updateLog = []string{"==> Upgrading keepkit"}
 
 	live.autoFetchCmdsForSelected()
 	if live.helpLoadingFor != "" {
 		t.Errorf("helpLoadingFor = %q, want no --help probe while the self log owns [3]", live.helpLoadingFor)
 	}
-	if content := stripANSI(live.renderHelpContent()); !strings.Contains(content, "==> Upgrading keeptui") {
+	if content := stripANSI(live.renderHelpContent()); !strings.Contains(content, "==> Upgrading keepkit") {
 		t.Errorf("[3] = %q, want the self-update log", content)
 	}
 

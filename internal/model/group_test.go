@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
 )
 
 // groupTestModel builds a ready model over five tools in three tag groups

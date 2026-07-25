@@ -4,12 +4,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 )
 
 // TestMain redirects logx to a throwaway directory for the whole package test
 // binary, so tests that exercise SaveMeta's error paths never write
-// keeptui-*.log into the real user config dir. Individual tests that assert
+// keepkit-*.log into the real user config dir. Individual tests that assert
 // logger output still call logx.SetDirForTesting with their own temp dir; its
 // restore reverts to this fallback (not the real dir).
 //
@@ -18,12 +18,12 @@ import (
 // user's tool list. Per-test helpers (useTempConfigDir) nest inside this one and
 // restore back to it, never to the real directory.
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "keeptui-loader-logs")
+	dir, err := os.MkdirTemp("", "keepkit-loader-logs")
 	if err != nil {
 		panic(err)
 	}
 	restore := logx.SetDirForTesting(dir)
-	cfgDir, err := os.MkdirTemp("", "keeptui-loader-config")
+	cfgDir, err := os.MkdirTemp("", "keepkit-loader-config")
 	if err != nil {
 		panic(err)
 	}

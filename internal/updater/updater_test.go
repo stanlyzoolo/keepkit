@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
 )
 
 func TestDetectFromPath(t *testing.T) {
@@ -226,6 +226,44 @@ func TestDetectBrewByName(t *testing.T) {
 	}
 	if custom.Manager != "custom" || custom.Display != "rustup update" {
 		t.Errorf("UpdateCmd override lost to the brew branch: %+v", custom)
+	}
+}
+
+// TestDetectBrewByNameChainExhausted pins the second brew-by-name site: the
+// binary IS on PATH but belongs to no known manager — a Homebrew cask app whose
+// executable lives inside the .app bundle (agterm), matching neither the Cellar
+// regex nor any other chain step. The keg/cask directory makes
+// `brew upgrade <name>` self-validating here exactly as on the LookPath miss.
+func TestDetectBrewByNameChainExhausted(t *testing.T) {
+	prefix := t.TempDir()
+	mustMkdirAll(t, filepath.Join(prefix, "Caskroom", "someapp", "0.15.1"))
+	setTestBrewPrefix(t, prefix)
+
+	// Real executables on PATH whose paths match no manager pattern.
+	binDir := t.TempDir()
+	for _, name := range []string{"someapp", "orphan"} {
+		script := filepath.Join(binDir, name)
+		if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+
+	plan, err := Detect(loader.Tool{Name: "someapp"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.Manager != "brew" {
+		t.Errorf("Manager = %q, want %q", plan.Manager, "brew")
+	}
+	wantArgv := []string{"brew", "upgrade", "someapp"}
+	if !equalStrings(plan.Argv, wantArgv) {
+		t.Errorf("Argv = %v, want %v", plan.Argv, wantArgv)
+	}
+
+	// Without a keg of that name the exhausted chain still dead-ends.
+	if _, err := Detect(loader.Tool{Name: "orphan"}); !errors.Is(err, ErrUnknownManager) {
+		t.Fatalf("orphan err = %v, want ErrUnknownManager", err)
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
 )
 
 // ctrlKey builds a ctrl+<r> key message whose String() matches the switch cases

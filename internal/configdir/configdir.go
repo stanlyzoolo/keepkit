@@ -1,11 +1,11 @@
-// Package configdir resolves keeptui's base user-config directory — the parent
-// of the keeptui/ subdir that holds meta.yaml, cache.json, the token and logs.
+// Package configdir resolves keepkit's base user-config directory — the parent
+// of the keepkit/ subdir that holds meta.yaml, cache.json, the token and logs.
 // It is the bottom leaf of the import graph (stdlib only), so every package that
 // owns one of those files can share the resolution without an import cycle.
 //
 // The resolution deliberately differs from os.UserConfigDir(): on macOS that
-// returns ~/Library/Application Support, but keeptui keeps macOS and Linux on
-// the same ~/.config/keeptui path (honoring $XDG_CONFIG_HOME). Windows still
+// returns ~/Library/Application Support, but keepkit keeps macOS and Linux on
+// the same ~/.config/keepkit path (honoring $XDG_CONFIG_HOME). Windows still
 // follows os.UserConfigDir() (%AppData%), where there is no ~/.config convention.
 package configdir
 
@@ -15,8 +15,8 @@ import (
 	"runtime"
 )
 
-// Base returns keeptui's base user-config directory. Callers append the
-// "keeptui" subdir (and the file) themselves, matching what os.UserConfigDir()
+// Base returns keepkit's base user-config directory. Callers append the
+// "keepkit" subdir (and the file) themselves, matching what os.UserConfigDir()
 // callers did before. See baseFor for the per-GOOS rules.
 func Base() (string, error) {
 	return baseFor(runtime.GOOS, os.Getenv, os.UserConfigDir, os.UserHomeDir)

@@ -11,11 +11,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 )
 
 // restartSelf replaces this process with the freshly updated binary, so the
-// terminal tab or tmux pane keeptui was launched in survives the restart: same
+// terminal tab or tmux pane keepkit was launched in survives the restart: same
 // pid, same argv, same environment. Called from runTUI strictly after p.Run()
 // returned — Bubble Tea has restored the terminal by then, and exec'ing from
 // inside Update would hand the new process an alt screen it never opened.
@@ -60,7 +60,7 @@ func restartSelfWith(resolve func() (string, error), execve func(string, []strin
 // A PATH hit is only trusted when it names the same program as executable:
 // argv0 is set by the parent process, so a wrapper (exec -a) or a shell that
 // rewrote argv[0] would otherwise make the restart exec an unrelated binary with
-// keeptui's argv and environment.
+// keepkit's argv and environment.
 func resolveSelfPath(executable string, exists func(string) bool, lookPath func(string) (string, error), argv0 string) (string, error) {
 	if argv0 != "" {
 		if strings.Contains(argv0, "/") {
@@ -74,7 +74,7 @@ func resolveSelfPath(executable string, exists func(string) bool, lookPath func(
 	if executable != "" && exists(executable) {
 		return executable, nil
 	}
-	return "", fmt.Errorf("no keeptui binary to restart (argv0 %q, executable %q)", argv0, executable)
+	return "", fmt.Errorf("no keepkit binary to restart (argv0 %q, executable %q)", argv0, executable)
 }
 
 // sameProgram reports whether two paths name the same program by base name. An
@@ -84,7 +84,7 @@ func resolveSelfPath(executable string, exists func(string) bool, lookPath func(
 // filepath.Base is the whole comparison because this file is unix-only: the
 // windows-style separator and .exe handling it used to carry dated from when the
 // core lived in the untagged restart.go, and under //go:build !windows neither
-// can fire — exec.LookPath("keeptui") on unix never answers "keeptui.exe", and a
+// can fire — exec.LookPath("keepkit") on unix never answers "keepkit.exe", and a
 // backslash in argv0 is an ordinary filename character, not a separator.
 func sameProgram(a, b string) bool {
 	if b == "" {

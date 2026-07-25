@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stanlyzoolo/keeptui/internal/configdir"
+	"github.com/stanlyzoolo/keepkit/internal/configdir"
 )
 
 // testTokenDir overrides the token file directory in tests.
@@ -28,7 +28,7 @@ func tokenFilePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "keeptui", "token"), nil
+	return filepath.Join(base, "keepkit", "token"), nil
 }
 
 // loadTokenFromFile reads the token file into tokenMem exactly once. Any error

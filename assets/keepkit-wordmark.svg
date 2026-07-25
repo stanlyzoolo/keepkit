@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="140" viewBox="0 0 520 140">
+  <!-- KeepKit wordmark in the watchlist style -->
+  <rect width="520" height="140" rx="16" fill="#0D1117"/>
+  <!-- mini watchlist icon -->
+  <g transform="translate(28,24)" stroke-linecap="round">
+    <path d="M10 12 H58" stroke="#30363D" stroke-width="9"/>
+    <rect x="0" y="32" width="92" height="26" rx="6" fill="#16202B"/>
+    <path d="M10 45 H52" stroke="#3FB68B" stroke-width="9"/>
+    <g stroke="#E3B341" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M76 53 V38"/>
+      <path d="M68 45 L76 37 L84 45"/>
+    </g>
+    <path d="M10 80 H66" stroke="#30363D" stroke-width="9"/>
+  </g>
+  <!-- wordmark -->
+  <text x="150" y="90" font-family="ui-monospace, 'Cascadia Code', Menlo, monospace" font-size="52" font-weight="700">
+    <tspan fill="#E6EDF3">keep</tspan><tspan fill="#3FB68B">kit</tspan>
+  </text>
+</svg>

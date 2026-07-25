@@ -11,10 +11,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
-	"github.com/stanlyzoolo/keeptui/internal/updater"
-	"github.com/stanlyzoolo/keeptui/internal/version"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/updater"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 func TestFetchHelpTakeoverLogs(t *testing.T) {
@@ -319,7 +319,7 @@ func seedReadmeCache(t *testing.T, repo, readme string) {
 	if err != nil {
 		t.Fatalf("UserConfigDir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(base, "keeptui"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(base, "keepkit"), 0o755); err != nil {
 		t.Fatalf("mkdir cache: %v", err)
 	}
 	version.SaveCache(version.Cache{repo: {
