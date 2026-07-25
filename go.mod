@@ -1,4 +1,4 @@
-module github.com/stanlyzoolo/keeptui
+module github.com/stanlyzoolo/keepkit
 
 go 1.25.0
 

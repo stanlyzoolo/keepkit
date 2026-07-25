@@ -11,7 +11,7 @@ import (
 const keepLogs = 20
 
 // Cleanup removes all but the newest keepLogs session logs. It filters to the
-// keeptui-*.log naming, sorts by name (lexicographic order equals chronological
+// keepkit-*.log naming, sorts by name (lexicographic order equals chronological
 // order because the timestamp is zero-padded and colon-free), and deletes the
 // tail. Foreign files in the directory are never touched. A missing directory
 // (the common case — no errors yet) and any removal error are ignored.
@@ -34,7 +34,7 @@ func Cleanup() {
 			continue
 		}
 		name := e.Name()
-		if strings.HasPrefix(name, "keeptui-") && strings.HasSuffix(name, ".log") {
+		if strings.HasPrefix(name, "keepkit-") && strings.HasSuffix(name, ".log") {
 			logs = append(logs, name)
 		}
 	}

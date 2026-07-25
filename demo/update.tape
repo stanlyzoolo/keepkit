@@ -1,8 +1,8 @@
-# keeptui update demo — in-TUI update of an outdated tool (ttl), streaming log.
+# keepkit update demo — in-TUI update of an outdated tool (ttl), streaming log.
 # Render: vhs demo/update.tape  (outputs demo/update.gif)
 # Note: this actually runs `brew upgrade ttl`.
 Output demo/update.gif
-Require keeptui
+Require keepkit
 
 Set Shell "zsh"
 Set FontSize 16
@@ -17,7 +17,7 @@ Type "clear" Enter
 Show
 Sleep 800ms
 
-Type "keeptui" Sleep 400ms Enter
+Type "keepkit" Sleep 400ms Enter
 Sleep 6s
 
 # ttl is grouped at the top with the ↑ marker; jump to it and open its card [2]

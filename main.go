@@ -10,26 +10,26 @@ import (
 	"runtime/debug"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/stanlyzoolo/keeptui/internal/configdir"
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
-	"github.com/stanlyzoolo/keeptui/internal/model"
-	verpkg "github.com/stanlyzoolo/keeptui/internal/version"
+	"github.com/stanlyzoolo/keepkit/internal/configdir"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/model"
+	verpkg "github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 // version is overridden at release time via -ldflags "-X main.version=<tag>"
 // (see .github/workflows/release.yml). It defaults to "dev" for local builds.
 var version = "dev"
 
-const usage = `keeptui — terminal TUI tracker for CLI tools
+const usage = `keepkit — terminal TUI tracker for CLI tools
 
 Usage:
-  keeptui            launch the TUI
-  keeptui --version  print version and exit
-  keeptui --help     print this help and exit
+  keepkit            launch the TUI
+  keepkit --version  print version and exit
+  keepkit --help     print this help and exit
 
 There are no other flags or subcommands; all interaction happens inside
-the TUI. Data lives in the "keeptui" directory under your user config
+the TUI. Data lives in the "keepkit" directory under your user config
 directory (meta.yaml, cache.json, token, logs/).
 `
 
@@ -42,7 +42,7 @@ func main() {
 
 // handleCLI is the only non-TUI surface. done=false means "no args — launch
 // the TUI". Anything unrecognized is an error, not a fall-through to the TUI:
-// a keeptui probed by another tool (including keeptui itself) with an unknown
+// a keepkit probed by another tool (including keepkit itself) with an unknown
 // flag must fail fast instead of booting a TUI on a detached terminal.
 func handleCLI(args []string, out, errOut io.Writer) (code int, done bool) {
 	if len(args) == 0 {
@@ -50,13 +50,13 @@ func handleCLI(args []string, out, errOut io.Writer) (code int, done bool) {
 	}
 	switch args[0] {
 	case "--version", "-V", "-v", "version":
-		_, _ = fmt.Fprintf(out, "keeptui %s\n", buildVersion())
+		_, _ = fmt.Fprintf(out, "keepkit %s\n", buildVersion())
 		return 0, true
 	case "--help", "-h", "help":
 		_, _ = fmt.Fprint(out, usage)
 		return 0, true
 	default:
-		_, _ = fmt.Fprintf(errOut, "keeptui: unknown argument %q\n\n%s", args[0], usage)
+		_, _ = fmt.Fprintf(errOut, "keepkit: unknown argument %q\n\n%s", args[0], usage)
 		return 2, true
 	}
 }
@@ -83,32 +83,35 @@ func resolveVersion(ldflag, modVersion string) string {
 	return "dev"
 }
 
-// migrateConfigDir renames the pre-rename config directory (<UserConfigDir>/keys,
-// from when the app was called "keys") to the current keeptui config dir. The
-// old "keys" data was written under os.UserConfigDir(); the new dir resolves via
-// configdir.Base() (~/.config/keeptui on macOS/Linux, %AppData%\keeptui on
-// Windows), i.e. wherever the app now reads. One-shot and conservative: if the
-// new directory already exists — even empty — nothing is touched, so a
-// half-adopted new install is never overwritten by old data.
+// migrateConfigDir renames a pre-rename config directory to the current keepkit
+// config dir. Two legacy generations exist: "keeptui" (the previous brand) under
+// configdir.Base(), and before that "keys" under os.UserConfigDir(). The new dir
+// resolves via configdir.Base() (~/.config/keepkit on macOS/Linux,
+// %AppData%\keepkit on Windows), i.e. wherever the app now reads. One-shot and
+// conservative: if the new directory already exists — even empty — nothing is
+// touched, so a half-adopted new install is never overwritten by old data; the
+// newest legacy generation wins and the rest is left in place.
 func migrateConfigDir() {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return
-	}
 	newBase, err := configdir.Base()
 	if err != nil {
 		return
 	}
-	oldDir := filepath.Join(base, "keys")
-	newDir := filepath.Join(newBase, "keeptui")
+	newDir := filepath.Join(newBase, "keepkit")
 	if _, err := os.Stat(newDir); err == nil {
 		return
 	}
-	if _, err := os.Stat(oldDir); err != nil {
-		return
+	oldDirs := []string{filepath.Join(newBase, "keeptui")}
+	if base, err := os.UserConfigDir(); err == nil {
+		oldDirs = append(oldDirs, filepath.Join(base, "keys"))
 	}
-	if err := os.Rename(oldDir, newDir); err != nil {
-		logx.Errorf("config migration %s -> %s: %v", oldDir, newDir, err)
+	for _, oldDir := range oldDirs {
+		if _, err := os.Stat(oldDir); err != nil {
+			continue
+		}
+		if err := os.Rename(oldDir, newDir); err != nil {
+			logx.Errorf("config migration %s -> %s: %v", oldDir, newDir, err)
+		}
+		return
 	}
 }
 
@@ -119,7 +122,7 @@ func runTUI() {
 	logx.Cleanup()
 	// Partial header first, so even a LoadMeta failure gets a non-blank header.
 	ver := buildVersion()
-	logx.SetHeader(fmt.Sprintf("keeptui %s %s/%s", ver, runtime.GOOS, runtime.GOARCH))
+	logx.SetHeader(fmt.Sprintf("keepkit %s %s/%s", ver, runtime.GOOS, runtime.GOARCH))
 
 	meta, err := loader.LoadMeta()
 	if err != nil {
@@ -128,7 +131,7 @@ func runTUI() {
 		os.Exit(1)
 	}
 	// Enrich the header with tool count and token source now that meta loaded.
-	logx.SetHeader(fmt.Sprintf("keeptui %s %s/%s tools=%d token=%s",
+	logx.SetHeader(fmt.Sprintf("keepkit %s %s/%s tools=%d token=%s",
 		ver, runtime.GOOS, runtime.GOARCH, len(meta), verpkg.TokenSource()))
 
 	p := tea.NewProgram(
@@ -155,7 +158,7 @@ func runTUI() {
 // everything it decides without one lives outside it.
 //
 // WithAppVersion hands the model the version of this very binary: it is what the
-// self-check compares against keeptui's latest release, and a dev build
+// self-check compares against keepkit's latest release, and a dev build
 // (ver == "dev") switches the whole feature off — no request, no banner. Dropping
 // it would leave the self-update feature silently dead in every shipped binary,
 // which is exactly what TestNewRootModelInjectsAppVersion is there to catch.

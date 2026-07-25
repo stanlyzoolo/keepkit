@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 )
 
 // useTempConfigDir points MetaPath at a per-test directory and restores the
@@ -36,7 +36,7 @@ func TestLoadMetaMissingFile(t *testing.T) {
 func TestLoadMetaMalformedYAML(t *testing.T) {
 	dir := useTempConfigDir(t)
 
-	path := filepath.Join(dir, "keeptui", "meta.yaml")
+	path := filepath.Join(dir, "keepkit", "meta.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestSaveMetaLoadMetaPreservesUpdateCmd(t *testing.T) {
 	}
 
 	// omitempty: a tool without update_cmd must not serialize the field.
-	onDisk, err := os.ReadFile(filepath.Join(dir, "keeptui", "meta.yaml"))
+	onDisk, err := os.ReadFile(filepath.Join(dir, "keepkit", "meta.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestSaveMetaLeavesNoTempFile(t *testing.T) {
 	if err := SaveMeta([]ToolMeta{{Name: "a", Status: StatusActive}}); err != nil {
 		t.Fatalf("SaveMeta: %v", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(dir, "keeptui"))
+	entries, err := os.ReadDir(filepath.Join(dir, "keepkit"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestLoadMetaMigratesRetiredStatuses(t *testing.T) {
 - name: oddball
   status: bogus
 `
-	path := filepath.Join(dir, "keeptui", "meta.yaml")
+	path := filepath.Join(dir, "keepkit", "meta.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestLoadMetaMigratesMultiTag(t *testing.T) {
   tags: [cli]
 - name: none
 `
-	path := filepath.Join(dir, "keeptui", "meta.yaml")
+	path := filepath.Join(dir, "keepkit", "meta.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestLoadMetaMigratesMultiTag(t *testing.T) {
 func TestLoadMetaMultiTagMigrationRoundTrip(t *testing.T) {
 	dir := useTempConfigDir(t)
 
-	path := filepath.Join(dir, "keeptui", "meta.yaml")
+	path := filepath.Join(dir, "keepkit", "meta.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestLoadMetaMultiTagMigrationRoundTrip(t *testing.T) {
 func TestLoadMetaMigrationRoundTrip(t *testing.T) {
 	dir := useTempConfigDir(t)
 
-	path := filepath.Join(dir, "keeptui", "meta.yaml")
+	path := filepath.Join(dir, "keepkit", "meta.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}

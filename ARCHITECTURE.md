@@ -1,12 +1,12 @@
 # Architecture
 
-`keeptui` is a terminal TUI tracker for CLI tools built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+`keepkit` is a terminal TUI tracker for CLI tools built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 It is a pure TUI: `main.go` is a thin launcher that reads the tracker (`loader.LoadMeta()`),
 sets up the error journal (`logx`) and starts the Bubble Tea model
 (`model.New(meta).WithAppVersion(ver)` — the running binary's version, which drives the
 self-check).
 The only CLI surface is `--version`/`-V` and `--help`/`-h` (handled in `main.go`
-before the TUI starts, so `keeptui` can be probed by version detectors — including
+before the TUI starts, so `keepkit` can be probed by version detectors — including
 itself); any other argument errors out instead of booting the TUI.
 `main.go` keeps the model `p.Run()` returns for one purpose: `RestartRequested()` is how
 `[U] restart` after a self-update reaches `restartSelf()` (`restart.go` — the shared
@@ -47,7 +47,7 @@ graph TD
 
 | Package | Responsibility |
 |---|---|
-| `internal/configdir` | Resolve the base user-config dir: `~/.config/keeptui` on macOS/Linux (`$XDG_CONFIG_HOME` else `~/.config`), `%AppData%\keeptui` on Windows. Pure `baseFor(goos, …)` core + `Base()` wrapper; stdlib-only bottom leaf shared by `loader`/`version`/`logx`/`main` |
+| `internal/configdir` | Resolve the base user-config dir: `~/.config/keepkit` on macOS/Linux (`$XDG_CONFIG_HOME` else `~/.config`), `%AppData%\keepkit` on Windows. Pure `baseFor(goos, …)` core + `Base()` wrapper; stdlib-only bottom leaf shared by `loader`/`version`/`logx`/`main` |
 | `internal/launcher` | Decide how to run a tracked tool in a new terminal tab: pure `planFor(env, command, toolName)` → `Plan{Argv, Fallback, Terminal}`, detection chain tmux → iTerm2 → Terminal.app → kitty → WezTerm → fallback; env-only, no subprocesses |
 | `internal/loader` | Tracker persistence (`meta.yaml`), status lifecycle (`active → trying → inactive`, legacy values migrated on read), the one-tag-per-tool invariant (a legacy multi-tag list is truncated to its first entry on read), GitHub ref parsing (`NormalizeRepo`, `ParseToolRef`) |
 | `internal/logx` | Session error journal: errors only, one lazily created file per session, imports only the stdlib-only `configdir` leaf. Package-level state — any package can log without threading a logger through |
@@ -55,7 +55,7 @@ graph TD
 | `internal/proc` | `DetachTTY` — run probes without a controlling terminal; `KillGroup` — process-group SIGKILL (plain `Kill` on Windows) |
 | `internal/ui` | Lip Gloss styles, `PlaceOverlay`, `StripANSI` |
 | `internal/updater` | Detect the package manager that owns an installed binary and produce an update `Plan{Manager, Argv, Display}` |
-| `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`); keeptui's own release check (`SelfRepo`, `SelfLatest`) |
+| `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`); keepkit's own release check (`SelfRepo`, `SelfLatest`) |
 
 `configdir`, `launcher`, `logx`, `proc`, `ui`, `updater` and `version` sit at the bottom of the import graph:
 they know nothing about the TUI (`ui`, `updater` and `version` reach only into
@@ -77,7 +77,7 @@ The `model` package is split across files within a single package:
 
 ## Data flow
 
-1. `loader.LoadMeta()` reads `~/.config/keeptui/meta.yaml` — the single source of
+1. `loader.LoadMeta()` reads `~/.config/keepkit/meta.yaml` — the single source of
    tracked tools.
 2. `model.New(meta)` builds the model; `Init()` fires the async fetches — results
    arrive as messages and are merged into the state.
@@ -112,13 +112,13 @@ cached.
 
 Two commands in the `Init()` batch belong to no tool: `fetchRateCmd` (seeds the quota
 gauge — warm-cache starts make no other request) and, on release builds only,
-`selfCheckCmd` (keeptui's own latest release; see *Self-update and restart*). Both sit
+`selfCheckCmd` (keepkit's own latest release; see *Self-update and restart*). Both sit
 at the front of the batch — the README seed has to stay its last element.
 
 ### Probe sandbox
 
 A tracked tool may respond to `--help` by booting its own TUI — that must not shred
-the `keeptui` screen. The protection has two layers:
+the `keepkit` screen. The protection has two layers:
 
 1. every probe goes through `proc.DetachTTY` — its own session, no controlling
    terminal: the child's attempt to open `/dev/tty` gets `ENXIO` instead of toggling
@@ -187,7 +187,7 @@ Key invariants:
   first — mode `2` would otherwise run off the end of the array.
 - **One predicate decides who owns panel `[3]`.** An update log can claim the panel
   either per tool (the buffered tool is the selected one) or regardless of the
-  selection (a self-update — keeptui is typically not tracked and the tracker may be
+  selection (a self-update — keepkit is typically not tracked and the tracker may be
   empty). Both cases are the single argument-less `showsUpdateLog()`, used by the inset
   title, the render branch, the per-chunk repaint, the `setHelpContent` entry gate and
   the help fetch, so they cannot disagree. Releasing a *completed* self-update's claim
@@ -217,8 +217,8 @@ lives in `[3] Update` (a ~500-line buffer); the 10-minute deadline ends with
 
 ## Self-update and restart (`U` / `X`)
 
-keeptui watches its own releases and installs one through the same pipeline as `[u]`.
-**The main case is a keeptui that is not tracked**, which is what shapes the design: no
+keepkit watches its own releases and installs one through the same pipeline as `[u]`.
+**The main case is a keepkit that is not tracked**, which is what shapes the design: no
 step in this path may depend on `meta.yaml`, on a selection or on a card.
 
 `WithAppVersion(v)` injects the running binary's version (a builder, not a `New`
@@ -236,11 +236,11 @@ the one this process is running.
 The banner is a five-state machine (`selfState`: none → offered → dismissed, and
 updated → later) with **no "updating" member**: whether a self-update is in flight is
 derived from the pipeline itself (`selfUpdating()`), so the two cannot drift. Every
-site that asks "is this keeptui's own update?" asks one predicate,
+site that asks "is this keepkit's own update?" asks one predicate,
 `isSelfUpdate(name)` = the target name *and* the version gate — the name says which
 kind of update it is, the gate says whether that kind exists on this build, and a
 name-only test would switch the entire feature on for a dev build through `u` on a
-tracked `keeptui` row. `U` acts
+tracked `keepkit` row. `U` acts
 (detect, or restart once updated), `X` folds the banner into a compact cell next to the
 quota gauge — a fold, not a cancel, since `U` stays reachable there for the rest of the
 session, and the cell outranks both the gauge and the trailing hints so it survives the
@@ -255,16 +255,16 @@ Detection, the confirm dialog and the streaming log are the `[u]` machinery, and
 the self case fits into it is a **name**, not a parallel path: the detection result
 carries the target, the handler stores it as `updateTarget`, and everything downstream —
 the confirm dialog, its status bar, the log's claim on panel `[3]`, the completion
-handler — keys off that name instead of `selectedMeta()`, which an untracked keeptui (or
-an empty tracker) cannot answer. So an update of keeptui is a self-update whichever key
-started it, `u` on a tracked keeptui row included — on a build where the feature is
+handler — keys off that name instead of `selectedMeta()`, which an untracked keepkit (or
+an empty tracker) cannot answer. So an update of keepkit is a self-update whichever key
+started it, `u` on a tracked keepkit row included — on a build where the feature is
 live; with it gated off that same keypress stays a plain tool update end to end (no
 panel-owning log, no banner, no restart to offer). Two gates still differ: a landed
 detection must match the selection only on the tool path (`acceptsUpdateDetect`; both
 paths refuse while an update runs or an input mode owns the keyboard, since the answer
 can arrive seconds later and a dialog opening under an editor would steal its
 keystrokes), and the completion handler settles the self case ahead of the `toolByName`
-lookup whose early return would otherwise drop the message for an untracked keeptui —
+lookup whose early return would otherwise drop the message for an untracked keepkit —
 leaving the update silently finished and `[U] restart` unreachable. Failure writes no
 banner state at all: the banner reappears by itself once the in-flight flag clears, so
 `U` is the retry, a fold stays folded, and an earlier restart offer survives — while
@@ -284,7 +284,7 @@ anything), and `os.Executable()` is only the fallback. That order matters on
 Linux, where `os.Executable()` reads `/proc/self/exe` symlink-resolved and can still
 name the live *old* binary after a keg-style upgrade — exec'ing it would loop restart
 into the same banner. On Windows there is no image-replacing exec, so `restartSelf`
-degrades to printing `keeptui updated — run keeptui again` and exiting; the same hint
+degrades to printing `keepkit updated — run keepkit again` and exiting; the same hint
 covers a unix resolution or exec failure (on stdout, exit code 0 — the update did
 succeed).
 
@@ -298,7 +298,7 @@ runs its argv as a `tea.Cmd` through `proc.DetachTTY` with a 10-second ceiling
 (`proc.KillGroup` on the process group when it fires — mostly for osascript
 blocked on the macOS Automation dialog); a `Fallback` plan — terminals with no
 scripting API, and native Windows — runs the command in the current window via
-`tea.ExecProcess` (`sh -c` / `cmd /c`): keeptui suspends and resumes when the
+`tea.ExecProcess` (`sh -c` / `cmd /c`): keepkit suspends and resumes when the
 tool exits.
 
 An adapter failure **auto-falls back** to `tea.ExecProcess`, so the tool still
@@ -309,7 +309,7 @@ deferred, not dropped: it fires — with a visible status message — on the
 keystroke that closes the mode, going straight to the exec fallback (the
 failing adapter plan is never re-run). One adapter launch runs at a time (`m.launchingFor`, the
 launch twin of `updatingFor`). Working directories differ by path: a tab opens
-in the new shell's default cwd, the fallback inherits keeptui's. A non-zero
+in the new shell's default cwd, the fallback inherits keepkit's. A non-zero
 exit of the tool itself is a status message only — never logged.
 
 ## GitHub API
@@ -319,9 +319,9 @@ costs 3 requests at startup, plus one lazy request for the README of the tool op
 in panel `[3]` (`GET /repos/{owner}/{repo}/readme` with
 `Accept: application/vnd.github.raw+json` — `doGH` only defaults `Accept` when the
 caller left it empty). On a release build the self-check adds one release-only request
-per 24-hour window; a tracked keeptui shares that cache entry, so a fresh full pass
+per 24-hour window; a tracked keepkit shares that cache entry, so a fresh full pass
 makes the check free. Token: `GITHUB_TOKEN` from the environment always wins over the
-`~/.config/keeptui/token` file (`0600`); a token entered in the TUI is validated with a
+`~/.config/keepkit/token` file (`0600`); a token entered in the TUI is validated with a
 `/rate_limit` request before being written to disk.
 
 - **`doGH(req)`** — the single auth point: headers, the 5-second client, reading the
@@ -346,22 +346,22 @@ makes the check free. Token: `GITHUB_TOKEN` from the environment always wins ove
   including the changelog fetch, which is the only one still asking once the card is
   fresh — through the one shared `applyReleaseOutcome`, so no writer can keep half of
   the contract) and never by clearing the release tuple the card shows, so the self-check's
-  banner goes quiet while a tracked keeptui keeps its `latest:` line, its date and its
+  banner goes quiet while a tracked keepkit keeps its `latest:` line, its date and its
   changelog.
   Force refresh (`r`) skips only the freshness check, keeping the merge and the
   guard against poisoning the cache with an empty response.
 
 ## Storage
 
-The base dir comes from `configdir.Base()`: `~/.config/keeptui` on macOS and Linux (`$XDG_CONFIG_HOME` else `~/.config`), `%AppData%\keeptui` on Windows. Paths below use the macOS/Linux form.
+The base dir comes from `configdir.Base()`: `~/.config/keepkit` on macOS and Linux (`$XDG_CONFIG_HOME` else `~/.config`), `%AppData%\keepkit` on Windows. Paths below use the macOS/Linux form.
 
 | Data | Path |
 |---|---|
-| Tracker metadata | `~/.config/keeptui/meta.yaml` |
-| Version, README and self-check cache (24h TTL each, separate timestamps) | `~/.config/keeptui/cache.json` |
-| GitHub token (`0600`) | `~/.config/keeptui/token` |
-| Session error log | `~/.config/keeptui/logs/keeptui-<timestamp>.log` |
-| Pre-migration tracker copy (written once, when a load dropped tags) | `~/.config/keeptui/meta.yaml.bak` |
+| Tracker metadata | `~/.config/keepkit/meta.yaml` |
+| Version, README and self-check cache (24h TTL each, separate timestamps) | `~/.config/keepkit/cache.json` |
+| GitHub token (`0600`) | `~/.config/keepkit/token` |
+| Session error log | `~/.config/keepkit/logs/keepkit-<timestamp>.log` |
+| Pre-migration tracker copy (written once, when a load dropped tags) | `~/.config/keepkit/meta.yaml.bak` |
 
 `SaveMeta` writes atomically (temp file + `os.Rename` in the same directory) — a
 crash mid-write can never truncate `meta.yaml`.

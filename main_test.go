@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
-	"github.com/stanlyzoolo/keeptui/internal/model"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/model"
 )
 
 func TestHandleCLI(t *testing.T) {
@@ -21,10 +21,10 @@ func TestHandleCLI(t *testing.T) {
 		wantErr  string // substring expected on stderr
 	}{
 		{name: "no args launches TUI", args: nil, wantCode: 0, wantDone: false},
-		{name: "--version", args: []string{"--version"}, wantCode: 0, wantDone: true, wantOut: "keeptui "},
-		{name: "-V", args: []string{"-V"}, wantCode: 0, wantDone: true, wantOut: "keeptui "},
-		{name: "-v", args: []string{"-v"}, wantCode: 0, wantDone: true, wantOut: "keeptui "},
-		{name: "version word", args: []string{"version"}, wantCode: 0, wantDone: true, wantOut: "keeptui "},
+		{name: "--version", args: []string{"--version"}, wantCode: 0, wantDone: true, wantOut: "keepkit "},
+		{name: "-V", args: []string{"-V"}, wantCode: 0, wantDone: true, wantOut: "keepkit "},
+		{name: "-v", args: []string{"-v"}, wantCode: 0, wantDone: true, wantOut: "keepkit "},
+		{name: "version word", args: []string{"version"}, wantCode: 0, wantDone: true, wantOut: "keepkit "},
 		{name: "--help", args: []string{"--help"}, wantCode: 0, wantDone: true, wantOut: "Usage:"},
 		{name: "-h", args: []string{"-h"}, wantCode: 0, wantDone: true, wantOut: "Usage:"},
 		{name: "help word", args: []string{"help"}, wantCode: 0, wantDone: true, wantOut: "Usage:"},
@@ -53,7 +53,7 @@ func TestHandleCLI(t *testing.T) {
 
 // The --version line must be parseable by the tool's own installed-version
 // detection (version.versionRe wants a dotted numeric), so a release build of
-// keeptui tracked inside keeptui shows up as installed.
+// keepkit tracked inside keepkit shows up as installed.
 func TestVersionOutputParseable(t *testing.T) {
 	var out strings.Builder
 	oldVersion := version
@@ -63,7 +63,7 @@ func TestVersionOutputParseable(t *testing.T) {
 	if code, done := handleCLI([]string{"--version"}, &out, &strings.Builder{}); code != 0 || !done {
 		t.Fatalf("handleCLI --version = (%d, %v), want (0, true)", code, done)
 	}
-	if got, want := out.String(), "keeptui v0.5.1\n"; got != want {
+	if got, want := out.String(), "keepkit v0.5.1\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -115,7 +115,7 @@ func TestNewRootModelInjectsAppVersion(t *testing.T) {
 }
 
 // TestRestartIfRequested pins the other half of the production wiring: the model
-// p.Run() returns decides whether keeptui re-execs itself. A stand-in supplies
+// p.Run() returns decides whether keepkit re-execs itself. A stand-in supplies
 // the flag because model.Model can only reach it through unexported state.
 func TestRestartIfRequested(t *testing.T) {
 	tests := []struct {
@@ -166,12 +166,12 @@ func (p plainFinal) View() string                        { return "" }
 // the way main.go does: a plain `version` name would collide with main.go's
 // ldflag variable.)
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "keeptui-main-logs")
+	dir, err := os.MkdirTemp("", "keepkit-main-logs")
 	if err != nil {
 		panic(err)
 	}
 	restoreLog := logx.SetDirForTesting(dir)
-	cfgDir, err := os.MkdirTemp("", "keeptui-main-config")
+	cfgDir, err := os.MkdirTemp("", "keepkit-main-config")
 	if err != nil {
 		panic(err)
 	}

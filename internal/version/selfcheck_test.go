@@ -78,7 +78,7 @@ func TestSelfLatestServedFromReleaseStamp(t *testing.T) {
 }
 
 // TestSelfLatestServedFromFullPass verifies the other freshness source: a
-// tracked keeptui whose full repo pass already ran makes the self-check free.
+// tracked keepkit whose full repo pass already ran makes the self-check free.
 func TestSelfLatestServedFromFullPass(t *testing.T) {
 	hits := apiServer(t, apiHandlers{release: releaseJSON("v0.6.0")})
 
@@ -160,7 +160,7 @@ func TestSelfLatestNoReleases(t *testing.T) {
 
 // TestSelfLatestDroppedReleaseKeepsSharedTuple pins the 404 contract: the answer
 // is conclusively "no release" and is remembered as ReleaseMissing, but the
-// release tuple a tracked keeptui's card shows (latest:, its date, the ↑ marker,
+// release tuple a tracked keepkit's card shows (latest:, its date, the ↑ marker,
 // the changelog body, the clickable release URL) survives untouched — the same
 // thing getRepoData and getChangelog do with the identical 404. The banner is
 // silenced by the flag, not by destroying another feature's content.
@@ -391,7 +391,7 @@ func TestSelfLatestErrors(t *testing.T) {
 }
 
 // TestSelfLatestPreservesEntry verifies the merge-on-write: the release-only
-// pass must not wipe the card/README fields a tracked keeptui already has.
+// pass must not wipe the card/README fields a tracked keepkit already has.
 func TestSelfLatestPreservesEntry(t *testing.T) {
 	apiServer(t, apiHandlers{release: releaseJSON("v0.8.0")})
 

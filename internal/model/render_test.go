@@ -19,10 +19,10 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
-	"github.com/stanlyzoolo/keeptui/internal/ui"
-	"github.com/stanlyzoolo/keeptui/internal/version"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/ui"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 // TestUpdateViewNoPanicNoLog confirms a normal Update/View cycle writes no log
@@ -42,7 +42,7 @@ func TestUpdateViewNoPanicNoLog(t *testing.T) {
 
 	if entries, err := os.ReadDir(logDir); err == nil {
 		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), "keeptui-") {
+			if strings.HasPrefix(e.Name(), "keepkit-") {
 				t.Errorf("normal Update/View cycle created a log file: %s", e.Name())
 			}
 		}
@@ -3691,7 +3691,7 @@ func TestStatusBarNeverWraps(t *testing.T) {
 			// WithAppVersion is what main injects and what selfCheckEnabled gates
 			// the whole feature on. Without it selfUpdating() is false whatever
 			// updatingFor says, so the updating case below would silently render the
-			// offered banner instead of the compact "keeptui updating…" cell.
+			// offered banner instead of the compact "keepkit updating…" cell.
 			m := New([]loader.ToolMeta{{Name: "rg", GitHub: "BurntSushi/ripgrep"}}).WithAppVersion("v0.4.2")
 			m = mustModel(m.Update(tea.WindowSizeMsg{Width: width, Height: 24}))
 			m.focus = tc.focus

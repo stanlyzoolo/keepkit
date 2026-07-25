@@ -9,7 +9,7 @@ import (
 
 // DetachTTY starts cmd without a console (DETACHED_PROCESS), the Windows
 // analog of dropping the controlling terminal: a child that tries to draw a
-// TUI cannot reach keeptui's console via CONOUT$. Captured stdout/stderr pipes
+// TUI cannot reach keepkit's console via CONOUT$. Captured stdout/stderr pipes
 // keep working.
 func DetachTTY(cmd *exec.Cmd) {
 	const detachedProcess = 0x00000008

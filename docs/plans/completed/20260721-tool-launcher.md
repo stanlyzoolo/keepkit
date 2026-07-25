@@ -2,9 +2,9 @@
 
 ## Overview
 
-- `enter` on the selected tool in `[1] Tools` opens a one-line command prompt (prefilled with the tool name, or the last command run for it this session) and launches the command in a **new terminal tab named after the tool** — the keeptui session keeps running.
-- Tab opening is terminal-specific, so a detection chain picks the adapter: tmux → iTerm2 → Terminal.app → kitty → wezterm. Terminals with no scripting API (agterm, ghostty, warp; Windows lands here too — via the auto-fallback, see Technical Details) fall back to `tea.ExecProcess`: the tool runs in the current window, keeptui suspends and resumes when it exits.
-- Solves: launching `yazi`/`fzf`/`dive`-style tools straight from the tracker without leaving keeptui or manually opening tabs.
+- `enter` on the selected tool in `[1] Tools` opens a one-line command prompt (prefilled with the tool name, or the last command run for it this session) and launches the command in a **new terminal tab named after the tool** — the keepkit session keeps running.
+- Tab opening is terminal-specific, so a detection chain picks the adapter: tmux → iTerm2 → Terminal.app → kitty → wezterm. Terminals with no scripting API (agterm, ghostty, warp; Windows lands here too — via the auto-fallback, see Technical Details) fall back to `tea.ExecProcess`: the tool runs in the current window, keepkit suspends and resumes when it exits.
+- Solves: launching `yazi`/`fzf`/`dive`-style tools straight from the tracker without leaving keepkit or manually opening tabs.
 
 ## Context (from discovery)
 
@@ -43,7 +43,7 @@
 - `internal/launcher` owns "how do I open a tab here": `planFor(env, command, toolName)` is a pure function over an injected `env func(string) string`, returning `Plan{Argv []string, Fallback bool, Terminal string}`. `Detect(command, toolName)` is the thin `os.Getenv` wrapper.
 - Detection priority (first hit wins): `$TMUX` set → tmux (deliberately first: inside tmux `TERM_PROGRAM` names the *outer* terminal, and a tmux window is the correct "tab" there) → `$TERM_PROGRAM == "iTerm.app"` → `$TERM_PROGRAM == "Apple_Terminal"` → `$KITTY_WINDOW_ID` set → `$TERM_PROGRAM == "WezTerm"` → `Plan{Fallback: true}`.
 - The user command always executes as `sh -c <cmd>` (`cmd /c` on Windows, fallback path only). For tmux/kitty/wezterm the command travels as an argv element — no escaping. For the two AppleScript paths it is interpolated into the script source — `appleScriptQuote` (backslashes then double quotes) is the single escaping point.
-- Model side: `modeRunInput` (new input mode) → on enter, `launcher.Detect` (env-only, safe inside `Update()`); tab path runs the adapter argv as a `tea.Cmd` under `proc.DetachTTY` → `launchDoneMsg{toolName, cmd, err}`; adapter failure (kitty remote control off, Automation permission denied) **auto-falls back** to `tea.ExecProcess` so the tool always launches, with the status bar explaining. Non-zero exit of the tool itself → `statusMsg` only, no `logx` (a tool exiting non-zero is not a keeptui anomaly).
+- Model side: `modeRunInput` (new input mode) → on enter, `launcher.Detect` (env-only, safe inside `Update()`); tab path runs the adapter argv as a `tea.Cmd` under `proc.DetachTTY` → `launchDoneMsg{toolName, cmd, err}`; adapter failure (kitty remote control off, Automation permission denied) **auto-falls back** to `tea.ExecProcess` so the tool always launches, with the status bar explaining. Non-zero exit of the tool itself → `statusMsg` only, no `logx` (a tool exiting non-zero is not a keepkit anomaly).
 
 ## Technical Details
 
@@ -59,7 +59,7 @@
 - Empty input on enter = cancel (no-op, back to `modeNormal`). Empty tool list: `enter` in `focusTools` is a no-op.
 - Launch while `updatingFor != ""` is deliberately NOT blocked — independent concerns (ExecProcess pauses rendering of the live update log; the buffer catches up on resume).
 - Windows note: `planFor` is env-only, so WezTerm on native Windows still yields the wezterm tab plan (whose `sh -c` will fail there) — Windows is served by the **auto-fallback** (`launchDoneMsg{err}` → `cmd /c` exec), not by detection short-circuiting. One noisy failed attempt is accepted; a `GOOS` guard in `planFor` is deliberate YAGNI until a Windows user reports it.
-- A not-installed tool launches anyway — `sh` reports `command not found` in the tab; keeptui does not pre-check PATH.
+- A not-installed tool launches anyway — `sh` reports `command not found` in the tab; keepkit does not pre-check PATH.
 
 ## What Goes Where
 
@@ -142,7 +142,7 @@
 ## Post-Completion
 
 **Manual verification** (adapters shell out to real terminal APIs that unit tests must not touch):
-- in agterm (no adapter): `enter` on `yazi` → runs in the current window, keeptui resumes on exit with no screen corruption
+- in agterm (no adapter): `enter` on `yazi` → runs in the current window, keepkit resumes on exit with no screen corruption
 - in iTerm2: new tab opens, named after the tool, command runs; denying the Automation permission triggers the auto-fallback path
 - inside tmux: `tmux new-window` named after the tool, even when the outer terminal is iTerm2
 - `dive` flow: enter → append an image arg → next launch prefills the previous command

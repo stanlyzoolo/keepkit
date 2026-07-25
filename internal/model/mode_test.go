@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/updater"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/updater"
 )
 
 func keyRunes(s string) tea.KeyMsg {

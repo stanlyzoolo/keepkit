@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- KeepKit watchlist icon — transparent background version -->
+  <g stroke-linecap="round">
+    <!-- row 1: up to date -->
+    <path d="M52 76 H150" stroke="#57606A" stroke-width="16" opacity="0.55"/>
+    <!-- row 2: selected, update available -->
+    <rect x="36" y="112" width="184" height="44" rx="10" fill="#3FB68B" opacity="0.14"/>
+    <path d="M52 134 H140" stroke="#3FB68B" stroke-width="16" stroke-linecap="round"/>
+    <g stroke="#E3B341" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M192 148 V122"/>
+      <path d="M178 134 L192 120 L206 134"/>
+    </g>
+    <!-- row 3: up to date -->
+    <path d="M52 192 H166" stroke="#57606A" stroke-width="16" opacity="0.55"/>
+  </g>
+</svg>

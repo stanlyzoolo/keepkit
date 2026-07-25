@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const sampleReadme = "# Title\n\nSome intro text.\n\n## Usage\n\n- first item\n- second item\n\n```sh\nkeeptui --version\n```\n"
+const sampleReadme = "# Title\n\nSome intro text.\n\n## Usage\n\n- first item\n- second item\n\n```sh\nkeepkit --version\n```\n"
 
 // visibleLines strips ANSI from rendered output so assertions look at the text
 // a user sees, not at glamour's escape sequences (which vary by color profile).
@@ -21,7 +21,7 @@ func TestRenderReadmeContent(t *testing.T) {
 		t.Fatal("renderReadme returned empty output")
 	}
 	plain := stripANSI(out)
-	for _, want := range []string{"Title", "Some intro text.", "Usage", "first item", "second item", "keeptui --version"} {
+	for _, want := range []string{"Title", "Some intro text.", "Usage", "first item", "second item", "keepkit --version"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("rendered README missing %q\n---\n%s", want, plain)
 		}

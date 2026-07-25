@@ -12,11 +12,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
-	"github.com/stanlyzoolo/keeptui/internal/ui"
-	"github.com/stanlyzoolo/keeptui/internal/updater"
-	"github.com/stanlyzoolo/keeptui/internal/version"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/ui"
+	"github.com/stanlyzoolo/keepkit/internal/updater"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 const (
@@ -128,21 +128,21 @@ const updateLogMaxLines = 500
 // a time, no queue). Shared so the two refusals cannot word it differently.
 const updateBusyStatus = "another update is running"
 
-// selfToolName is the name keeptui uses for itself inside the update pipeline:
+// selfToolName is the name keepkit uses for itself inside the update pipeline:
 // the updater's detection target, the updatingFor/updateLogFor guard value and
 // the label the confirm bar and status messages show. A constant rather than a
-// meta.yaml lookup — the feature's main case is a keeptui that is not tracked.
-const selfToolName = "keeptui"
+// meta.yaml lookup — the feature's main case is a keepkit that is not tracked.
+const selfToolName = "keepkit"
 
 // selfState is the self-update banner's state machine. There is deliberately no
 // "updating" member: whether a self-update is in flight is derived from the
 // update pipeline itself (selfUpdating), so the two can never disagree.
 //
 //	selfNone         no newer release known — no banner at all
-//	selfOffered      full banner: "keeptui <v> available — [U] update  [X] dismiss"
-//	selfDismissed    collapsed to a compact "keeptui ↑ [U]" cell by the gauge
-//	selfUpdated      full banner: "keeptui updated — [U] restart  [X] later"
-//	selfUpdatedLater collapsed to a compact "keeptui [U] restart" cell
+//	selfOffered      full banner: "keepkit <v> available — [U] update  [X] dismiss"
+//	selfDismissed    collapsed to a compact "keepkit ↑ [U]" cell by the gauge
+//	selfUpdated      full banner: "keepkit updated — [U] restart  [X] later"
+//	selfUpdatedLater collapsed to a compact "keepkit [U] restart" cell
 //
 // Five sites switch on it — [U] (selfUpdateKey), [X], selfBannerCells,
 // selfCompactCell and the [?] Self group — and .golangci.yml carries no
@@ -162,7 +162,7 @@ const (
 	selfStateCount
 )
 
-// selfCheckMsg carries the result of the startup self-check — keeptui's own
+// selfCheckMsg carries the result of the startup self-check — keepkit's own
 // latest release tag. An empty latest with a nil error is the conclusive answer
 // "no release published", not a failure. The comparison deliberately lives in
 // the handler rather than the command, so it runs against the model's
@@ -179,8 +179,8 @@ type selfCheckMsg struct {
 //
 // self marks a detection fired by the self-update banner ([U]) rather than by
 // [u] on a tracked tool row. The two differ in what makes a landed result still
-// relevant: a tool result must match the selection, while keeptui's own has no
-// selection to match (the main case is a keeptui that is not tracked) — see
+// relevant: a tool result must match the selection, while keepkit's own has no
+// selection to match (the main case is a keepkit that is not tracked) — see
 // acceptsUpdateDetect.
 type updateDetectedMsg struct {
 	tool string
@@ -296,7 +296,7 @@ type Model struct {
 	// the plan awaiting confirmation in modeConfirmUpdate and updateTarget the
 	// name it belongs to — resolved when the plan was detected, not when enter
 	// is pressed, so the dialog cannot be retargeted by a selection move and
-	// keeptui's own update (which has no row, and no selection when the tracker
+	// keepkit's own update (which has no row, and no selection when the tracker
 	// is empty) needs no separate identity. updateLog is the live merged
 	// stdout+stderr buffer for panel [3]; updateLogFor is the tool it belongs to,
 	// so navigating away shows normal help and navigating back shows the log
@@ -315,10 +315,10 @@ type Model struct {
 	// (--version, brew dir, cargo install --list) can report a version that is
 	// not the one this process is running.
 	appVersion string
-	// selfLatest is keeptui's own latest release tag and selfState the banner
+	// selfLatest is keepkit's own latest release tag and selfState the banner
 	// state machine (see selfState). selfUpdateLog marks the live [3] log as
-	// keeptui's own, so it stays visible regardless of the selection — an
-	// untracked keeptui has no row to select. restartRequested is the exit flag
+	// keepkit's own, so it stays visible regardless of the selection — an
+	// untracked keepkit has no row to select. restartRequested is the exit flag
 	// main reads off the model p.Run() returns.
 	selfLatest       string
 	selfState        selfState
@@ -512,16 +512,16 @@ func isDevVersion(v string) bool {
 	return pseudoVersionRe.MatchString(v)
 }
 
-// isSelfUpdate reports whether an update of the named tool is keeptui's own
+// isSelfUpdate reports whether an update of the named tool is keepkit's own
 // self-update — the one that owns panel [3] under every selection and ends in the
-// [U] restart offer — rather than a plain tool update. Every update of keeptui is
+// [U] restart offer — rather than a plain tool update. Every update of keepkit is
 // a self-update regardless of which key started it, so the target name decides
 // which *kind* of update it is; but the feature as a whole is gated on the running
 // build having a release behind it, exactly like the startup check
 // (selfCheckEnabled), and the name alone would smuggle it past that gate.
 //
 // The gate is not cosmetic. On a dev build there is no check, no banner and
-// nothing to compare, so [u] on a tracked keeptui row must stay what it is for
+// nothing to compare, so [u] on a tracked keepkit row must stay what it is for
 // every other row: a plain tool update. Announcing a restart there would also be
 // a lie — a working copy's argv0 carries a path separator, so resolveSelfPath
 // re-execs that very binary and would silently return the user to the pre-update
@@ -530,17 +530,17 @@ func (m Model) isSelfUpdate(name string) bool {
 	return name == selfToolName && m.selfCheckEnabled()
 }
 
-// selfUpdating reports whether the update currently in flight is keeptui's own.
+// selfUpdating reports whether the update currently in flight is keepkit's own.
 // Derived from the update pipeline's own state instead of a selfState member, so
 // "a self-update is running" can never drift out of sync with updatingFor.
 func (m Model) selfUpdating() bool {
 	return m.isSelfUpdate(m.updatingFor)
 }
 
-// selfTool is the updater's detection target for keeptui itself. A tracked
-// keeptui is used as tracked, so a update_cmd override in meta.yaml governs the
+// selfTool is the updater's detection target for keepkit itself. A tracked
+// keepkit is used as tracked, so a update_cmd override in meta.yaml governs the
 // self-update exactly as it governs a [u] on that row; otherwise the entry is
-// synthesized — the feature's main case is a keeptui that is not in the tracker
+// synthesized — the feature's main case is a keepkit that is not in the tracker
 // at all, and updater.Detect only needs the name (plus the override).
 func (m Model) selfTool() loader.Tool {
 	if t, ok := m.toolByName(selfToolName); ok {
@@ -557,8 +557,8 @@ func (m Model) selfTool() loader.Tool {
 // instead of help. Two ways to own the panel: the selected tool is the one whose
 // log is buffered (the tool path — the buffer is sticky per tool, so navigating
 // away shows normal help and navigating back shows the log again), or the log is
-// keeptui's own, which stays visible regardless of the selection because an
-// untracked keeptui has no row to select and the tracker can even be empty.
+// keepkit's own, which stays visible regardless of the selection because an
+// untracked keepkit has no row to select and the tracker can even be empty.
 //
 // The single predicate every updateLogFor-bound site shares — the inset title,
 // the renderHelpContent branch, the per-chunk repaint, the setHelpContent entry
@@ -579,7 +579,7 @@ func (m Model) showsUpdateLog() bool {
 // only place its output is visible. Called from the paths that mean "show me
 // something else": an explicit [h]/[m]/[r] and a selection move.
 //
-// Only the override is dropped, not updateLogFor: a tracked keeptui keeps the
+// Only the override is dropped, not updateLogFor: a tracked keepkit keeps the
 // same per-tool stickiness every other tool has.
 func (m *Model) dismissSelfLog() bool {
 	if !m.selfUpdateLog || m.selfUpdating() {
@@ -640,7 +640,7 @@ func (m *Model) selfUpdateKey() tea.Cmd {
 // opening under an editor, a search or an overlay would steal the keystroke
 // aimed at it (the same reasoning as launchDoneMsg's mode gate). Beyond that a
 // tool result must still match the selection — the user may have moved on —
-// while keeptui's own has no selection to match: it is typically untracked and
+// while keepkit's own has no selection to match: it is typically untracked and
 // the tracker may be empty.
 func (m Model) acceptsUpdateDetect(msg updateDetectedMsg) bool {
 	if m.updatingFor != "" || m.mode != modeNormal {
@@ -902,7 +902,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// On failure, auto-fall back to running the tool in the current
 		// window — the tool always launches, the status bar explains the
 		// degradation. Not logged: the fallback makes this a degraded path,
-		// not a keeptui malfunction.
+		// not a keepkit malfunction.
 		if msg.err != nil {
 			// The result can arrive up to launchTimeout after enter (osascript
 			// blocked on the macOS Automation dialog). tea.ExecProcess seizes
@@ -926,8 +926,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.setStatus("launched " + msg.toolName)
 
 	case execDoneMsg:
-		// The tool ran in the current window and keeptui resumed. A non-zero
-		// exit belongs to the tool, not keeptui — statusMsg only, no logx.
+		// The tool ran in the current window and keepkit resumed. A non-zero
+		// exit belongs to the tool, not keepkit — statusMsg only, no logx.
 		// Exception in wording only: the shell's own "command not found"
 		// exit (notFoundExit) means the tool never ran, so the message says
 		// "not installed" instead of surfacing a cryptic exit status.
@@ -965,12 +965,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case updateDetectedMsg:
-		// Detection result for a [u] (tool) or [U] (keeptui itself) press; the
+		// Detection result for a [u] (tool) or [U] (keepkit itself) press; the
 		// relevance gate differs per path, see acceptsUpdateDetect. A dropped
 		// result changes nothing — for the self path the banner stays at
 		// selfOffered, where [U] is a retry. ErrUnknownManager is not a dead-end
 		// dialog either, just a hint: the tool path can point at update_cmd, while
-		// keeptui's own manual route is whatever installed it. On success, stash
+		// keepkit's own manual route is whatever installed it. On success, stash
 		// the plan together with the name it was detected for (which the confirm
 		// dialog and its status bar read) and open the confirm dialog.
 		if !m.acceptsUpdateDetect(msg) {
@@ -980,7 +980,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if errors.Is(msg.err, updater.ErrUnknownManager) {
 				// The wording branches on what the target *is*, not on which key
 				// asked: the same failure of the same binary must read the same
-				// way from [U] and from [u] on a tracked keeptui row (see
+				// way from [U] and from [u] on a tracked keepkit row (see
 				// isSelfUpdate). msg.self keeps the one meaning only it has — "no
 				// selection to match" — in acceptsUpdateDetect.
 				if m.isSelfUpdate(msg.tool) {
@@ -1029,12 +1029,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// rescheduling itself; the live log in [3] survives until the next
 		// update begins. Re-render the card so its title drops the spinner.
 		m.updatingFor = ""
-		// keeptui's own update is settled first, ahead of the toolByName lookup:
+		// keepkit's own update is settled first, ahead of the toolByName lookup:
 		// that early return drops the message whenever the tool is not tracked,
-		// which for keeptui is the normal case — the update would finish silently
+		// which for keepkit is the normal case — the update would finish silently
 		// and the [U] restart offer would never appear. The discriminator is
-		// isSelfUpdate, not the bare name: an update of keeptui is a self-update
-		// whichever key started it (so [u] on a tracked keeptui row ends here too
+		// isSelfUpdate, not the bare name: an update of keepkit is a self-update
+		// whichever key started it (so [u] on a tracked keepkit row ends here too
 		// and offers the same restart instead of leaving a banner that contradicts
 		// the card), but only on a build where the feature is live at all — on a dev
 		// build the same keypress falls through to the plain tool path below.
@@ -1046,7 +1046,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// updatingFor clears: the offer, where [U] is the retry, or the
 				// compact cell when [X] folded it mid-update, or nothing at all when
 				// the check never offered anything. Forcing selfOffered here instead
-				// announced "keeptui  available" with no version behind it whenever
+				// announced "keepkit  available" with no version behind it whenever
 				// the update started from selfNone (a rate-limited or offline startup
 				// check, a check that said "not newer", or [u] on a tracked row), and
 				// it replaced a pending [U] restart from an earlier successful update
@@ -1058,7 +1058,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selfState = selfUpdated
 			statusCmd := m.setStatus("updated " + selfToolName)
 			// The new binary is on disk, but this process is still the old one —
-			// only a tracked keeptui has a card and a ↑ marker for the re-detect
+			// only a tracked keepkit has a card and a ↑ marker for the re-detect
 			// to update.
 			if t, tracked := m.toolByName(msg.tool); tracked {
 				return m, tea.Batch(statusCmd, fetchInstalledCmd(t))
@@ -1964,7 +1964,7 @@ func (m *Model) setHelpContent() {
 	m.helpEntries = nil
 	m.helpNavIdx = -1
 	m.helpBase = ""
-	// The update log (a tool's or keeptui's own — showsUpdateLog covers both) and
+	// The update log (a tool's or keepkit's own — showsUpdateLog covers both) and
 	// the loading state render instead of help text; both leave the entry index
 	// empty so j/k stay plain scroll instead of driving a spotlight over log
 	// lines. A cache miss or stored "No --help output…" fallback yields no
@@ -2000,7 +2000,7 @@ func (m *Model) setHelpContent() {
 func (m *Model) switchHelpMode(mode int) tea.Cmd {
 	m.helpMode = mode
 	// An explicit mode switch is intent to leave a completed update log
-	// (otherwise sticky), keeptui's own included — and that one is not tied to a
+	// (otherwise sticky), keepkit's own included — and that one is not tied to a
 	// selection, so it is released before the guard below, which returns early on
 	// an empty tracker. There the repaint has to happen here: nothing else
 	// re-renders [3] with no tool to select.

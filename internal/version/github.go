@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stanlyzoolo/keeptui/internal/configdir"
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/configdir"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 )
 
 const cacheTTL = 24 * time.Hour
@@ -772,7 +772,7 @@ func cacheFilePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "keeptui", "cache.json"), nil
+	return filepath.Join(base, "keepkit", "cache.json"), nil
 }
 
 func LoadCache() Cache {

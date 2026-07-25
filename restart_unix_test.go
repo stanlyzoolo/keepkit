@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 )
 
 // TestResolveSelfPath pins the argv0 semantics of the restart path resolution.
@@ -33,69 +33,69 @@ func TestResolveSelfPath(t *testing.T) {
 	}{
 		{
 			name:         "bare argv0 prefers PATH over a live executable",
-			executable:   "/old/keg/bin/keeptui",
-			argv0:        "keeptui",
-			existing:     []string{"/old/keg/bin/keeptui", "/usr/local/bin/keeptui"},
-			pathHit:      "/usr/local/bin/keeptui",
-			want:         "/usr/local/bin/keeptui",
-			wantLookedUp: "keeptui",
+			executable:   "/old/keg/bin/keepkit",
+			argv0:        "keepkit",
+			existing:     []string{"/old/keg/bin/keepkit", "/usr/local/bin/keepkit"},
+			pathHit:      "/usr/local/bin/keepkit",
+			want:         "/usr/local/bin/keepkit",
+			wantLookedUp: "keepkit",
 		},
 		{
 			name:         "lookPath miss falls back to the executable",
-			executable:   "/usr/local/bin/keeptui",
-			argv0:        "keeptui",
-			existing:     []string{"/usr/local/bin/keeptui"},
-			want:         "/usr/local/bin/keeptui",
-			wantLookedUp: "keeptui",
+			executable:   "/usr/local/bin/keepkit",
+			argv0:        "keepkit",
+			existing:     []string{"/usr/local/bin/keepkit"},
+			want:         "/usr/local/bin/keepkit",
+			wantLookedUp: "keepkit",
 		},
 		{
 			name:         "lookPath returning an empty path with no error is a miss",
-			executable:   "/usr/local/bin/keeptui",
-			argv0:        "keeptui",
-			existing:     []string{"/usr/local/bin/keeptui"},
+			executable:   "/usr/local/bin/keepkit",
+			argv0:        "keepkit",
+			existing:     []string{"/usr/local/bin/keepkit"},
 			pathHitNoErr: true,
-			want:         "/usr/local/bin/keeptui",
-			wantLookedUp: "keeptui",
+			want:         "/usr/local/bin/keepkit",
+			wantLookedUp: "keepkit",
 		},
 		{
 			// The empty-path check on its own: with no executable to compare
 			// against, sameProgram accepts anything, so only `p != ""` stops the
 			// empty string from being returned as a path to syscall.Exec.
 			name:         "an empty lookPath hit is never a path",
-			argv0:        "keeptui",
+			argv0:        "keepkit",
 			pathHitNoErr: true,
-			wantLookedUp: "keeptui",
+			wantLookedUp: "keepkit",
 			wantErr:      true,
 		},
 		{
 			name:         "a PATH hit for a rewritten argv0 is rejected",
-			executable:   "/usr/local/bin/keeptui",
+			executable:   "/usr/local/bin/keepkit",
 			argv0:        "kt-wrapper",
-			existing:     []string{"/usr/local/bin/keeptui", "/usr/bin/kt-wrapper"},
+			existing:     []string{"/usr/local/bin/keepkit", "/usr/bin/kt-wrapper"},
 			pathHit:      "/usr/bin/kt-wrapper",
-			want:         "/usr/local/bin/keeptui",
+			want:         "/usr/local/bin/keepkit",
 			wantLookedUp: "kt-wrapper",
 		},
 		{
 			name:       "argv0 with a separator wins when it exists",
-			executable: "/proc/self/exe/resolved/keeptui",
-			argv0:      "./bin/keeptui",
-			existing:   []string{"./bin/keeptui", "/proc/self/exe/resolved/keeptui"},
-			pathHit:    "/usr/local/bin/keeptui",
-			want:       "./bin/keeptui",
+			executable: "/proc/self/exe/resolved/keepkit",
+			argv0:      "./bin/keepkit",
+			existing:   []string{"./bin/keepkit", "/proc/self/exe/resolved/keepkit"},
+			pathHit:    "/usr/local/bin/keepkit",
+			want:       "./bin/keepkit",
 		},
 		{
 			name:       "vanished argv0 path falls back to the executable",
-			executable: "/usr/local/bin/keeptui",
-			argv0:      "/old/build/keeptui",
-			existing:   []string{"/usr/local/bin/keeptui"},
-			pathHit:    "/usr/local/bin/keeptui", // never consulted for a path argv0
-			want:       "/usr/local/bin/keeptui",
+			executable: "/usr/local/bin/keepkit",
+			argv0:      "/old/build/keepkit",
+			existing:   []string{"/usr/local/bin/keepkit"},
+			pathHit:    "/usr/local/bin/keepkit", // never consulted for a path argv0
+			want:       "/usr/local/bin/keepkit",
 		},
 		{
 			name:         "everything missed is an error",
-			executable:   "/gone/keeptui",
-			argv0:        "/also/gone/keeptui",
+			executable:   "/gone/keepkit",
+			argv0:        "/also/gone/keepkit",
 			wantErr:      true,
 			wantLookedUp: "",
 		},
@@ -105,9 +105,9 @@ func TestResolveSelfPath(t *testing.T) {
 		},
 		{
 			name:       "empty argv0 still uses the executable",
-			executable: "/usr/local/bin/keeptui",
-			existing:   []string{"/usr/local/bin/keeptui"},
-			want:       "/usr/local/bin/keeptui",
+			executable: "/usr/local/bin/keepkit",
+			existing:   []string{"/usr/local/bin/keepkit"},
+			want:       "/usr/local/bin/keepkit",
 		},
 	}
 	for _, tt := range tests {
@@ -157,19 +157,19 @@ func TestResolveSelfPath(t *testing.T) {
 
 // TestResolveSelfPathNeverLooksUpAPath: an argv0 carrying a separator is already
 // a path, so PATH is not consulted for it — a same-named binary earlier in PATH
-// must not hijack a restart the user started with ./keeptui.
+// must not hijack a restart the user started with ./keepkit.
 func TestResolveSelfPathNeverLooksUpAPath(t *testing.T) {
 	called := false
 	lookPath := func(string) (string, error) {
 		called = true
-		return "/usr/local/bin/keeptui", nil
+		return "/usr/local/bin/keepkit", nil
 	}
-	got, err := resolveSelfPath("/fallback/keeptui", func(string) bool { return true }, lookPath, "./keeptui")
+	got, err := resolveSelfPath("/fallback/keepkit", func(string) bool { return true }, lookPath, "./keepkit")
 	if err != nil {
 		t.Fatalf("resolveSelfPath: %v", err)
 	}
-	if got != "./keeptui" {
-		t.Errorf("resolveSelfPath = %q, want ./keeptui", got)
+	if got != "./keepkit" {
+		t.Errorf("resolveSelfPath = %q, want ./keepkit", got)
 	}
 	if called {
 		t.Error("lookPath was consulted for an argv0 that is already a path")
@@ -179,7 +179,7 @@ func TestResolveSelfPathNeverLooksUpAPath(t *testing.T) {
 // TestFileExists covers the real-filesystem probe handed to resolveSelfPath.
 func TestFileExists(t *testing.T) {
 	dir := t.TempDir()
-	file := filepath.Join(dir, "keeptui")
+	file := filepath.Join(dir, "keepkit")
 	if err := os.WriteFile(file, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -217,15 +217,15 @@ func TestRestartSelfWith(t *testing.T) {
 	}{
 		{
 			name:     "exec fails",
-			resolve:  func() (string, error) { return "/usr/local/bin/keeptui", nil },
+			resolve:  func() (string, error) { return "/usr/local/bin/keepkit", nil },
 			execErr:  errors.New("exec format error"),
 			wantExec: true,
 			wantLog:  "exec format error",
 		},
 		{
 			name:    "path resolution fails",
-			resolve: func() (string, error) { return "", errors.New("no keeptui binary to restart") },
-			wantLog: "no keeptui binary to restart",
+			resolve: func() (string, error) { return "", errors.New("no keepkit binary to restart") },
+			wantLog: "no keepkit binary to restart",
 		},
 	}
 	for _, tt := range tests {
@@ -241,7 +241,7 @@ func TestRestartSelfWith(t *testing.T) {
 				return tt.execErr
 			}, &out)
 
-			if tt.wantExec && execed != "/usr/local/bin/keeptui" {
+			if tt.wantExec && execed != "/usr/local/bin/keepkit" {
 				t.Errorf("exec'd %q, want the resolved path", execed)
 			}
 			if !tt.wantExec && execed != "" {
@@ -249,7 +249,7 @@ func TestRestartSelfWith(t *testing.T) {
 			}
 			// The wording is pinned here rather than against the const: this is
 			// where the user actually reads it, and it must say the update landed.
-			if got := strings.TrimSpace(out.String()); got != "keeptui updated — run keeptui again" {
+			if got := strings.TrimSpace(out.String()); got != "keepkit updated — run keepkit again" {
 				t.Errorf("printed %q, want the restart hint", got)
 			}
 			if log := logx.ReadAllForTesting(logDir); !strings.Contains(log, tt.wantLog) {
@@ -269,7 +269,7 @@ func TestRestartSelfWithSuccessIsSilent(t *testing.T) {
 
 	var out bytes.Buffer
 	restartSelfWith(
-		func() (string, error) { return "/usr/local/bin/keeptui", nil },
+		func() (string, error) { return "/usr/local/bin/keepkit", nil },
 		func(string, []string, []string) error { return nil },
 		&out,
 	)

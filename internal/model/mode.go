@@ -7,10 +7,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stanlyzoolo/keeptui/internal/launcher"
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/updater"
-	"github.com/stanlyzoolo/keeptui/internal/version"
+	"github.com/stanlyzoolo/keepkit/internal/launcher"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/updater"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 // inputMode is the single input/modal state of the TUI. Exactly one mode is
@@ -408,7 +408,7 @@ func flushPendingLaunch(mdl tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 // live log to the target, and fire the streaming command plus the spinner tick;
 // esc (or any other key) cancels back to modeNormal. The plan awaiting
 // confirmation lives in m.updatePlan and the name it belongs to in
-// m.updateTarget, so there is one path here for a tool and for keeptui itself:
+// m.updateTarget, so there is one path here for a tool and for keepkit itself:
 // reading the name off the selection instead would silently cancel a
 // self-update whenever the tracker is empty, and would retarget a tool's plan
 // onto whatever row the user moved to while detection was running.
@@ -424,12 +424,12 @@ func (m Model) updateConfirmUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.updatingFor = target
 		m.updateLog = nil
 		m.updateLogFor = target
-		// keeptui's own log owns [3] under every selection — an untracked keeptui
+		// keepkit's own log owns [3] under every selection — an untracked keepkit
 		// has no row of its own (see showsUpdateLog) — while a tool's log is
 		// per-tool sticky, so taking the single buffer over also releases a
 		// finished self-update's claim on the panel. Read off selfUpdating(), which
 		// is updatingFor (just set to target) through the feature's version gate:
-		// with the self-update off, keeptui's row keeps the same per-tool stickiness
+		// with the self-update off, keepkit's row keeps the same per-tool stickiness
 		// as any other row.
 		m.selfUpdateLog = m.selfUpdating()
 		m.briefViewport.SetContent(m.renderCard())

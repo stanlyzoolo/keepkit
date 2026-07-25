@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 )
 
 // respWith builds a minimal *http.Response for classifyStatus tests, carrying a

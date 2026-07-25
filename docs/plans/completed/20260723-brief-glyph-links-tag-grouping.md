@@ -2,7 +2,7 @@
 
 ## Context
 
-Five small-to-medium UX corrections requested for keeptui, agreed during a brainstorm:
+Five small-to-medium UX corrections requested for keepkit, agreed during a brainstorm:
 
 1. **`installed` tag glyph** — the `latest:` line already prints a Nerd Font tag glyph U+F412 (`nf-oct-tag`) before the version; `installed:` should get the same glyph before its version for visual parity.
 2. **Select/copy — dropped** (YAGNI, out of scope).
@@ -114,7 +114,7 @@ Run the `docs-sync` skill — these touch documented surfaces:
 
 ## Verification
 
-1. `go build .` and run `go run .` against a real `~/.config/keeptui/meta.yaml`.
+1. `go build .` and run `go run .` against a real `~/.config/keepkit/meta.yaml`.
    - Brief shows the U+F412 glyph before the installed version.
    - Click the `repo:` line → browser opens the repo; click the changelog URL line → opens that release page; clicks elsewhere do nothing.
    - Edit a tag with `t`: typing `cli, foo` stores the whole string as one tag (or first token — per the open-detail decision); the card shows a single tag.

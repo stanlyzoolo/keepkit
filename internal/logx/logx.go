@@ -1,5 +1,5 @@
 // Package logx is a dependency-free, errors-only session logger. It writes one
-// plain-text file per session under ~/.config/keeptui/logs, created lazily on the
+// plain-text file per session under ~/.config/keepkit/logs, created lazily on the
 // first write. A session with no errors leaves no file at all — the presence of
 // a file is itself the signal that something went wrong.
 //
@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stanlyzoolo/keeptui/internal/configdir"
+	"github.com/stanlyzoolo/keepkit/internal/configdir"
 )
 
 var (
@@ -29,7 +29,7 @@ var (
 	dirOverride string // test seam; empty in production
 )
 
-// logDir resolves <configdir.Base>/keeptui/logs, honoring the test override.
+// logDir resolves <configdir.Base>/keepkit/logs, honoring the test override.
 // Mirrors loader.MetaPath's resolution. Caller holds mu.
 func logDir() string {
 	if dirOverride != "" {
@@ -39,7 +39,7 @@ func logDir() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(base, "keeptui", "logs")
+	return filepath.Join(base, "keepkit", "logs")
 }
 
 // SetDirForTesting redirects the log directory and resets all logger state, so
@@ -101,7 +101,7 @@ func Errorf(format string, args ...any) {
 			failed = true
 			return
 		}
-		name := "keeptui-" + time.Now().Format("2006-01-02_15-04-05") + ".log"
+		name := "keepkit-" + time.Now().Format("2006-01-02_15-04-05") + ".log"
 		f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			failed = true
@@ -142,7 +142,7 @@ func Path() string {
 	return path
 }
 
-// ReadAllForTesting returns the concatenated contents of every keeptui-*.log in
+// ReadAllForTesting returns the concatenated contents of every keepkit-*.log in
 // dir, or "" when the directory is absent. It is the shared reader for tests
 // that assert what the logger wrote (paired with SetDirForTesting), so each
 // package's test file does not re-implement the scan.
@@ -153,7 +153,7 @@ func ReadAllForTesting(dir string) string {
 	}
 	var sb strings.Builder
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "keeptui-") && strings.HasSuffix(e.Name(), ".log") {
+		if strings.HasPrefix(e.Name(), "keepkit-") && strings.HasSuffix(e.Name(), ".log") {
 			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 			if err != nil {
 				continue

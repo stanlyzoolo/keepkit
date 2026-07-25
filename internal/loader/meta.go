@@ -7,8 +7,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/stanlyzoolo/keeptui/internal/configdir"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/configdir"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 )
 
 type Status string
@@ -75,13 +75,13 @@ func ConfigDirOverride() string {
 
 func MetaPath() string {
 	if testConfigDir != "" {
-		return filepath.Join(testConfigDir, "keeptui", "meta.yaml")
+		return filepath.Join(testConfigDir, "keepkit", "meta.yaml")
 	}
 	configDir, err := configdir.Base()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(configDir, "keeptui", "meta.yaml")
+	return filepath.Join(configDir, "keepkit", "meta.yaml")
 }
 
 func LoadMeta() ([]ToolMeta, error) {

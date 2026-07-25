@@ -12,12 +12,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stanlyzoolo/keeptui/internal/launcher"
-	"github.com/stanlyzoolo/keeptui/internal/loader"
-	"github.com/stanlyzoolo/keeptui/internal/logx"
-	"github.com/stanlyzoolo/keeptui/internal/proc"
-	"github.com/stanlyzoolo/keeptui/internal/updater"
-	"github.com/stanlyzoolo/keeptui/internal/version"
+	"github.com/stanlyzoolo/keepkit/internal/launcher"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/proc"
+	"github.com/stanlyzoolo/keepkit/internal/updater"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 // safeCmd wraps a command so a panic in its goroutine is recorded to the session
@@ -68,8 +68,8 @@ type launchDoneMsg struct {
 }
 
 // execDoneMsg is the tea.ExecProcess callback result for the fallback path:
-// the tool ran in the current window and keeptui resumed. err is the tool's
-// own exit status — a tool exiting non-zero is not a keeptui anomaly, so the
+// the tool ran in the current window and keepkit resumed. err is the tool's
+// own exit status — a tool exiting non-zero is not a keepkit anomaly, so the
 // handler surfaces it as a statusMsg and never logs it.
 type execDoneMsg struct {
 	toolName string
@@ -119,7 +119,7 @@ func shellCommand(goos, cmd string) (string, []string) {
 }
 
 // execToolCmd runs command in the current window via tea.ExecProcess: Bubble
-// Tea releases the terminal, the tool takes it over, and keeptui resumes when
+// Tea releases the terminal, the tool takes it over, and keepkit resumes when
 // it exits. This is the fallback for terminals with no tab-scripting API and
 // the safety net when an adapter fails. Deliberately not wrapped in safeCmd:
 // tea.ExecProcess only builds the exec message — nothing here can panic.
@@ -223,7 +223,7 @@ func fetchRateCmd() tea.Cmd {
 	})
 }
 
-// selfCheckCmd fetches keeptui's own latest release tag — one release-only
+// selfCheckCmd fetches keepkit's own latest release tag — one release-only
 // request per cache TTL window (see version.SelfLatest) — and emits a
 // selfCheckMsg. It takes no parameters: the repo is a constant and the
 // is-it-newer comparison belongs to the handler, which knows m.appVersion.
@@ -415,7 +415,7 @@ func (m *Model) autoFetchCmdsForSelected() tea.Cmd {
 	if mt, ok := m.selectedMeta(); ok {
 		switch {
 		case m.showsUpdateLog():
-			// A live update log owns [3] — this tool's, or keeptui's own, which is
+			// A live update log owns [3] — this tool's, or keepkit's own, which is
 			// selection-independent: don't fetch help (and don't set
 			// helpLoadingFor) — a late helpOutputMsg or the "Loading..." state
 			// would clobber the log. Just render the log branch, scrolled to the
@@ -612,7 +612,7 @@ func fetchHelpCmd(name string, mode int) tea.Cmd {
 		// instead of masquerading as the other.
 		// Every probe runs detached from the controlling terminal: a tool
 		// that answers --help/-h/help by booting its own TUI would otherwise
-		// grab /dev/tty and shred keeptui's screen (see internal/proc).
+		// grab /dev/tty and shred keepkit's screen (see internal/proc).
 		if mode == helpModeMan {
 			cmd := exec.CommandContext(ctx, "man", name)
 			cmd.Env = append(os.Environ(), "MANPAGER=cat", "MANWIDTH=80", "TERM=dumb")

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stanlyzoolo/keeptui/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/loader"
 )
 
 func TestDetectFromPath(t *testing.T) {

@@ -1,7 +1,7 @@
-# keeptui hero demo — overview: list, card, README + help nav, search, hotkeys overlay.
+# keepkit hero demo — overview: list, card, README + help nav, search, hotkeys overlay.
 # Render: vhs demo/hero.tape  (outputs demo/hero.gif)
 Output demo/hero.gif
-Require keeptui
+Require keepkit
 
 Set Shell "zsh"
 Set FontSize 16
@@ -17,7 +17,7 @@ Type "clear" Enter
 Show
 Sleep 800ms
 
-Type "keeptui" Sleep 400ms Enter
+Type "keepkit" Sleep 400ms Enter
 Sleep 4s
 
 # browse the tracker list

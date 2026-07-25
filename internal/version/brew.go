@@ -33,7 +33,7 @@ func brewPrefix() string {
 // per-tool subdirectory (Caskroom/<name>/0.15.1, Cellar/<name>/14.1.0).
 // This serves apps with no --version CLI (casks like GUI/terminal apps) at
 // the cost of two ReadDir calls — no brew subprocess. Returns "" when the
-// tool is not brew-managed or its keeptui name differs from the formula/cask
+// tool is not brew-managed or its keepkit name differs from the formula/cask
 // name.
 func brewDirVersion(name string) string {
 	prefix := brewPrefix()

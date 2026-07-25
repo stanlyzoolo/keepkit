@@ -21,7 +21,7 @@ func TestCleanupKeepsNewest20(t *testing.T) {
 
 	// 25 files with lexicographically ordered names (chronological).
 	for i := 0; i < 25; i++ {
-		seed(t, dir, fmt.Sprintf("keeptui-2026-07-17_%02d-00-00.log", i))
+		seed(t, dir, fmt.Sprintf("keepkit-2026-07-17_%02d-00-00.log", i))
 	}
 
 	Cleanup()
@@ -32,13 +32,13 @@ func TestCleanupKeepsNewest20(t *testing.T) {
 	}
 	// The 5 oldest (00..04) must be gone; 05..24 kept.
 	for i := 0; i < 5; i++ {
-		name := fmt.Sprintf("keeptui-2026-07-17_%02d-00-00.log", i)
+		name := fmt.Sprintf("keepkit-2026-07-17_%02d-00-00.log", i)
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Errorf("expected %s removed", name)
 		}
 	}
 	for i := 5; i < 25; i++ {
-		name := fmt.Sprintf("keeptui-2026-07-17_%02d-00-00.log", i)
+		name := fmt.Sprintf("keepkit-2026-07-17_%02d-00-00.log", i)
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("expected %s kept: %v", name, err)
 		}
@@ -51,14 +51,14 @@ func TestCleanupLeavesForeignFiles(t *testing.T) {
 	defer restore()
 
 	for i := 0; i < 25; i++ {
-		seed(t, dir, fmt.Sprintf("keeptui-2026-07-17_%02d-00-00.log", i))
+		seed(t, dir, fmt.Sprintf("keepkit-2026-07-17_%02d-00-00.log", i))
 	}
 	seed(t, dir, "notes.txt")
-	seed(t, dir, "keeptui-x.txt") // wrong suffix
+	seed(t, dir, "keepkit-x.txt") // wrong suffix
 
 	Cleanup()
 
-	for _, name := range []string{"notes.txt", "keeptui-x.txt"} {
+	for _, name := range []string{"notes.txt", "keepkit-x.txt"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("foreign file %s should be untouched: %v", name, err)
 		}
@@ -79,7 +79,7 @@ func TestCleanupFewerThan20(t *testing.T) {
 	defer restore()
 
 	for i := 0; i < 5; i++ {
-		seed(t, dir, fmt.Sprintf("keeptui-2026-07-17_%02d-00-00.log", i))
+		seed(t, dir, fmt.Sprintf("keepkit-2026-07-17_%02d-00-00.log", i))
 	}
 
 	Cleanup()

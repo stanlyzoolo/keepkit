@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// logFiles returns the keeptui-*.log entries in dir.
+// logFiles returns the keepkit-*.log entries in dir.
 func logFiles(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -20,7 +20,7 @@ func logFiles(t *testing.T, dir string) []string {
 	}
 	var out []string
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "keeptui-") && strings.HasSuffix(e.Name(), ".log") {
+		if strings.HasPrefix(e.Name(), "keepkit-") && strings.HasSuffix(e.Name(), ".log") {
 			out = append(out, e.Name())
 		}
 	}
@@ -45,7 +45,7 @@ func TestFirstErrorfCreatesFileWithHeader(t *testing.T) {
 	restore := SetDirForTesting(dir)
 	defer restore()
 
-	SetHeader("keeptui v1.4.0 darwin/arm64 tools=12 token=config")
+	SetHeader("keepkit v1.4.0 darwin/arm64 tools=12 token=config")
 	Errorf("something %s", "broke")
 
 	files := logFiles(t, dir)
@@ -60,7 +60,7 @@ func TestFirstErrorfCreatesFileWithHeader(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 lines (header + record), got %d: %q", len(lines), string(data))
 	}
-	if lines[0] != "keeptui v1.4.0 darwin/arm64 tools=12 token=config" {
+	if lines[0] != "keepkit v1.4.0 darwin/arm64 tools=12 token=config" {
 		t.Errorf("header line = %q", lines[0])
 	}
 	if !strings.Contains(lines[1], "ERROR something broke") {

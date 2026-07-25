@@ -30,7 +30,7 @@ func NormalizeRepo(s string) string {
 	return owner + "/" + repo
 }
 
-// ParseToolRef classifies a `keeptui track` argument. When arg refers to a GitHub
+// ParseToolRef classifies a `keepkit track` argument. When arg refers to a GitHub
 // repository it returns a short tool name (the repo segment) and a normalized
 // "github.com/owner/repo" string. Otherwise it returns the argument unchanged as
 // a plain name with isGitHub=false.
