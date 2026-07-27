@@ -196,10 +196,43 @@ Key invariants:
 ## Updating a tool (`u`)
 
 `updater.Detect` identifies the manager from the installed binary — the chain is
-brew → go → cargo → pipx → npm (order matters: brew before go, so a brew-installed
-Go binary is not misrouted to `go install`). `update_cmd` from `meta.yaml` always
-wins and runs via `sh -c`. Detection spawns subprocesses, so it runs as a `tea.Cmd`,
+brew → go → cargo → pipx → uv → pnpm → bun → npm. Order matters twice: brew before
+go, so a brew-installed Go binary is not misrouted to `go install`, and pnpm/bun
+before npm, because both layouts contain `node_modules` segments the npm step would
+otherwise claim (a bun global really did resolve to `npm install -g <pkg>`, which
+installs a duplicate under npm's prefix). `update_cmd` from `meta.yaml` always wins
+and runs via `sh -c`. Detection spawns subprocesses, so it runs as a `tea.Cmd`,
 never inside `Update()`.
+
+Five steps are path-convention based (cargo, pipx, uv, pnpm, bun) and take their
+roots from `managerDirsFrom(getenv, home, goos)` (pure core, `resolveManagerDirs()`
+wrapper — the `launcher.planFor` idiom): `$UV_TOOL_DIR`, `$PNPM_HOME` and
+`$BUN_INSTALL` with per-platform defaults, plus home-derived `~/.cargo/bin` and
+`~/.local/pipx/venvs` (no `$CARGO_HOME`/`$PIPX_HOME` — unchanged behaviour, and a
+separate question from path resolution). Carrying all five is what lets
+`detectFromPath` stop calling `homeDir()`, so its "no I/O, no environment" contract
+holds literally. An empty field switches that step off, which is what makes the zero
+value backwards compatible. That check lives inside `underDir`/`segmentUnder`, which
+answer "no match" for an empty dir, rather than in a `!= ""` guard repeated at every
+step: `filepath.Rel("", "bin/exa")` succeeds, so a relative path would otherwise read
+as living under every disabled root.
+
+The wrapper then expands symlinks in every root (`resolveDir`, keeping the raw path
+when it does not resolve). This is load-bearing: `Detect` matches these roots against
+a symlink-*resolved* binary path, so a root reached through a symlink — a relocated
+`~/.bun`, a home on a secondary volume, `/home` under autofs — never matches. uv and
+pnpm's shim/store layouts then merely lose the update offer, but bun and legacy pnpm
+globals keep a plain `node_modules/<pkg>` segment, so npm claims them and offers the
+duplicate install this chain exists to prevent.
+
+pnpm needs a second signal: its
+global bins are cmd-shim shell scripts, not symlinks, so `Detect` does a bounded
+best-effort read of the binary (only under `$PNPM_HOME`) and passes the
+`# cmd-shim-target=` path into the core exactly as `go version -m` output rides in.
+A file over the 8 KiB cap is rejected whole rather than parsed truncated — a cut
+inside the marker line shortens the path, and a shortened package name is a
+confidently wrong update command rather than the honest degradation everything
+else in the chain falls back to.
 
 When the tool has no binary of its own on PATH, one fallback runs before
 `ErrUnknownManager`: a `Cellar/<name>`/`Caskroom/<name>` directory means brew owns

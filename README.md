@@ -40,7 +40,8 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
   and cargo fallbacks for tools that won't answer `--version`), the latest release
   comes from GitHub; outdated tools are marked `↑` and gathered at the top of the list
 - **Update from inside the TUI** — one key detects the package manager
-  (brew / go / cargo / pipx / npm, or `update_cmd` from `meta.yaml`), asks for
+  (brew / go / cargo / pipx / uv / pnpm / bun / npm, or `update_cmd` from
+  `meta.yaml`), asks for
   confirmation and streams the command output into panel `[3]` in real time
 - **Self-update** — when a newer keepkit release exists, the status bar offers it;
   after the update one more key restarts keepkit in place, in the same terminal tab
@@ -141,7 +142,19 @@ on the tool card. keepkit detects the package manager the binary was installed w
 - `go` — buildinfo (`go version -m`) with a `path` field → `go install <module>@latest`;
 - `cargo` — a binary in `~/.cargo/bin` → `cargo install <crate>`;
 - `pipx` — a venv in `~/.local/pipx/venvs/<pkg>/` → `pipx upgrade <pkg>`;
+- `uv` — a tool under `$UV_TOOL_DIR` (default `~/.local/share/uv/tools/<pkg>/`) →
+  `uv tool upgrade <pkg>`;
+- `pnpm` — a global under `$PNPM_HOME` (default `~/Library/pnpm` on macOS,
+  `~/.local/share/pnpm` on Linux) → `pnpm add -g <pkg>`;
+- `bun` — a global under `$BUN_INSTALL` (default `~/.bun`) → `bun add -g <pkg>`;
 - `npm` — a global `node_modules/<pkg>` → `npm install -g <pkg>`.
+
+pnpm and bun are checked before npm on purpose: both keep their globals behind
+`node_modules` paths, so npm would otherwise claim them and offer
+`npm install -g <pkg>` — a duplicate copy under npm's prefix while the original keeps
+shadowing it on `PATH`. `add -g` rather than `update -g` for both, because `update`
+respects the range recorded at install time and can quietly refuse the major bump the
+card is offering.
 
 If the binary cannot be attributed to any of those — or the tool has no binary of
 its own on `PATH` at all — one more check runs before giving up: a Homebrew keg or
@@ -149,6 +162,24 @@ cask named after the tool → `brew upgrade <name>`. That covers formulae whose
 binaries are named differently (`rust` installs `rustc` and `cargo`, so there is no
 `rust` binary to detect from) and cask apps whose executable lives inside the `.app`
 bundle, where the path itself names no manager.
+
+Two limits are worth knowing. Detection for uv, pnpm, bun and npm reads path
+conventions, so on **Windows** their bins are `.cmd` shims keepkit does not parse —
+a pre-existing npm limitation the three new managers inherit; on macOS and Linux
+pnpm's shims are `#!/bin/sh` scripts, which keepkit does read. And a manager's **own**
+binary is out of scope: `bun upgrade`, `pnpm self-update` and friends are not offered,
+those tools update themselves. A layout no check recognises normally degrades to the
+same `update_cmd` hint as an unknown manager.
+
+One case does not, and it is worth knowing: pnpm and bun globals sit behind
+`node_modules` paths, so if keepkit cannot work out where their root is, the path
+still looks like an ordinary npm install and the offer becomes
+`npm install -g <package>`. Running it would install a second copy under npm's
+prefix while the original keeps shadowing it on `PATH`. keepkit reads `$PNPM_HOME`
+and `$BUN_INSTALL` (and the platform defaults) and expands symlinks in them, so this
+only bites when the root is somewhere the environment does not name — a store moved
+by a config file, or a session started without your shell profile. Export the
+variable, or set `update_cmd` on the tool, and the right manager is picked.
 
 The command is shown in the status bar for confirmation; its output streams into
 panel `[3] Update` in real time and the TUI stays responsive. After a successful
