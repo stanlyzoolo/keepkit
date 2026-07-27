@@ -584,7 +584,14 @@ func npmPackage(p string) string {
 		if strings.HasPrefix(pkg, ".") {
 			continue // service dir (.pnpm, .bin) — keep scanning
 		}
-		if strings.HasPrefix(pkg, "@") && i+2 < len(parts) {
+		if strings.HasPrefix(pkg, "@") {
+			// A scope alone names no package: "@angular" is a directory holding
+			// them. Returning it produced `pnpm add -g @scope`, a wrong command
+			// where the chain owes an honest miss — and it is reachable, because
+			// one caller passes a shim target, i.e. unvalidated file content.
+			if i+2 >= len(parts) || parts[i+2] == "" {
+				return ""
+			}
 			return pkg + "/" + parts[i+2]
 		}
 		return pkg

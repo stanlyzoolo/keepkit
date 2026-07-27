@@ -117,6 +117,16 @@ func TestDetectFromPath(t *testing.T) {
 			wantArgv:    []string{"pnpm", "add", "-g", "@angular/cli"},
 		},
 		{
+			// The reachable half of the bare-scope hole: a shim target is file
+			// content nothing validated, and a target ending at the scope used to
+			// come back as `pnpm add -g @angular`.
+			name:       "pnpm shim target naming a bare scope",
+			realPath:   filepath.Join(pnpmHome, "bin", "ng"),
+			shimTarget: filepath.Join(pnpmHome, "global", "v11", "1d0e9b4", "node_modules", "@angular"),
+			dirs:       managerDirs{pnpmHome: pnpmHome},
+			wantErr:    ErrUnknownManager,
+		},
+		{
 			// Legacy layouts symlink into the store, so the resolved path itself
 			// names the package and no shim target is involved.
 			name:        "pnpm legacy symlink layout",
@@ -384,6 +394,15 @@ func TestNpmPackage(t *testing.T) {
 			"@angular/cli",
 		},
 		{"only a .bin shim dir", "/usr/local/lib/node_modules/.bin/tsc", ""},
+		// A scope with nothing after it is a directory, not a package. It used to
+		// come back as "@angular", i.e. `npm install -g @angular`.
+		{"bare scope", "/usr/local/lib/node_modules/@angular", ""},
+		{"bare scope with a trailing slash", "/usr/local/lib/node_modules/@angular/", ""},
+		{
+			"bare scope inside the pnpm store",
+			"/home/t/.local/share/pnpm/global/5/node_modules/.pnpm/@scope+cli@1.0.0/node_modules/@scope",
+			"",
+		},
 		{"no node_modules segment", "/usr/local/bin/tsc", ""},
 		{"node_modules is the last segment", "/usr/local/lib/node_modules", ""},
 	}

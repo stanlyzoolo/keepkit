@@ -168,8 +168,18 @@ conventions, so on **Windows** their bins are `.cmd` shims keepkit does not pars
 a pre-existing npm limitation the three new managers inherit; on macOS and Linux
 pnpm's shims are `#!/bin/sh` scripts, which keepkit does read. And a manager's **own**
 binary is out of scope: `bun upgrade`, `pnpm self-update` and friends are not offered,
-those tools update themselves. Anything a check misses degrades the same way as an
-unknown manager — the `update_cmd` hint below, never a wrong command.
+those tools update themselves. A layout no check recognises normally degrades to the
+same `update_cmd` hint as an unknown manager.
+
+One case does not, and it is worth knowing: pnpm and bun globals sit behind
+`node_modules` paths, so if keepkit cannot work out where their root is, the path
+still looks like an ordinary npm install and the offer becomes
+`npm install -g <package>`. Running it would install a second copy under npm's
+prefix while the original keeps shadowing it on `PATH`. keepkit reads `$PNPM_HOME`
+and `$BUN_INSTALL` (and the platform defaults) and expands symlinks in them, so this
+only bites when the root is somewhere the environment does not name — a store moved
+by a config file, or a session started without your shell profile. Export the
+variable, or set `update_cmd` on the tool, and the right manager is picked.
 
 The command is shown in the status bar for confirmation; its output streams into
 panel `[3] Update` in real time and the TUI stays responsive. After a successful
