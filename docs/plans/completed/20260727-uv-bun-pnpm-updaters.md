@@ -187,11 +187,11 @@ Known limitations (accepted, documented in README by Task 7):
 - Modify: `internal/updater/updater.go`
 - Modify: `internal/updater/updater_test.go`
 
-- [ ] add `managerDirs` struct + pure `managerDirsFrom(getenv func(string) string, home, goos string) managerDirs` implementing the resolution table above
-- [ ] add thin OS wrapper `resolveManagerDirs()` (`os.Getenv`, `homeDir()`, `runtime.GOOS`) and pass its result from `Detect` into `detectFromPath`
-- [ ] change the signature to `detectFromPath(realPath, buildinfo, shimTarget string, dirs managerDirs)` (`shimTarget` documented, consumed from Task 4; `Detect` passes `""` until then); add `shimTarget string` + `dirs managerDirs` fields to the existing `TestDetectFromPath` table struct so Tasks 3–5 add **rows**, not new runners
-- [ ] write table tests for `managerDirsFrom`: `UV_TOOL_DIR` set / only `XDG_DATA_HOME` / bare home; `PNPM_HOME` set/unset × darwin/linux/windows (incl. `LOCALAPPDATA`); `BUN_INSTALL` set/unset; empty home disables defaults; windows uv default absent — expectations built with `filepath.Join`, never literal `\` (the `configdir.baseFor` table-test precedent; the core runs on the host OS)
-- [ ] run `go test -race ./internal/updater/` - must pass before task 2
+- [x] add `managerDirs` struct + pure `managerDirsFrom(getenv func(string) string, home, goos string) managerDirs` implementing the resolution table above
+- [x] add thin OS wrapper `resolveManagerDirs()` (`os.Getenv`, `homeDir()`, `runtime.GOOS`) and pass its result from `Detect` into `detectFromPath`
+- [x] change the signature to `detectFromPath(realPath, buildinfo, shimTarget string, dirs managerDirs)` (`shimTarget` documented, consumed from Task 4; `Detect` passes `""` until then); add `shimTarget string` + `dirs managerDirs` fields to the existing `TestDetectFromPath` table struct so Tasks 3–5 add **rows**, not new runners
+- [x] write table tests for `managerDirsFrom`: `UV_TOOL_DIR` set / only `XDG_DATA_HOME` / bare home; `PNPM_HOME` set/unset × darwin/linux/windows (incl. `LOCALAPPDATA`); `BUN_INSTALL` set/unset; empty home disables defaults; windows uv default absent — expectations built with `filepath.Join`, never literal `\` (the `configdir.baseFor` table-test precedent; the core runs on the host OS)
+- [x] run `go test -race ./internal/updater/` - must pass before task 2
 
 ### Task 2: npmPackage service segments and the npm-step .pnpm gate
 
@@ -199,11 +199,11 @@ Known limitations (accepted, documented in README by Task 7):
 - Modify: `internal/updater/updater.go`
 - Modify: `internal/updater/updater_test.go`
 
-- [ ] teach `npmPackage` to skip a post-`node_modules` segment starting with `.` and continue scanning for the next `node_modules`
-- [ ] gate the npm step: a path containing `/node_modules/.pnpm/` is never claimed as npm — it falls through (ends in `ErrUnknownManager` + `update_cmd` hint unless an earlier step claimed it)
-- [ ] write `npmPackage` tests: `.pnpm` virtual-store path yields the real package (not `.pnpm`); scoped package under the `.pnpm` store; `.bin`-only path yields `""`; plain and scoped npm paths unchanged
-- [ ] write chain tests: `.pnpm` store path **outside** all manager dirs → `ErrUnknownManager` (not a silent `npm install -g` duplicate); plain `node_modules` path still yields npm
-- [ ] run `go test -race ./internal/updater/` - must pass before task 3
+- [x] teach `npmPackage` to skip a post-`node_modules` segment starting with `.` and continue scanning for the next `node_modules`
+- [x] gate the npm step: a path containing `/node_modules/.pnpm/` is never claimed as npm — it falls through (ends in `ErrUnknownManager` + `update_cmd` hint unless an earlier step claimed it)
+- [x] write `npmPackage` tests: `.pnpm` virtual-store path yields the real package (not `.pnpm`); scoped package under the `.pnpm` store; `.bin`-only path yields `""`; plain and scoped npm paths unchanged
+- [x] write chain tests: `.pnpm` store path **outside** all manager dirs → `ErrUnknownManager` (not a silent `npm install -g` duplicate); plain `node_modules` path still yields npm
+- [x] run `go test -race ./internal/updater/` - must pass before task 3
 
 ### Task 3: uv detection step
 
@@ -211,10 +211,10 @@ Known limitations (accepted, documented in README by Task 7):
 - Modify: `internal/updater/updater.go`
 - Modify: `internal/updater/updater_test.go`
 
-- [ ] add the uv check after pipx, behind `dirs.uvTools != ""`: `segmentUnder(realPath, dirs.uvTools)` → `autoPlan("uv", []string{"uv", "tool", "upgrade", pkg})`
-- [ ] extend the `Plan.Manager` doc comment with `"uv"`, listing managers in chain order: `"brew" | "go" | "cargo" | "pipx" | "uv" | "pnpm" | "bun" | "npm" | "custom"` (pnpm/bun land in Tasks 4–5)
-- [ ] write test rows: uv tool path detected (argv `uv tool upgrade <pkg>`); empty `uvTools` with a **relative** path stays undetected (pins the explicit guard — `segmentUnder(p, "")` matches relative paths without it)
-- [ ] run `go test -race ./internal/updater/` - must pass before task 4
+- [x] add the uv check after pipx, behind `dirs.uvTools != ""`: `segmentUnder(realPath, dirs.uvTools)` → `autoPlan("uv", []string{"uv", "tool", "upgrade", pkg})`
+- [x] extend the `Plan.Manager` doc comment with `"uv"`, listing managers in chain order: `"brew" | "go" | "cargo" | "pipx" | "uv" | "pnpm" | "bun" | "npm" | "custom"` (pnpm/bun land in Tasks 4–5)
+- [x] write test rows: uv tool path detected (argv `uv tool upgrade <pkg>`); empty `uvTools` with a **relative** path stays undetected (pins the explicit guard — `segmentUnder(p, "")` matches relative paths without it)
+- [x] run `go test -race ./internal/updater/` - must pass before task 4
 
 ### Task 4: pnpm detection via the cmd-shim target
 
@@ -222,12 +222,12 @@ Known limitations (accepted, documented in README by Task 7):
 - Modify: `internal/updater/updater.go`
 - Modify: `internal/updater/updater_test.go`
 
-- [ ] add pure parser `pnpmShimTarget(contents string) string` (`# cmd-shim-target=` line → target path, `""` otherwise)
-- [ ] add the bounded best-effort shim read in `Detect`, fired only when the found path sits under a non-empty `pnpmHome`; result rides into `detectFromPath` as `shimTarget`
-- [ ] add the pnpm check before bun/npm, behind `dirs.pnpmHome != ""`: `underDir(realPath, dirs.pnpmHome)` + name from `npmPackage(shimTarget)` or `npmPackage(realPath)` → `autoPlan("pnpm", []string{"pnpm", "add", "-g", pkg})`; no name → fall through without error
-- [ ] write parser tests: real shim contents (the verified pnpm 11 shape); contents without the marker; empty string; marker with scoped-package target
-- [ ] write chain rows: shim-target path (`…/global/v11/<hash>/node_modules/<pkg>/cli.js`) → `pnpm add -g <pkg>` (explicitly not npm); legacy symlink layout via `npmPackage(realPath)`; pnpm's own binary (no target, no `node_modules`) falls through to `ErrUnknownManager`; empty `pnpmHome` guard with a relative path
-- [ ] run `go test -race ./internal/updater/` - must pass before task 5
+- [x] add pure parser `pnpmShimTarget(contents string) string` (`# cmd-shim-target=` line → target path, `""` otherwise)
+- [x] add the bounded best-effort shim read in `Detect`, fired only when the found path sits under a non-empty `pnpmHome`; result rides into `detectFromPath` as `shimTarget`
+- [x] add the pnpm check before bun/npm, behind `dirs.pnpmHome != ""`: `underDir(realPath, dirs.pnpmHome)` + name from `npmPackage(shimTarget)` or `npmPackage(realPath)` → `autoPlan("pnpm", []string{"pnpm", "add", "-g", pkg})`; no name → fall through without error
+- [x] write parser tests: real shim contents (the verified pnpm 11 shape); contents without the marker; empty string; marker with scoped-package target
+- [x] write chain rows: shim-target path (`…/global/v11/<hash>/node_modules/<pkg>/cli.js`) → `pnpm add -g <pkg>` (explicitly not npm); legacy symlink layout via `npmPackage(realPath)`; pnpm's own binary (no target, no `node_modules`) falls through to `ErrUnknownManager`; empty `pnpmHome` guard with a relative path
+- [x] run `go test -race ./internal/updater/` - must pass before task 5
 
 ### Task 5: bun detection step and the Detect wiring test
 
@@ -235,17 +235,17 @@ Known limitations (accepted, documented in README by Task 7):
 - Modify: `internal/updater/updater.go`
 - Modify: `internal/updater/updater_test.go`
 
-- [ ] add the bun check between pnpm and npm, behind `dirs.bunInstall != ""`: `underDir(realPath, dirs.bunInstall)` + `npmPackage(realPath) != ""` → `autoPlan("bun", []string{"bun", "add", "-g", pkg})`
-- [ ] write chain rows: bun global under `<bunInstall>/install/global/node_modules/<pkg>` → `bun add -g <pkg>`; scoped package under bun; ordering row (path under `bunInstall` containing `node_modules` resolves to bun, not npm); bun's own binary (`<bunInstall>/bin/bun`) falls through to `ErrUnknownManager`
-- [ ] write the unix-gated `Detect`-level wiring fixture test (`TestDetectResolvesSymlink` style): tmp `BUN_INSTALL` with `bin/<name>` → `../install/global/node_modules/<pkg>/cli.js` symlink, `t.Setenv("BUN_INSTALL", …)` + `t.Setenv("PATH", …)`, assert `bun add -g <pkg>` — pins `Detect` → `resolveManagerDirs()` → `detectFromPath(…, dirs)` threading that pure-core rows cannot catch
-- [ ] run `go test -race ./internal/updater/` - must pass before task 6
+- [x] add the bun check between pnpm and npm, behind `dirs.bunInstall != ""`: `underDir(realPath, dirs.bunInstall)` + `npmPackage(realPath) != ""` → `autoPlan("bun", []string{"bun", "add", "-g", pkg})`
+- [x] write chain rows: bun global under `<bunInstall>/install/global/node_modules/<pkg>` → `bun add -g <pkg>`; scoped package under bun; ordering row (path under `bunInstall` containing `node_modules` resolves to bun, not npm); bun's own binary (`<bunInstall>/bin/bun`) falls through to `ErrUnknownManager`
+- [x] write the unix-gated `Detect`-level wiring fixture test (`TestDetectResolvesSymlink` style): tmp `BUN_INSTALL` with `bin/<name>` → `../install/global/node_modules/<pkg>/cli.js` symlink, `t.Setenv("BUN_INSTALL", …)` + `t.Setenv("PATH", …)`, assert `bun add -g <pkg>` — pins `Detect` → `resolveManagerDirs()` → `detectFromPath(…, dirs)` threading that pure-core rows cannot catch
+- [x] run `go test -race ./internal/updater/` - must pass before task 6
 
 ### Task 6: Verify acceptance criteria
 
-- [ ] verify all requirements from Overview are implemented (three managers detected, bun-as-npm misdetection fixed, pnpm shim path working, zero-value compatibility)
-- [ ] run full test suite: `go test -race ./...`
-- [ ] run the preflight skill (build / vet / race tests / golangci-lint — the CI matrix)
-- [ ] live smoke check with the locally installed uv, no home pollution: `UV_TOOL_DIR=<tmp>/tools UV_TOOL_BIN_DIR=<tmp>/bin uv tool install cowsay`, then a **temporary env-gated test inside the package** (a scratchpad `go run` main cannot import an internal package) asserting `Detect` yields `uv tool upgrade cowsay`; remove the temporary test and the tmp dirs afterwards
+- [x] verify all requirements from Overview are implemented (three managers detected, bun-as-npm misdetection fixed, pnpm shim path working, zero-value compatibility)
+- [x] run full test suite: `go test -race ./...`
+- [x] run the preflight skill (build / vet / race tests / golangci-lint — the CI matrix)
+- [x] live smoke check with the locally installed uv, no home pollution: `UV_TOOL_DIR=<tmp>/tools UV_TOOL_BIN_DIR=<tmp>/bin uv tool install cowsay`, then a **temporary env-gated test inside the package** (a scratchpad `go run` main cannot import an internal package) asserting `Detect` yields `uv tool upgrade cowsay`; remove the temporary test and the tmp dirs afterwards
 
 ### Task 7: [Final] Update documentation
 
@@ -254,11 +254,58 @@ Known limitations (accepted, documented in README by Task 7):
 - Modify: `README.md`
 - Modify: `ARCHITECTURE.md`
 
-- [ ] update both CLAUDE.md chain mentions (package-table updater row ~line 39 and the `[u]` section ~line 95): full chain `brew → go → cargo → pipx → uv → pnpm → bun → npm`, the pnpm/bun-before-npm ordering rationale, the shim-target signal, the npm `.pnpm` gate
-- [ ] update README.md: manager list (~line 43), detection bullets (~140–144) with uv/pnpm/bun entries and their commands, and the "Updating tools" caveats (~146–161) with the accepted limitations (Windows `.cmd` shims inherited from npm; manager self-updates out of scope)
-- [ ] update ARCHITECTURE.md's verbatim chain (~line 199)
-- [ ] run the docs-sync skill to catch remaining drift
-- [ ] move this plan to `docs/plans/completed/`
+- [x] update both CLAUDE.md chain mentions (package-table updater row ~line 39 and the `[u]` section ~line 95): full chain `brew → go → cargo → pipx → uv → pnpm → bun → npm`, the pnpm/bun-before-npm ordering rationale, the shim-target signal, the npm `.pnpm` gate
+- [x] update README.md: manager list (~line 43), detection bullets (~140–144) with uv/pnpm/bun entries and their commands, and the "Updating tools" caveats (~146–161) with the accepted limitations (Windows `.cmd` shims inherited from npm; manager self-updates out of scope)
+- [x] update ARCHITECTURE.md's verbatim chain (~line 199)
+- [x] run the docs-sync skill to catch remaining drift
+- [x] move this plan to `docs/plans/completed/`
+
+### ➕ Task 8: post-review fixes (scope change, agreed after Task 7)
+
+A diff review found two defects and one coverage hole; the second fix overrides
+this plan's "no refactor of the existing steps" non-goal by explicit decision.
+
+- [x] **oversized shim was parsed truncated** — a cut inside the
+  `# cmd-shim-target=` line shortened the path, and
+  `…/node_modules/typescript` shortened to `…/node_modules/types` yields
+  `types`, a real npm package: the chain would have offered a confidently wrong
+  `pnpm add -g types`. `readPnpmShim` now reads `cap+1` and rejects an
+  overrunning file whole (the `getReadme` idiom), so the parser never sees a
+  truncated tail (`TestReadPnpmShim`)
+- [x] **manager roots were compared unexpanded against a resolved binary path**
+  — measured on all five layouts: uv and pnpm shim/store degraded honestly, but
+  bun and legacy pnpm globals fell through to `npm install -g <pkg>`, the very
+  misdetection this plan set out to fix. `resolveManagerDirs` now expands
+  symlinks in every root; **`managerDirs` absorbed `cargoBin`/`pipxVenvs`** so
+  the fix is symmetrical across all five path-convention managers, which also
+  lets `detectFromPath` stop calling `homeDir()` and makes its "no I/O"
+  contract literal (`TestDetectSymlinkedManagerRoot`,
+  `TestResolveManagerDirsExpandsSymlinks`, `TestResolveDirKeepsUnresolvable`)
+- [x] **`resolveManagerDirs` arg order was untestable** — both `Detect`
+  fixtures set the manager's own env var, so `home`/`goos` went unexercised and
+  swapping them (both `string`) left the suite green.
+  `TestDetectResolvesUvTool` reaches a root through its *default* and kills it
+- [x] docs updated for the widened `managerDirs` and the symlink expansion
+  (CLAUDE.md, ARCHITECTURE.md); preflight + cross-compile green
+
+Second review pass over the same diff:
+
+- [x] **the `!= ""` guard was six hand-copied copies of one convention** — the
+  very footgun the docs warned about, one omission away from claiming any
+  relative path. Moved into `underDir`/`segmentUnder`, which now answer "no
+  match" for an empty dir; all six call sites collapse to a plain helper call
+  (`TestPathHelpersRejectEmptyDir`)
+- [x] **vestigial test setup** — `TestDetectFromPath` still overrode
+  `testHomeDir` although the core no longer reads home (proved dead by removing
+  it: suite stayed green). Dropped, with a comment stating the new contract
+- [x] **coverage regression caused by that fix** — the empty-dir guard
+  short-circuited the only input that reached `filepath.Rel`'s error branch;
+  re-covered with a real shape instead (a relative root such as
+  `BUN_INSTALL=./bun` against an absolute binary path)
+
+**Deliberately not done:** `$CARGO_HOME`/`$PIPX_HOME` are still not consulted.
+Honouring them changes behaviour for anyone who sets them and is a separate
+commit, not a rider on a path-resolution fix.
 
 ## Post-Completion
 
