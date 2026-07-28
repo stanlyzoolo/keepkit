@@ -70,9 +70,9 @@ The `model` package is split across files within a single package:
 | `model.go` | The `Model` struct, message types, `New`/`Init`/`Update`, selection and filtering helpers (`selectMeta`, `setFocus`, `searchMatches`, `filteredMeta`, `indexOfMeta`, `setHelpContent`) |
 | `mode.go` | The `inputMode` enum and a handler per input mode |
 | `commands.go` | All `tea.Cmd` constructors (fetch commands, update streaming) and re-fetch predicates |
-| `render.go` | `View`, panel/card/status-bar/gauge/overlay renderers, mouse handling. The two list/card builders return their line index alongside the text: `buildCard` → clickable lines, `buildToolRows` → the tool-index ↔ screen-line maps |
+| `render.go` | `View`, panel/card/status-bar/gauge/overlay renderers, mouse handling. The two list/card builders return their line index alongside the text: `buildCard` → clickable lines, `buildToolRows` → the tool-index ↔ screen-line maps. Carries the single-entry `changelogRenderCache` — the card is rebuilt on every spinner frame, so the release-notes conversion must not repeat |
 | `readme.go` | `renderReadme` — markdown → ANSI via glamour, with a single-entry render cache |
-| `textutil.go` | Pure text helpers (`wrapText`, `stripANSI`, `colorizeHelp`, `parseHelpEntries`, …) |
+| `textutil.go` | Pure text helpers (`wrapText`, `stripANSI`, `colorizeHelp`, `parseHelpEntries`, `markdownToLines` — the card's release-notes markdown → pre-wrapped tagged lines, …) |
 | `browser.go` | Opening URLs per `GOOS` |
 
 ## Data flow

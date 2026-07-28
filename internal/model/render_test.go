@@ -329,20 +329,104 @@ func TestColorizeHelp(t *testing.T) {
 
 var ansiCSI = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-func TestStripMarkdown(t *testing.T) {
+// changelogBlockModel builds a model wide enough that the converter's wrap
+// never splits the asserted lines.
+func changelogBlockModel() Model {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	m.briefW = 72
+	return m
+}
+
+// TestRenderChangelogBlockMarkdown drives the shape a GitHub release body
+// actually takes: a heading, "* … [text](url)" bullets and a --- separator.
+// Headings must render one emphasis step above the muted body, bullets must
+// survive as "•", and no raw markdown link may reach the card.
+func TestRenderChangelogBlockMarkdown(t *testing.T) {
+	forceColorProfile(t)
+	m := changelogBlockModel()
+
+	url := "https://github.com/cli/cli/releases/tag/v2.0.0"
+	got := m.renderChangelogBlock(changelogMsg{
+		toolName: "gh",
+		htmlUrl:  url,
+		body: "## What's Changed\r\n" +
+			"* fix: crash in [#12](https://github.com/cli/cli/pull/12)\r\n" +
+			"* docs: **README** touch-up\r\n" +
+			"\r\n" +
+			"---\r\n" +
+			"**Full Changelog**: https://github.com/cli/cli/compare/v1.9.0...v2.0.0\r\n",
+	})
+
+	// The release URL still leads the block — buildCard registers that line as
+	// the clickable one, so it must stay first and unstyled by the converter.
+	if !strings.HasPrefix(got, ui.InfoStyle.Render(url)+"\n\n") {
+		t.Fatalf("block does not lead with the release URL: %q", firstLine(got))
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("block lost its trailing newline: %q", got)
+	}
+	if want := ui.ChangelogHeadingStyle.Render("What's Changed"); !strings.Contains(got, want) {
+		t.Errorf("heading not rendered with ChangelogHeadingStyle:\n%q", got)
+	}
+	if unwanted := ui.InfoStyle.Render("What's Changed"); strings.Contains(got, unwanted) {
+		t.Errorf("heading rendered with the muted body style:\n%q", got)
+	}
+	if want := ui.InfoStyle.Render("• fix: crash in #12"); !strings.Contains(got, want) {
+		t.Errorf("bullet not rendered muted with a • marker:\n%q", got)
+	}
+	plain := stripANSI(got)
+	if strings.Contains(plain, "](") || strings.Contains(plain, "**") {
+		t.Errorf("raw markdown markup reached the card:\n%q", plain)
+	}
+	if !strings.Contains(plain, "• docs: README touch-up") {
+		t.Errorf("second bullet lost its marker:\n%q", plain)
+	}
+	// The --- separator is a blank line, never a bullet of its own.
+	if strings.Contains(plain, "• —") || strings.Contains(plain, "• -") {
+		t.Errorf("thematic break rendered as a list item:\n%q", plain)
+	}
+}
+
+// TestRenderChangelogBlockFallback: the "no release notes available." branch
+// now also covers a non-empty body the converter consumes whole.
+func TestRenderChangelogBlockFallback(t *testing.T) {
+	forceColorProfile(t)
+	m := changelogBlockModel()
+
 	tests := []struct {
-		in   string
-		want string
+		name string
+		body string
 	}{
-		{"## Hello", "Hello"},
-		{"**bold**", "bold"},
-		{"`code`", "code"},
+		{"empty body", ""},
+		{"only an html comment", "<!-- release-drafter template -->"},
+		{"only a separator", "---\n"},
+		{"comment spanning lines", "<!--\nnothing but instructions\n-->\n"},
 	}
 	for _, tt := range tests {
-		if got := stripMarkdown(tt.in); got != tt.want {
-			t.Errorf("stripMarkdown(%q) = %q, want %q", tt.in, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := m.renderChangelogBlock(changelogMsg{toolName: "gh", body: tt.body})
+			if want := ui.InfoStyle.Render("no release notes available.") + "\n"; got != want {
+				t.Errorf("renderChangelogBlock(%q) = %q, want the fallback", tt.body, got)
+			}
+		})
 	}
+}
+
+// TestRenderChangelogBlockError: the failure branch is untouched by the
+// markdown work — it never reaches the converter.
+func TestRenderChangelogBlockError(t *testing.T) {
+	forceColorProfile(t)
+	m := changelogBlockModel()
+
+	got := m.renderChangelogBlock(changelogMsg{toolName: "gh", err: errors.New("boom"), body: "# ignored"})
+	if want := ui.InfoStyle.Render("changelog unavailable: boom") + "\n"; got != want {
+		t.Errorf("error branch = %q, want %q", got, want)
+	}
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
 }
 
 func TestRenderRepoStatus(t *testing.T) {
@@ -3850,5 +3934,43 @@ func TestRenderStatusBarFocusToolsRunHint(t *testing.T) {
 	}
 	if strings.Contains(got, "[q] quit") || strings.Contains(got, "[?] keys") {
 		t.Errorf("narrow focusTools bar kept right-side cells that should drop first: %q", got)
+	}
+}
+
+// TestChangelogRenderCache: the card is rebuilt on every spinner frame while a
+// refresh or an update runs, so the converter must not re-parse the same body
+// each time. A nil cache stays a working cache-less mode — most tests build
+// Model{} literals and never call New().
+func TestChangelogRenderCache(t *testing.T) {
+	const body = "## What's Changed\n* one\n* two\n"
+
+	var c changelogRenderCache
+	first := c.lines(body, 60)
+	again := c.lines(body, 60)
+	if len(first) == 0 {
+		t.Fatalf("converter returned nothing for %q", body)
+	}
+	if &first[0] != &again[0] {
+		t.Errorf("same body and width re-converted instead of hitting the cache")
+	}
+
+	if wider := c.lines(body, 20); &wider[0] == &first[0] {
+		t.Errorf("a width change was served from the cache")
+	}
+	if other := c.lines("## Other\n* x\n", 60); &other[0] == &first[0] {
+		t.Errorf("a body change was served from the cache")
+	}
+
+	var nilCache *changelogRenderCache
+	if got := nilCache.lines(body, 60); !slices.Equal(mdDump(got), mdDump(first)) {
+		t.Errorf("nil cache = %q, want the plain conversion %q", mdDump(got), mdDump(first))
+	}
+}
+
+// TestNewSeedsChangelogCache pins the wiring: without it every card render
+// would take the cache-less path and the memo would be dead code.
+func TestNewSeedsChangelogCache(t *testing.T) {
+	if New(nil).changelogRender == nil {
+		t.Error("New() left changelogRender nil — the memo is never used")
 	}
 }
