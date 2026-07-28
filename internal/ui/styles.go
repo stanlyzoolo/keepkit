@@ -88,8 +88,8 @@ var (
 	// version unknown". Deliberately not UpdateAvailableStyle: orange there
 	// means "act on this", and a working install needs no action.
 	OkStyle = lipgloss.NewStyle().
-			Foreground(ColorGreen).
-			Bold(true)
+		Foreground(ColorGreen).
+		Bold(true)
 
 	// My Tools status colors
 	StatusColorActive   = ColorGreen
@@ -148,6 +148,14 @@ var (
 	// InfoStyle is the non-italic muted style for the [info] section lines.
 	InfoStyle = lipgloss.NewStyle().
 			Foreground(ColorMuted)
+
+	// ChangelogHeadingStyle marks a markdown heading inside the card's
+	// [changelog] body: one emphasis step above the muted InfoStyle body, and
+	// no new color — ColorText keeps it from competing with the peach
+	// SectionLabelStyle that heads the card's own sections.
+	ChangelogHeadingStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(ColorText)
 
 	// TagHeaderStyle / TagRuleStyle draw the tag-group divider rows in the [1]
 	// tools list: "─ dev ────…". The label is muted (ColorDim), the rule lines

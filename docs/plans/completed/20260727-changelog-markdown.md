@@ -174,15 +174,20 @@ Integration (`renderChangelogBlock`, `internal/model/render.go:1361`):
 - Modify: `internal/model/textutil.go`
 - Create: `internal/model/textutil_test.go`
 
-- [ ] add `mdInline(s string) string` (name free to improve) applying, in order: images →
+- [x] add `mdInline(s string) string` (name free to improve) applying, in order: images →
       links → autolinks → HTML-tag strip → emphasis/backtick markers, per Technical Details
-- [ ] package-level compiled regexes for images/links/autolinks (project style: no
+- [x] package-level compiled regexes for images/links/autolinks (project style: no
       per-call `regexp.MustCompile`)
-- [ ] write table tests in `textutil_test.go`: plain link, image with/without alt,
+- [x] write table tests in `textutil_test.go`: plain link, image with/without alt,
       autolink survives the HTML strip (regression), nested `[text](url)` inside a
       sentence, `**bold**`/`` `code` ``, bare URL untouched, HTML tag cut, pathological
       input (unclosed `[`, `<`) — no panic
-- [ ] run `go test -race ./internal/model/` — must pass before task 2
+- [x] run `go test -race ./internal/model/` — must pass before task 2
+
+➕ the emphasis patterns needed a flanking rule the plan did not spell out: an
+unguarded `_` strip turns `update_cmd` into `updatecmd` and `2 * 3 * 4` into `2 3 4`.
+`mdEmUnderRe` therefore requires a non-word rune outside both delimiters and both
+emphasis patterns require a non-space rune inside them (`TestMdInline`'s identifier rows).
 
 ### Task 2: Block converter `markdownToLines`
 
@@ -190,15 +195,15 @@ Integration (`renderChangelogBlock`, `internal/model/render.go:1361`):
 - Modify: `internal/model/textutil.go`
 - Modify: `internal/model/textutil_test.go`
 
-- [ ] add `mdLineKind`, `mdLine`, `markdownToLines(s, width)` with the line pass: CR
+- [x] add `mdLineKind`, `mdLine`, `markdownToLines(s, width)` with the line pass: CR
       normalization first, then fence state, comment state, heading/thematic-break/
       list/quote classification, blank collapse; `width <= 0` guard (no wrap)
-- [ ] list handling: space-required marker, `•` normalization, numbered items, nesting
+- [x] list handling: space-required marker, `•` normalization, numbered items, nesting
       clamp (2 levels, 2 spaces each, tab = 4 spaces, floor), hanging-indent wrap via
       `wrapLine` at `width − indent` with continuation prefix
-- [ ] code lines: 2-space indent, verbatim, no wrap; unclosed fence runs to end
-- [ ] multi-line HTML comments cut; unclosed `<!--` runs to end
-- [ ] write table tests: headings h1–h6, `#123 fixed …` stays literal (heading needs the
+- [x] code lines: 2-space indent, verbatim, no wrap; unclosed fence runs to end
+- [x] multi-line HTML comments cut; unclosed `<!--` runs to end
+- [x] write table tests: headings h1–h6, `#123 fixed …` stays literal (heading needs the
       space), nested + numbered lists with exact hanging-indent column assertions,
       3-space and tab indents, `*emphasis*`/`**Breaking**` at line start stay body,
       thematic breaks `---`/`***`/`___` dropped as blank, fenced code (with language /
@@ -207,7 +212,12 @@ Integration (`renderChangelogBlock`, `internal/model/render.go:1361`):
       passed through, multi-line comment, blank collapse, marker-only line (`- `)
       dropped as blank, width floor (width 10 with nested list), width 0 (no panic, no
       loop), empty input → empty output
-- [ ] run `go test -race ./internal/model/` — must pass before task 3
+- [x] run `go test -race ./internal/model/` — must pass before task 3
+
+➕ blank lines *inside* a fenced block are emitted verbatim rather than through the
+blank-collapse path, so a code sample keeps its own spacing; the collapse still applies
+everywhere else. ➕ a bare `-`/`*` marker line (no trailing space) is treated as a
+marker-only line too, not as body text.
 
 ### Task 3: Wire `renderChangelogBlock`, add heading style, delete `stripMarkdown`
 
@@ -216,44 +226,58 @@ Integration (`renderChangelogBlock`, `internal/model/render.go:1361`):
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/render_test.go`
 
-- [ ] add `ui.ChangelogHeadingStyle` (`Bold(true).Foreground(ColorText)`) with the usual
+- [x] add `ui.ChangelogHeadingStyle` (`Bold(true).Foreground(ColorText)`) with the usual
       doc comment in `internal/ui/styles.go`
-- [ ] rewrite `renderChangelogBlock` to iterate `markdownToLines(msg.body, max(m.briefW-2, 10))`:
+- [x] rewrite `renderChangelogBlock` to iterate `markdownToLines(msg.body, max(m.briefW-2, 10))`:
       `mdHeading` → `ChangelogHeadingStyle`, else `InfoStyle`; keep the block's trailing
       `"\n"`; empty result → existing `no release notes available.` branch; URL line
       untouched
-- [ ] delete `stripMarkdown` and `TestStripMarkdown` (`render_test.go:332`) — the converter
+- [x] delete `stripMarkdown` and `TestStripMarkdown` (`render_test.go:332`) — the converter
       tables from tasks 1–2 are their replacement
-- [ ] write tests for `renderChangelogBlock` (in `render_test.go`): heading line carries
+- [x] write tests for `renderChangelogBlock` (in `render_test.go`): heading line carries
       bold + `ColorText`, body carries muted; a typical GitHub release body ("What's
       Changed" + "* … by @user in https://…/pull/N" bullets) renders with `•` and no raw
       `[…](…)`; error branch (`msg.err != nil`) unchanged
-- [ ] write fallback tests: a body that is only an HTML comment and a body that is only
+- [x] write fallback tests: a body that is only an HTML comment and a body that is only
       `---` both render `no release notes available.` (non-empty body fully consumed by
       the converter — a new path with no existing coverage)
-- [ ] verify unmodified invariant tests stay green: `TestBriefContentLineIsScreenRow`,
+- [x] verify unmodified invariant tests stay green: `TestBriefContentLineIsScreenRow`,
       `TestBuildCardLinks`, `TestMouseBriefLinkClick`
-- [ ] run `go test -race ./...` — must pass before task 4
+- [x] run `go test -race ./...` — must pass before task 4
+
+➕ a blank converted line is written as a bare `"\n"` rather than `InfoStyle.Render("")`,
+which would emit an empty escape pair per separator. ➕ `gofmt` re-indented the adjacent
+`OkStyle` continuation lines in `styles.go` — the new style changed the alignment group.
 
 ### Task 4: Verify acceptance criteria
 
-- [ ] verify all Overview requirements: bullets survive, headings bold-light, links show
+- [x] verify all Overview requirements: bullets survive, headings bold-light, links show
       text only, autolinks show bare URL, code blocks verbatim, muted card aesthetic kept
-- [ ] verify edge cases: empty body, comment-only body, unclosed fence/comment, `briefW == 0`
-- [ ] run full check matrix via the `preflight` skill (build / vet / `test -race` / lint)
-- [ ] eyeball a live card: run keepkit against a tool whose release notes carry lists,
-      links and a code block (keepkit itself qualifies)
+- [x] verify edge cases: empty body, comment-only body, unclosed fence/comment, `briefW == 0`
+- [x] run full check matrix via the `preflight` skill (build / vet / `test -race` / lint) —
+      all four green, plus the CI cross-compile step (`GOOS=windows build`+`vet`,
+      `GOOS=darwin build`)
+- [x] eyeball a card rendered from keepkit's own **live** v0.1.0 release notes (fetched
+      from the API, run through `renderChangelogBlock` at `briefW` 58 and 30 via a
+      throwaway test): bullets, hanging indents, the `brew install …` code block and
+      link-text-only all render as designed. ⚠️ not driven through the real TUI — a Bubble
+      Tea program needs a TTY; the live-terminal pass stays in Post-Completion.
 
 ### Task 5: [Final] Update documentation
 
-- [ ] update CLAUDE.md — `stripMarkdown` is **not** mentioned there today, so this is an
+- [x] update CLAUDE.md — `stripMarkdown` is **not** mentioned there today, so this is an
       addition, not a replacement: add `markdownToLines` to the `textutil.go` row of the
       model-files table (CLAUDE.md:51) and describe the changelog block's rendering in
       the card prose (CLAUDE.md:91, "Clickable card lines" area): whole-line styling
       after wrap, `•`'s East-Asian-Ambiguous class (same accepted family as `⏺`/`↑`/`─`)
-- [ ] update ARCHITECTURE.md:75 (the matching `textutil.go` inventory line); README.md
-      has no changelog-rendering prose — verify and leave untouched
-- [ ] move this plan to `docs/plans/completed/`
+- [x] update ARCHITECTURE.md:75 (the matching `textutil.go` inventory line); README.md
+      has no changelog-rendering prose — verified (the `[2] Brief` bullet lists the card's
+      fields and never the release-notes body) and left untouched
+- [x] move this plan to `docs/plans/completed/`
+
+Ran through the `docs-sync` checklist: no drift in the other spots — the change adds no
+package edge (`model → ui` already in the mermaid graph), no `inputMode` value, no
+keybinding, no test seam, no dependency, no path, no timeout.
 
 ## Post-Completion
 
@@ -266,3 +290,28 @@ Integration (`renderChangelogBlock`, `internal/model/render.go:1361`):
 **External system updates:**
 - none — the change is self-contained; demo GIFs (`demo-gifs` skill) only if the visible
   difference is worth re-recording
+
+## Post-implementation review
+
+A self-review pass after Task 5 found two defects in the new code, both fixed with
+tests before the plan was closed:
+
+- `mdInline`'s underscore emphasis matched its own boundaries and **consumed** them, so
+  in `_a_ _b_` the separating space went with the first span and the second was left
+  with nothing to match against — RE2 has no lookaround. Fixed by repeating the
+  replacement until it is stable (each pass drops two delimiters or changes nothing).
+- a fenced block opening on a blank line emitted that blank verbatim as the very first
+  output line, bypassing the collapse's leading-blank suppression — a blank row at the
+  top of the block that nothing trimmed.
+
+Coverage after the fixes: `markdownToLines`, `mdInline`, `mdEmitListItem`,
+`mdEmitWrapped`, `mdListLevel`, `mdCutComments` and `renderChangelogBlock` are all at
+**100 % of statements** (`internal/model` overall 93.3 %). The last uncovered path — a
+source line that is non-empty but converts to nothing (a badge-only line, a bare
+`<div>`) — is now a table row too.
+
+Known and accepted, unchanged from the code this replaced: the HTML-tag strip cuts any
+`<…>` outside a fenced block, so a placeholder in prose (`--tool <name>`) or a generic
+in an inline code span (`` `Vec<String>` ``) loses it. A tightened "looks like a real
+tag" pattern does not help — `<name>` *is* the shape of an HTML tag. Protecting inline
+code spans from the strip would fix the common case and is the natural follow-up.

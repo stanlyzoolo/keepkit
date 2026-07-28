@@ -145,43 +145,274 @@ func wrapLine(line string, width int) []string {
 	return append(lines, cur.String())
 }
 
-func stripMarkdown(s string) string {
-	var sb strings.Builder
-	lines := strings.Split(s, "\n")
-	blankCount := 0
+// Inline markdown patterns, compiled once — mdInline runs per source line of
+// every release body the card renders.
+//
+// The link patterns keep their text class free of the closing delimiter
+// ([^\]]* / [^)]*), which is what makes them non-greedy without the RE2 cost
+// of an explicit lazy quantifier: two links on one line stay two matches.
+// The emphasis patterns require a non-space rune on both inner edges (the
+// CommonMark flanking rule in miniature), so "2 * 3 * 4" keeps its asterisks;
+// the underscore pair additionally requires a non-word rune outside both
+// delimiters, or an identifier like update_cmd would lose its underscore.
+var (
+	mdImageRe    = regexp.MustCompile(`!\[([^\]]*)\]\([^)]*\)`)
+	mdLinkRe     = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+	mdAutolinkRe = regexp.MustCompile(`<((?:https?|ftp|mailto):[^>\s]+)>`)
+	mdHTMLTagRe  = regexp.MustCompile(`<[^<>]*>`)
 
-	for _, line := range lines {
-		line = strings.TrimLeft(line, "#")
-		line = strings.TrimSpace(line)
+	mdStrongStarRe  = regexp.MustCompile(`\*\*([^\s*](?:[^*]*[^\s*])?)\*\*`)
+	mdStrongUnderRe = regexp.MustCompile(`__([^\s_](?:[^_]*[^\s_])?)__`)
+	mdEmStarRe      = regexp.MustCompile(`\*([^\s*](?:[^*]*[^\s*])?)\*`)
+	mdEmUnderRe     = regexp.MustCompile(`(^|[^\p{L}\p{N}_])_([^\s_](?:[^_]*[^\s_])?)_([^\p{L}\p{N}_]|$)`)
+)
 
-		for _, marker := range []string{"**", "__"} {
-			line = strings.ReplaceAll(line, marker, "")
+// mdInline reduces one line of markdown to plain text. Order is load-bearing:
+// images before links (otherwise the link pattern eats "[alt](url)" out of an
+// image and leaves a stray '!'), autolinks before the HTML-tag strip (which
+// would otherwise swallow "<https://…>" whole — the bug this replaces), and
+// emphasis last, after every construct whose delimiters could contain '*'/'_'.
+// A malformed construct (unclosed '[', a lone '<') simply matches nothing and
+// is left as written.
+func mdInline(s string) string {
+	s = mdImageRe.ReplaceAllString(s, "$1")
+	s = mdLinkRe.ReplaceAllString(s, "$1")
+	s = mdAutolinkRe.ReplaceAllString(s, "$1")
+	s = mdHTMLTagRe.ReplaceAllString(s, "")
+	s = mdStrongStarRe.ReplaceAllString(s, "$1")
+	s = mdStrongUnderRe.ReplaceAllString(s, "$1")
+	s = mdEmStarRe.ReplaceAllString(s, "$1")
+	// The underscore pattern is the one that matches its own boundaries, and a
+	// match consumes them: in "_a_ _b_" the separating space goes with the
+	// first span, leaving the second with no boundary to match against (RE2 has
+	// no lookaround). A second pass reaches it. Each pass either drops two
+	// delimiters or changes nothing, so this terminates.
+	for {
+		next := mdEmUnderRe.ReplaceAllString(s, "${1}${2}${3}")
+		if next == s {
+			break
 		}
-		line = strings.Trim(line, "*_")
-		line = strings.ReplaceAll(line, "`", "")
+		s = next
+	}
+	return strings.ReplaceAll(s, "`", "")
+}
 
-		for strings.Contains(line, "<") && strings.Contains(line, ">") {
-			start := strings.Index(line, "<")
-			end := strings.Index(line[start:], ">")
-			if end < 0 {
-				break
-			}
-			line = line[:start] + line[start+end+1:]
-		}
+// mdLineKind tags a converted line for the styling the consumer applies to it.
+// Two kinds only: the card's changelog block paints headings one step brighter
+// and everything else muted, so a third tag (code, list, quote) would have no
+// reader — what makes those blocks special lives inside the converter.
+type mdLineKind int
 
-		line = strings.TrimSpace(line)
+const (
+	mdBody    mdLineKind = iota // paragraphs, list items, code, quotes
+	mdHeading                   // a #-heading line
+)
 
-		if line == "" {
-			blankCount++
-			if blankCount <= 1 {
-				sb.WriteString("\n")
-			}
-		} else {
-			blankCount = 0
-			sb.WriteString(line + "\n")
+// mdLine is one finished, already-wrapped output line. Wrapping happens inside
+// the converter because hanging indents need the block structure, and because
+// styling must land on whole finished lines — wrapLine counts runes and knows
+// nothing about ANSI.
+type mdLine struct {
+	text string
+	kind mdLineKind
+}
+
+// Block-level markdown patterns. Each allows CommonMark's up-to-3-space
+// indent; the list patterns require whitespace after the marker, so a leading
+// "#123" stays an issue reference and "**Breaking**" stays a paragraph.
+var (
+	mdFenceRe    = regexp.MustCompile("^ {0,3}(?:```|~~~)")
+	mdHeadingRe  = regexp.MustCompile(`^ {0,3}#{1,6}[ \t]+(.*)$`)
+	mdThematicRe = regexp.MustCompile(`^ {0,3}(?:-[ \t]*){3,}$|^ {0,3}(?:\*[ \t]*){3,}$|^ {0,3}(?:_[ \t]*){3,}$`)
+	mdBulletRe   = regexp.MustCompile(`^([ \t]*)[-*+](?:[ \t]+(.*))?$`)
+	mdOrderedRe  = regexp.MustCompile(`^([ \t]*)(\d{1,9})[.)](?:[ \t]+(.*))?$`)
+	mdQuoteRe    = regexp.MustCompile(`^ {0,3}>[ \t]?`)
+)
+
+const (
+	mdMaxListLevel = 2 // deeper nesting keeps folding into this indent
+	mdIndentPerLvl = 2 // output spaces per nesting level
+	mdCodeIndent   = "  "
+)
+
+// markdownToLines converts a markdown body (a GitHub release note) into plain
+// pre-wrapped lines that keep the structure the old strip-everything pass
+// destroyed: list markers, heading emphasis, code verbatim. It is a single
+// line pass over the input carrying two state flags — inside a fenced code
+// block, inside an HTML comment — and is pure, so the tables test it directly.
+// width <= 0 disables wrapping (the call site floors it, but a caller must not
+// have to).
+func markdownToLines(s string, width int) []mdLine {
+	if s == "" {
+		return nil
+	}
+	// GitHub release bodies regularly arrive CRLF (the web form submits it).
+	// The old code was accidentally saved by its per-line TrimSpace; here a
+	// stray \r would ride the verbatim code path straight into the viewport,
+	// and a \r-suffixed closing fence would never match, swallowing the rest
+	// of the body as code.
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+
+	var out []mdLine
+	emit := func(text string, kind mdLineKind) {
+		out = append(out, mdLine{text: text, kind: kind})
+	}
+	// emitBlank collapses runs of blank lines to one and drops leading ones;
+	// trailing ones are cut after the pass.
+	emitBlank := func() {
+		if len(out) > 0 && out[len(out)-1].text != "" {
+			out = append(out, mdLine{})
 		}
 	}
-	return strings.TrimSpace(sb.String())
+
+	inCode, inComment := false, false
+	for _, raw := range strings.Split(s, "\n") {
+		line := strings.TrimRight(raw, " \t")
+
+		if inCode {
+			if mdFenceRe.MatchString(line) {
+				inCode = false
+				continue
+			}
+			switch {
+			case line != "":
+				emit(mdCodeIndent+line, mdBody)
+			case len(out) > 0:
+				// A blank line inside the block is verbatim too, so a sample
+				// keeps its own spacing instead of going through the collapse
+				// — but not as the very first output line, which would be a
+				// leading blank row no one trims.
+				emit("", mdBody)
+			}
+			continue
+		}
+
+		// Comments are cut before any classification (a release-note template
+		// is mostly comments), but never inside code, where they are literal.
+		line, inComment = mdCutComments(line, inComment)
+		if strings.TrimSpace(line) == "" {
+			emitBlank()
+			continue
+		}
+
+		if mdFenceRe.MatchString(line) {
+			inCode = true // the fence line, language tag and all, is dropped
+			continue
+		}
+
+		// A blockquote marker is stripped and the remainder re-classified, so
+		// a list inside a quote stays a list.
+		for mdQuoteRe.MatchString(line) {
+			line = mdQuoteRe.ReplaceAllString(line, "")
+		}
+
+		if m := mdHeadingRe.FindStringSubmatch(line); m != nil {
+			mdEmitWrapped(emit, mdInline(m[1]), "", "", width, mdHeading)
+			continue
+		}
+		// Checked before the list patterns: "---" is the stock separator above
+		// "**Full Changelog**: …" and must never read as a bullet.
+		if mdThematicRe.MatchString(line) {
+			emitBlank()
+			continue
+		}
+		if m := mdBulletRe.FindStringSubmatch(line); m != nil {
+			mdEmitListItem(emit, emitBlank, m[1], "• ", m[2], width)
+			continue
+		}
+		if m := mdOrderedRe.FindStringSubmatch(line); m != nil {
+			mdEmitListItem(emit, emitBlank, m[1], m[2]+". ", m[3], width)
+			continue
+		}
+
+		text := mdInline(strings.TrimSpace(line))
+		if strings.TrimSpace(text) == "" {
+			emitBlank()
+			continue
+		}
+		mdEmitWrapped(emit, text, "", "", width, mdBody)
+	}
+
+	for len(out) > 0 && out[len(out)-1].text == "" {
+		out = out[:len(out)-1]
+	}
+	return out
+}
+
+// mdEmitListItem writes one list item: the marker normalized (bullets to •,
+// numbered items keeping their number), the nesting taken from the source
+// indent, and the text wrapped with a hanging indent so continuations align
+// under the first text column instead of under the marker.
+func mdEmitListItem(emit func(string, mdLineKind), emitBlank func(), indent, marker, text string, width int) {
+	body := mdInline(strings.TrimSpace(text))
+	if strings.TrimSpace(body) == "" {
+		emitBlank() // a marker with no content is not an item
+		return
+	}
+	pad := strings.Repeat(" ", mdIndentPerLvl*mdListLevel(indent))
+	mdEmitWrapped(emit, body, pad+marker, pad+strings.Repeat(" ", utf8.RuneCountInString(marker)), width, mdBody)
+}
+
+// mdListLevel maps a source indent to a nesting level: two spaces per level
+// (floor), a tab counting as four, clamped so a deeply nested list cannot walk
+// off a 30-column card.
+func mdListLevel(indent string) int {
+	cols := 0
+	for _, r := range indent {
+		if r == '\t' {
+			cols += 4
+		} else {
+			cols++
+		}
+	}
+	return min(cols/2, mdMaxListLevel)
+}
+
+// mdEmitWrapped wraps text at the remaining width and emits it with first as
+// the first line's prefix and hang as every continuation's. Wrapping is
+// skipped when nothing is left to wrap into — wrapLine would then degrade to
+// one word per line, which is worse than letting the viewport truncate.
+func mdEmitWrapped(emit func(string, mdLineKind), text, first, hang string, width int, kind mdLineKind) {
+	avail := width - utf8.RuneCountInString(first)
+	if width <= 0 || avail <= 0 {
+		emit(first+text, kind)
+		return
+	}
+	for i, w := range wrapLine(text, avail) {
+		if i == 0 {
+			emit(first+w, kind)
+		} else {
+			emit(hang+w, kind)
+		}
+	}
+}
+
+// mdCutComments removes HTML comments from one line, carrying the open state
+// across lines (release-note templates comment out whole instruction blocks).
+// It returns the surviving text and whether a comment is still open — an
+// unclosed "<!--" runs to the end of the input.
+func mdCutComments(line string, inComment bool) (string, bool) {
+	var b strings.Builder
+	for {
+		if inComment {
+			i := strings.Index(line, "-->")
+			if i < 0 {
+				return b.String(), true
+			}
+			line = line[i+len("-->"):]
+			inComment = false
+			continue
+		}
+		i := strings.Index(line, "<!--")
+		if i < 0 {
+			b.WriteString(line)
+			return b.String(), false
+		}
+		b.WriteString(line[:i])
+		line = line[i+len("<!--"):]
+		inComment = true
+	}
 }
 
 func stripANSI(s string) string {

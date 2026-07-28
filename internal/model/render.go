@@ -1368,11 +1368,27 @@ func (m Model) renderChangelogBlock(msg changelogMsg) string {
 	if msg.htmlUrl != "" {
 		sb.WriteString(ui.InfoStyle.Render(msg.htmlUrl) + "\n\n")
 	}
-	body := wrapText(stripMarkdown(msg.body), max(m.briefW-2, 10))
-	if body == "" {
+	// markdownToLines wraps as it converts (hanging indents need the block
+	// structure), so styling lands on whole finished lines — the only way to
+	// keep ANSI out of the rune-based wrap math. An empty result covers both
+	// an empty body and one the converter consumed whole (all comments, all
+	// separators).
+	lines := markdownToLines(msg.body, max(m.briefW-2, 10))
+	if len(lines) == 0 {
 		sb.WriteString(ui.InfoStyle.Render("no release notes available.") + "\n")
-	} else {
-		sb.WriteString(ui.InfoStyle.Render(body) + "\n")
+		return sb.String()
+	}
+	for _, line := range lines {
+		switch {
+		case line.text == "":
+			// A blank separator carries no text to color; rendering it would
+			// only emit an empty escape pair.
+			sb.WriteString("\n")
+		case line.kind == mdHeading:
+			sb.WriteString(ui.ChangelogHeadingStyle.Render(line.text) + "\n")
+		default:
+			sb.WriteString(ui.InfoStyle.Render(line.text) + "\n")
+		}
 	}
 	return sb.String()
 }
