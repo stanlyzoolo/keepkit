@@ -1595,14 +1595,17 @@ func (m Model) metricsStrip(t loader.Tool, inner int) []string {
 	// installed: four states, and the two version-less ones are deliberately
 	// different — a tool that is installed but will not name its version (a TUI
 	// app that ignores --version) is a working install and reads affirmative,
-	// while a genuine absence is the one thing on the card that is wrong.
+	// while a genuine absence is the one thing on the card that is wrong. Both
+	// are single words: the caption above them already says INSTALLED, and the
+	// sentences they used to be ("no version", "not installed") were the only
+	// values in the strip too wide for a baseline-width column.
 	switch {
 	case vinfo.Installed != "":
 		cells = append(cells, metricCell{"INSTALLED", version.DisplayVersion(vinfo.Installed), s.Emphasis, ""})
 	case vinfo.InstalledKnown && vinfo.InstalledPresent:
-		cells = append(cells, metricCell{"INSTALLED", "✓ no version", s.Ok, ""})
+		cells = append(cells, metricCell{"INSTALLED", "✓ present", s.Ok, ""})
 	case vinfo.InstalledKnown:
-		cells = append(cells, metricCell{"INSTALLED", "✕ not installed", s.Danger, ""})
+		cells = append(cells, metricCell{"INSTALLED", "✕ missing", s.Danger, ""})
 	default:
 		cells = append(cells, metricCell{"INSTALLED", "detecting…", s.Dim, ""})
 	}
@@ -1639,9 +1642,15 @@ func (m Model) metricsStrip(t loader.Tool, inner int) []string {
 		return nil
 	}
 
-	// As many columns as fit at metricMinCol, capped by how many metrics there
-	// actually are.
-	cols := min(max((inner-1)/metricMinCol, 1), len(cells))
+	// The column has to fit its widest *value* as well as its widest caption:
+	// sizing on captions alone cut "✕ not installed" to "✕ not insta" at the
+	// 80x24 baseline, which is the default terminal. A value wider than any
+	// caption therefore costs columns rather than legibility.
+	need := metricMinCol
+	for _, c := range cells {
+		need = max(need, lipgloss.Width(c.value)+1, lipgloss.Width(c.sub)+1)
+	}
+	cols := min(max((inner-1)/need, 1), len(cells))
 	sep := " │ "
 	colW := max((inner-2-(cols-1)*lipgloss.Width(sep))/cols, 1)
 
@@ -1701,9 +1710,21 @@ func (m Model) metaLine(t loader.Tool, inner int) string {
 
 	var cells []string
 	if len(card.Languages) > 0 {
-		// renderLangBar wraps on its own budget; here it is one cell among
-		// several, so it gets the line and nothing follows it on that line.
-		cells = append(cells, s.Dim.Render("lang ")+renderLangBar(s, card.Languages, inner, 5))
+		// One line, always. renderLangBar wraps on its own budget, and a cell
+		// that wrapped internally would break the whole line's arithmetic
+		// below: lipgloss.Width measures a multi-line string by its widest
+		// line, which is not the footprint it occupies, so the next cell could
+		// be spliced onto the middle of the bar — and the continuation lines
+		// arrive with no "lang" label to say what they are. So the bar is cut
+		// to one line like every other over-wide value here, with a … saying a
+		// language was left out.
+		const langLabel = "lang "
+		budget := max(inner-len(langLabel)-2, 10)
+		bar, rest, wrapped := strings.Cut(renderLangBar(s, card.Languages, budget, 0), "\n")
+		if wrapped && rest != "" {
+			bar += s.Dim.Render(" …")
+		}
+		cells = append(cells, s.Dim.Render(langLabel)+bar)
 	}
 	cells = append(cells, s.Dim.Render("status ")+
 		s.Status(mt.Status).Render(loader.StatusSymbol[mt.Status]+" "+string(mt.Status)))
@@ -1773,16 +1794,23 @@ func (m Model) metaLine(t loader.Tool, inner int) string {
 func (m Model) changelogHeading(t loader.Tool, inner int, hasLink bool) (string, bool) {
 	s := m.sty()
 	head := s.EmphasisBold.Render("changelog")
-	vinfo := m.versions[t.Name]
-	if vinfo.Installed != "" && vinfo.Latest != "" && vinfo.Installed != vinfo.Latest {
+	// The transition is gated on hasUpdate, the same predicate the ↑ and the
+	// update key use — NOT on the two strings differing. A tool whose --version
+	// prints "1.10.2" against a "v1.10.2" tag is up to date, and comparing the
+	// raw forms printed it "v1.10.2 → v1.10.2": a transition to nowhere on the
+	// one card that has nothing to report.
+	if vinfo := m.versions[t.Name]; m.hasUpdate(t.Name) && vinfo.Installed != "" {
 		head += "  " + s.Dim.Render(version.DisplayVersion(vinfo.Installed)+" → "+version.DisplayVersion(vinfo.Latest))
 	}
 	if !hasLink {
 		return head, false
 	}
+	// The gap is a rule, not blank space: it ties the two ends of the row into
+	// one heading and separates the notes below from the meta line above, which
+	// no other divider does now that the card has no section headers.
 	link := s.Link.Render("release notes ↗")
-	if gap := inner - lipgloss.Width(head) - lipgloss.Width(link); gap >= 2 {
-		return head + strings.Repeat(" ", gap) + link, true
+	if gap := inner - lipgloss.Width(head) - lipgloss.Width(link) - 2; gap >= 1 {
+		return head + " " + s.Rule.Render(strings.Repeat("─", gap)) + " " + link, true
 	}
 	return head, false
 }

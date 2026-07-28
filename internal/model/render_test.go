@@ -1563,7 +1563,6 @@ func TestGaugeFillTurnsDangerous(t *testing.T) {
 	}
 }
 
-
 // TestRenderRateGaugeColors pins the gauge's fill/track color distinction. It
 // asserts the isolated styles, not the full gauge string: the brackets and the
 // used/limit number also emit foreground ColorOrange (RateBracketStyle /
@@ -1998,8 +1997,8 @@ func TestInstalledMsgCarriesPresence(t *testing.T) {
 		want    string
 		notWant string
 	}{
-		{"installed but version-less", true, "✓ no version", "not installed"},
-		{"absent", false, "✕ not installed", "no version"},
+		{"installed but version-less", true, "✓ present", "missing"},
+		{"absent", false, "✕ missing", "present"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3057,7 +3056,7 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
-		if got := metricValue(t, m.renderCard(), "INSTALLED", 1); got != "✕ not installed" {
+		if got := metricValue(t, m.renderCard(), "INSTALLED", 1); got != "✕ missing" {
 			t.Errorf("INSTALLED = %q, want the ✕ marker", got)
 		}
 	})
@@ -3069,10 +3068,10 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0", InstalledKnown: true, InstalledPresent: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
 		card := m.renderCard()
-		if got := metricValue(t, card, "INSTALLED", 1); got != "✓ no version" {
+		if got := metricValue(t, card, "INSTALLED", 1); got != "✓ present" {
 			t.Errorf("INSTALLED = %q, want the present-but-version-less value", got)
 		}
-		if strings.Contains(stripANSI(card), "not installed") {
+		if strings.Contains(stripANSI(card), "missing") {
 			t.Errorf("an installed tool must not read as missing; got:\n%s", stripANSI(card))
 		}
 	})
@@ -3085,7 +3084,7 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		if got := metricValue(t, card, "INSTALLED", 1); got != "detecting…" {
 			t.Errorf("INSTALLED = %q, want the pending value", got)
 		}
-		if strings.Contains(stripANSI(card), "not installed") || strings.Contains(stripANSI(card), "✕") {
+		if strings.Contains(stripANSI(card), "missing") || strings.Contains(stripANSI(card), "✕") {
 			t.Errorf("card claims not installed before detection finished; got:\n%s", stripANSI(card))
 		}
 	})
@@ -4354,5 +4353,131 @@ func TestGroupedListHasAirBetweenSections(t *testing.T) {
 	}
 	if strings.TrimSpace(lines[0]) == "" {
 		t.Error("the list opens with a blank row")
+	}
+}
+
+// TestChangelogHeadingTransitionOnlyWhenBehind: the version transition is what
+// the changelog block is about, so it prints only when there is one. It is gated
+// on hasUpdate rather than on the two strings differing, because both are shown
+// through DisplayVersion: a tool whose --version prints "1.10.2" against a
+// "v1.10.2" tag is up to date, and the raw compare printed it a "v1.10.2 →
+// v1.10.2" arrow to nowhere on the one card with nothing to report.
+func TestChangelogHeadingTransitionOnlyWhenBehind(t *testing.T) {
+	newCard := func(installed, latest string) Model {
+		m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+		mm := updated.(Model)
+		mm.versions["gh"] = VersionInfo{Installed: installed, Latest: latest, InstalledKnown: true}
+		mm.repoCards["gh"] = version.RepoCard{Latest: latest}
+		return mm
+	}
+
+	tests := []struct {
+		name              string
+		installed, latest string
+		want              string
+	}{
+		{"behind", "v0.3.2", "v1.0.2", "v0.3.2 → v1.0.2"},
+		{"behind, bare installed", "0.3.2", "v1.0.2", "v0.3.2 → v1.0.2"},
+		{"up to date", "v1.10.2", "v1.10.2", ""},
+		{"up to date, spelled differently", "1.10.2", "v1.10.2", ""},
+		{"nothing detected yet", "", "v1.0.2", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newCard(tt.installed, tt.latest)
+			head, _ := m.changelogHeading(m.tools[0], 60, true)
+			got := stripANSI(head)
+			if !strings.Contains(got, "changelog") {
+				t.Fatalf("heading = %q, want the word", got)
+			}
+			if tt.want == "" {
+				if strings.Contains(got, "→") {
+					t.Errorf("heading = %q, want no transition for an up-to-date tool", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("heading = %q, want the %q transition", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMetricsStripValuesAreNeverCut: the column is sized from its widest value
+// as well as its widest caption. Sizing on captions alone cut "not installed"
+// to "not insta" at the 80x24 baseline — the default terminal, and the exact
+// state (tracked, not yet installed) a tracker is opened in.
+func TestMetricsStripValuesAreNeverCut(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{InstalledKnown: true} // probed, absent
+	mm.repoCards["gh"] = version.RepoCard{
+		Latest: "v2.0.0", Stars: 219, RepoStatus: "active", PublishedAt: "2026-01-02T00:00:00Z",
+	}
+
+	inner := max(mm.briefW-2, 1)
+	strip := stripANSI(strings.Join(mm.metricsStrip(mm.tools[0], inner), "\n"))
+	for _, want := range []string{"✕ missing", "v2.0.0", "● active", "219", "2026-01-02"} {
+		if !strings.Contains(strip, want) {
+			t.Errorf("strip at the 80-column baseline lost %q:\n%s", want, strip)
+		}
+	}
+
+	// A value wider than any caption costs columns, not legibility.
+	mm.versions["gh"] = VersionInfo{Installed: "v2024.01.15-beta.1", InstalledKnown: true}
+	wide := mm.metricsStrip(mm.tools[0], inner)
+	if !strings.Contains(stripANSI(strings.Join(wide, "\n")), "v2024.01.15-beta.1") {
+		t.Errorf("a long version was cut instead of re-flowing:\n%s", stripANSI(strings.Join(wide, "\n")))
+	}
+	for i, row := range wide {
+		if w := lipgloss.Width(row); w != inner {
+			t.Errorf("re-flowed row %d is %d cells, want exactly %d", i, w, inner)
+		}
+	}
+}
+
+// TestMetaLineLanguagesStayOnOneLine: the language bar is one cell among
+// several, and a cell that wrapped internally would break the line's whole
+// arithmetic — lipgloss.Width measures a multi-line string by its widest line,
+// not by the footprint it occupies, so the next cell could be spliced onto the
+// middle of the bar. The continuation lines also arrived with no "lang" label
+// to say what they were.
+func TestMetaLineLanguagesStayOnOneLine(t *testing.T) {
+	m := New([]loader.ToolMeta{{
+		Name: "gh", GitHub: "cli/cli", Status: loader.StatusActive, Note: "n", Tags: []string{"cli"},
+	}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	mm := updated.(Model)
+	mm.repoCards["gh"] = version.RepoCard{Languages: map[string]int{
+		"Go": 800, "Shell": 90, "Makefile": 40, "Dockerfile": 30, "TypeScript": 25,
+	}}
+
+	inner := max(mm.briefW-2, 1)
+	lines := strings.Split(stripANSI(mm.metaLine(mm.tools[0], inner)), "\n")
+
+	var langLines int
+	for _, l := range lines {
+		if strings.HasPrefix(l, "lang ") {
+			langLines++
+		}
+		if w := lipgloss.Width(l); w > inner {
+			t.Errorf("meta line %q is %d cells, past the %d-cell panel", l, w, inner)
+		}
+	}
+	if langLines != 1 {
+		t.Errorf("%d lines carry the lang label, want exactly 1:\n%s", langLines, strings.Join(lines, "\n"))
+	}
+	// A dropped language is said, not silently lost.
+	if !strings.Contains(lines[0], "…") {
+		t.Errorf("lang cell = %q, want the … marking the languages left out", lines[0])
+	}
+	// Every other cell still starts its own line or follows a separator — none
+	// of them may land inside the bar.
+	for i, l := range lines[1:] {
+		if strings.Contains(l, "%") {
+			t.Errorf("line %d = %q, want the language bar confined to the first line", i+1, l)
+		}
 	}
 }
