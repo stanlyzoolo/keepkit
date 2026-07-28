@@ -71,7 +71,9 @@ The `model` package is split across files within a single package:
 | `mode.go` | The `inputMode` enum and a handler per input mode |
 | `commands.go` | All `tea.Cmd` constructors (fetch commands, update streaming) and re-fetch predicates |
 | `render.go` | `View`, panel/card/status-bar/gauge/overlay renderers, mouse handling. The two list/card builders return their line index alongside the text: `buildCard` → clickable lines, `buildToolRows` → the tool-index ↔ screen-line maps. Carries the single-entry `changelogRenderCache` — the card is rebuilt on every spinner frame, so the release-notes conversion must not repeat |
-| `readme.go` | `renderReadme` — markdown → ANSI via glamour, with a single-entry render cache |
+| `readme.go` | `renderReadme` — panel `[3]`'s pipeline: sanitize → preprocess → glamour, with a single-entry render cache |
+| `readme_clean.go` | `cleanReadmeMarkdown` — the pure README preprocessor. Fenced blocks and inline spans are segmented out first (code is never rewritten), then badges, hrefs, HTML and emoji are removed from what is left |
+| `readme_style.go` | `keepkitStyle(dark)` — panel `[3]`'s glamour theme: the standard config cloned, its accents replaced from `internal/ui`'s palette |
 | `textutil.go` | Pure text helpers (`wrapText`, `stripANSI`, `colorizeHelp`, `parseHelpEntries`, `markdownToLines` — the card's release-notes markdown → pre-wrapped tagged lines, …) |
 | `browser.go` | Opening URLs per `GOOS` |
 
@@ -131,8 +133,22 @@ the `keepkit` screen. The protection has two layers:
 A library that probes the terminal counts as the same hazard: `glamour.WithAutoStyle()`
 is never used, because its termenv OSC background query reads stdin and races Bubble
 Tea's input reader. Dark/light is resolved once at construction via lipgloss's cached
-`HasDarkBackground()` (`m.darkBG`) and passed to glamour as a fixed `WithStandardStyle`.
-The README body itself is bounded (`readmeMaxBytes`) and sanitized before rendering.
+`HasDarkBackground()` (`m.darkBG`) and picks one of `keepkitStyle`'s two variants, which
+glamour receives as a fixed `WithStyles`. The README body itself is bounded
+(`readmeMaxBytes`) and sanitized before rendering.
+
+Between the sanitizer and glamour sits `cleanReadmeMarkdown`, the house-style
+preprocessor: a README is written for a browser, so badges, logos, `<picture>` wrappers,
+hrefs nobody can click in a TTY and emoji a terminal font renders as tofu are removed
+before rendering. It rests on one rule — **code is never rewritten** — because a fenced
+block and an inline span are exactly how a README *shows* the markup being deleted, so
+fences are segmented out (an unterminated one protects to EOF, since the
+`readmeMaxBytes` cut can land mid-fence) and inline spans are masked for the duration.
+Autolinks and bare URLs survive: there the URL *is* the content. `keepkitStyle` then
+clones the standard config rather than building one, so a glamour upgrade that adds a
+field cannot leave the panel with a hole in it — and because the package globals it
+clones hold pointers that `styles.DefaultStyles` aliases, every override assigns a fresh
+pointer instead of writing through a shared one.
 
 ## TUI state machine
 
@@ -429,8 +445,9 @@ packages fails if the isolation is ever dropped.
 Per-test setup still uses the internal seams: `testConfigDir`, `testCacheDir`,
 `testTokenDir`, `testAPIBase`, `testBrewPrefix` (one copy in `version`, a second in
 `updater` — each private to its package), `updater`'s `testHomeDir`, and
-`model`'s `testReadmeStyle` (forces the glamour construction failure so the
-plain-text fallback is covered). `testAPIBase` is private to `version`, so a `model`
+`model`'s `testReadmeStyle` (routes the renderer through a named standard style
+instead of `keepkitStyle`; an unknown name forces the glamour construction failure,
+which is how the plain-text fallback is covered). `testAPIBase` is private to `version`, so a `model`
 test cannot redirect a fetch at an httptest server — a network command is executed
 there only when the cache can answer it (`seedSelfReleaseCache` for the self-check);
 otherwise `Init` batches are asserted by length, never run. The races are real (mutexes

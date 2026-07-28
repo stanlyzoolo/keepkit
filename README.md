@@ -47,7 +47,10 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
   after the update one more key restarts keepkit in place, in the same terminal tab
 - **Docs panel** — panel `[3]` switches between the rendered repository README,
   `--help` output and the `man` page by hotkeys; in `--help` / `man` mode `j` / `k`
-  walk flags and subcommands with the current entry spotlighted
+  walk flags and subcommands with the current entry spotlighted. Every README is
+  rendered in one house style: badges, logos, HTML wrappers, unclickable link URLs
+  and emoji are stripped, and the headings follow keepkit's own palette — code
+  samples are left exactly as written
 - **Clickable card** — the repository and release links on the tool card open in the
   browser by mouse click, or by hotkeys for the repo and changelog pages
 - **Tags and grouping** — one tag per tool; `space` regroups the flat list under tag
@@ -119,8 +122,10 @@ Run `keepkit` — a three-panel interface opens:
   versions with the release date, status, note and tag. From here tools are updated,
   the repo or changelog opened in the browser, and the card data force-refreshed.
 - **`[3] Readme / Help / Man`** — the docs panel: the rendered repository README (the
-  default), the tool's `--help` output or its `man` page. While an update runs, this
-  panel shows its live log instead.
+  default), the tool's `--help` output or its `man` page. A README is cleaned up
+  before rendering — badges, logos, HTML and emoji go, link text stays without its
+  URL, and code blocks are untouched. While an update runs, this panel shows its live
+  log instead.
 
 Focus moves with `←` / `→` or the digits `1` / `2` / `3` (each panel's number is in
 its title). Each panel lists its keys in the help bar; press `?` any time for the
@@ -291,6 +296,7 @@ subprocess sandbox — is described in [ARCHITECTURE.md](ARCHITECTURE.md).
 - [Bubbles](https://github.com/charmbracelet/bubbles) — text input, viewport, spinner
 - [Lip Gloss](https://github.com/charmbracelet/lipgloss) — styling
 - [Glamour](https://github.com/charmbracelet/glamour) — markdown rendering for the README panel
+- [goldmark-emoji](https://github.com/yuin/goldmark-emoji) — GitHub's `:shortcode:` dictionary, used to strip them from a README
 - [x/ansi](https://github.com/charmbracelet/x) — stripping escape sequences from captured tool output
 - [termenv](https://github.com/muesli/termenv) — terminal color-profile detection
 - [go-runewidth](https://github.com/mattn/go-runewidth) — glyph width measurement

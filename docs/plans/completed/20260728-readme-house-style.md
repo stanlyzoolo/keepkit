@@ -199,17 +199,24 @@ unreadable on white):
 - Create: `internal/model/readme_clean.go`
 - Create: `internal/model/readme_clean_test.go`
 
-- [ ] implement segmentation of raw markdown into protected segments (fenced blocks per
+- [x] implement segmentation of raw markdown into protected segments (fenced blocks per
       the rules above, inline `` ` `` spans) and cleanable segments, plus the
       `cleanReadmeMarkdown` shell that reassembles them (rules arrive in Tasks 2–3)
-- [ ] handle the edge shapes: fence with info string; `~~~` fence; closer same-char and
+- [x] handle the edge shapes: fence with info string; `~~~` fence; closer same-char and
       length ≥ opener (````` ```` ````` wrapping ``` blocks); unterminated fence
       protects to EOF
-- [ ] write protection tests: junk-shaped content (`![…](…)`, `<div>`, emoji) inside a
+- [x] write protection tests: junk-shaped content (`![…](…)`, `<div>`, emoji) inside a
       fence and inside an inline span survives byte-for-byte through the shell
-- [ ] write segmentation edge tests: long fence wrapping short fences; unterminated
+- [x] write segmentation edge tests: long fence wrapping short fences; unterminated
       fence (simulated 512 KiB truncation cut); `~~~` with info string
-- [ ] run tests — must pass before task 2
+- [x] run tests — must pass before task 2
+
+➕ inline spans are masked with a NUL-bracketed placeholder (`rcMaskSpans`/`rcUnmaskSpans`)
+rather than split out as segments: block-level rules (multi-line HTML comments and
+`<picture>` bodies) need the segment to stay one string, and a code span that *contains*
+`<!--` must still survive. The span search stops at a blank line, mirroring CommonMark's
+paragraph boundary — otherwise one stray backtick would exempt everything up to the next
+one from cleaning.
 
 ### Task 2: Removal rules — images, links, HTML
 
@@ -217,20 +224,40 @@ unreadable on white):
 - Modify: `internal/model/readme_clean.go`
 - Modify: `internal/model/readme_clean_test.go`
 
-- [ ] implement image removal: `![alt](url)`, `[![alt](img)](target)`,
+- [x] implement image removal: `![alt](url)`, `[![alt](img)](target)`,
       reference-style `![alt][ref]` / `![alt][]`; collapse lines left empty
-- [ ] implement link unwrapping `[text](url)` / `[text][ref]` → `text`; remove
+- [x] implement link unwrapping `[text](url)` / `[text][ref]` → `text`; remove
       standalone link-reference definition lines; leave autolinks
       (`<https://…>`, `<user@host>`) and bare URLs untouched
-- [ ] implement HTML removal: comments whole; `<img>`/`<picture>`/`<video>`/`<script>`/
+- [x] implement HTML removal: comments whole; `<img>`/`<picture>`/`<video>`/`<script>`/
       `<style>` whole including bodies; other tags stripped keeping inner text, tag
       pattern constrained to plausible HTML tag names; package-level regexes only
-- [ ] write table-driven tests: inline/linked/reference badge headers vanish with no
+- [x] write table-driven tests: inline/linked/reference badge headers vanish with no
       orphan definitions; `[text](url)` → `text`; `<kbd>`/`<details>` keep text;
       `<script>` body gone
-- [ ] write negative tests: autolink, email autolink, `Vec<String>`, `a < b` prose, and
+- [x] write negative tests: autolink, email autolink, `Vec<String>`, `a < b` prose, and
       bare URLs all survive; `:30:`-style text untouched by these rules
-- [ ] run tests — must pass before task 3
+- [x] run tests — must pass before task 3
+
+➕ the "plausible tag name" constraint landed as an **allowlist** of the elements READMEs
+use (`rcHTMLNames`), not a generic identifier shape: a shape-based pattern cannot tell
+`<kbd>` from `Vec<String>`, and an unknown name left as written is the honest degradation.
+`<img>` needs no bodied-element entry — it is void, so the tag strip removes the whole
+element. `<svg>`/`<audio>` were added to the bodied list (an inline SVG logo is the same
+class of noise as a `<picture>`).
+
+➕ the per-line tidy-up ("collapse doubled spaces, drop lines emptied by removal", planned
+for Task 3) had to land here — an image-only badge row needs it to vanish. Both the tidy
+and the drop are gated on the line having actually **changed**, so an untouched `- - -`
+thematic break is never mistaken for an emptied bullet and a hard line break keeps its
+trailing spaces. The indent is taken from the *original* line, or a leading `🚀 ` removed
+in Task 3 would leave an indent the author never wrote.
+
+➕ shortcut reference links (`[label]` with a `[label]: url` definition elsewhere) are
+unwrapped too, gated on a **document-wide** set of declared labels — definitions collect at
+the bottom of a README while their uses sit at the top, and a fence between them puts the
+two in different segments. Ungated, the rule would eat a task list's `[x]` and a prose
+`[experimental]`.
 
 ### Task 3: Removal rules — emoji and shortcodes
 
@@ -239,18 +266,21 @@ unreadable on white):
 - Modify: `internal/model/readme_clean_test.go`
 - Modify: `go.mod` (goldmark-emoji indirect → direct)
 
-- [ ] implement emoji stripping (U+1F000–U+1FAFF, VS16, ZWJ, U+20E3) with the
+- [x] implement emoji stripping (U+1F000–U+1FAFF, VS16, ZWJ, U+20E3) with the
       translation map `✅→✓`, `❌→✗`, `☑→✓`; keep BMP symbols (`✓ ★ →`)
-- [ ] implement post-removal cleanup: collapse doubled spaces, drop lines emptied by
-      removal (emoji-only headings disappear)
-- [ ] implement shortcode removal via `definition.Github()` (direct import; no new
+- [x] implement post-removal cleanup: collapse doubled spaces, drop lines emptied by
+      removal (emoji-only headings disappear) — landed in Task 2, see the note there
+- [x] implement shortcode removal via `definition.Github()` (direct import; no new
       module in go.sum; no caching wrapper — it is `sync.Once`-guarded)
-- [ ] write tests: emoji stripped from headings/prose without double-space artifacts;
+- [x] write tests: emoji stripped from headings/prose without double-space artifacts;
       emoji-only heading dropped; keycap `1️⃣` leaves no stray U+20E3; translation map
       applied; BMP symbols survive
-- [ ] write negative tests: `:30:` inside `12:30:45` survives; unknown `:foo:` survives;
+- [x] write negative tests: `:30:` inside `12:30:45` survives; unknown `:foo:` survives;
       known `:rocket:` removed; shortcode and emoji inside a fence survive
-- [ ] run tests — must pass before task 4
+- [x] run tests — must pass before task 4
+
+➕ `go mod tidy` moved `goldmark-emoji` to the direct block and touched nothing else —
+`go.sum` is unchanged, as the plan predicted.
 
 ### Task 4: Theme — keepkitStyle and renderReadme integration
 
@@ -260,51 +290,98 @@ unreadable on white):
 - Modify: `internal/model/readme.go`
 - Modify: `internal/model/readme_test.go`
 
-- [ ] implement `keepkitStyle(dark bool) ansi.StyleConfig` per Technical Details:
+- [x] implement `keepkitStyle(dark bool) ansi.StyleConfig` per Technical Details:
       clone the standard config, override headings/links/rules/margin with values
       derived from `ui.Color*`; every override assigns a **fresh pointer** — never
       write through a cloned pointer
-- [ ] wire the pipeline in `renderReadme`: `cleanTerminalOutput` →
+- [x] wire the pipeline in `renderReadme`: `cleanTerminalOutput` →
       `cleanReadmeMarkdown` (re-check emptiness after it — early return `""`) → glamour
       with `WithStyles(keepkitStyle(dark))` + `WithInlineTableLinks(true)`; the
       plain-text fallback returns the *preprocessed* text
-- [ ] collapse the dead seam: branch on `testReadmeStyle != ""` directly in
+- [x] collapse the dead seam: branch on `testReadmeStyle != ""` directly in
       `renderReadme` (→ `WithStandardStyle(testReadmeStyle)`), delete
       `readmeStyleName`, delete `TestRenderReadmeStyleFollowsBackground`
-- [ ] update the two fallback assertions (`readme_test.go` ~84, ~147) to compare
+- [x] update the two fallback assertions (`readme_test.go` ~84, ~147) to compare
       against `cleanReadmeMarkdown(cleanTerminalOutput(raw))`; add one fallback case
       whose input the preprocessor actually changes
-- [ ] write struct-level theme tests: `H1.Color == string(ui.ColorPrimary)` (deref),
+- [x] write struct-level theme tests: `H1.Color == string(ui.ColorPrimary)` (deref),
       `H1.BackgroundColor == nil`, `*Document.Margin == 0`, dark/light differ; plus a
       regression test that `styles.DarkStyleConfig`/`LightStyleConfig` are deep-equal
       to their pre-call values after both `keepkitStyle(true)` and `keepkitStyle(false)`
-- [ ] write behavioral tests: `[text](url)` renders as `text` — URL absent, **no double
+- [x] write behavioral tests: `[text](url)` renders as `text` — URL absent, **no double
       space**; a table with a `[manual](url)` link renders the cell with no footnote
       stub; autolink and bare URL still visible; both variants render a sample doc
       without error; badge-only README renders to `""`
-- [ ] run tests — must pass before task 5
+- [x] run tests — must pass before task 5
+
+➕ `Heading` (the base every `Hn` cascades onto) carries the H3+ rule rather than four
+separate overrides; `H6` still needs its own, because the standard dark config singles it
+out with a green non-bold override. H1's `Prefix`/`Suffix` padding spaces went with the
+plate — without a background they only read as a stray indent.
+
+➕ the globals-untouched regression compares a **JSON snapshot**, not `reflect.DeepEqual`
+against a saved copy: a struct copy aliases the very pointers a write-through would
+corrupt, so the "before" value would change with the "after" and the test would pass on
+the bug it exists to catch.
+
+➕ the "no double space" assertion runs on the **preprocessed source**, not the rendered
+output: glamour pads table cells with runs of spaces of its own, which is layout, not
+removal residue.
 
 ### Task 5: Verify acceptance criteria
 
-- [ ] verify every bullet of the **Acceptance criteria** list in the Overview
-- [ ] verify edge cases: README of only badges/HTML → friendly placeholder; README with
+- [x] verify every bullet of the **Acceptance criteria** list in the Overview
+- [x] verify edge cases: README of only badges/HTML → friendly placeholder; README with
       HTML/markdown examples inside fences → examples intact; truncated-mid-fence input
-- [ ] run full CI matrix locally: `go build .`, `go vet ./...`,
-      `go test -race ./...`, `golangci-lint run` (preflight)
-- [ ] verify go.mod/go.sum changed only by the goldmark-emoji promotion (no new modules)
+- [x] run full CI matrix locally: `go build .`, `go vet ./...`,
+      `go test -race ./...`, `golangci-lint run` (preflight) — plus the cross-compile
+      step (`GOOS=windows build`+`vet`, `GOOS=darwin build`); all green
+- [x] verify go.mod/go.sum changed only by the goldmark-emoji promotion (no new modules)
+      — `go.sum` untouched, `go.mod` moves one line
+
+Where each criterion is pinned: images incl. reference-style →
+`TestCleanReadmeMarkdownImagesAndLinks`; HTML junk / `<kbd>` text →
+`TestCleanReadmeMarkdownHTML`; link unwrapping, autolinks, bare URLs, no footnote stub,
+no double space → `TestRenderReadmeHouseStyle`; emoji, shortcodes and the `✅/❌/☑`
+translation → `TestCleanReadmeMarkdownEmojiAndShortcodes` +
+`TestCleanReadmeMarkdownShortcodeNeedsAKnownName`; palette and the missing H1 plate →
+`TestKeepkitStyleOverrides` + `TestKeepkitStyleDarkOnlyOverrides`; code byte-identity →
+`TestCleanReadmeMarkdownProtectsFences` + `…ProtectsInlineSpans`; badge-only → placeholder
+→ `TestRenderReadmeBadgeOnlyIsEmpty` and render_test.go's "content that renders to
+nothing" (whose `t.Skipf` escape hatch is now a `t.Fatalf` — the preprocessor makes the
+empty render a guarantee, not a hope); globals unmutated →
+`TestKeepkitStyleLeavesGlobalsUntouched`.
+
+➕ **observed on a realistic README, out of this plan's scope, left for the user to
+decide** — a centered HTML title (`<h1 align="center">name</h1>`, very common in
+badge-heavy READMEs) keeps its text but loses its heading status: the tag strip is
+text-preserving by design, and turning `<h1>`–`<h6>` elements into markdown headings is a
+rule nobody approved. Also unchanged (and pre-existing, not caused by this work): a mailto
+autolink still renders as `team@example.com mailto:team@example.com`, because glamour
+prints `LinkText` and `Link` both and the Decision log closed the door on `Link.Format`.
+`✨` and other BMP pictographs survive by design — only the SMP blocks and the three
+translated marks are in scope.
 
 ### Task 6: [Final] Update documentation
 
-- [ ] update CLAUDE.md: `model` package file table (~line 50: add `readme_clean.go`,
+- [x] update CLAUDE.md: `model` package file table (~line 50: add `readme_clean.go`,
       `readme_style.go`) and the panel `[3]` modes paragraph (~line 111: the "runs
       glamour with a **fixed** `WithStandardStyle("dark"|"light")`" clause → the new
-      pipeline)
-- [ ] update ARCHITECTURE.md in its three spots: the `model` file table (~line 74,
+      pipeline). The empty-render placeholder sentence was updated too — the
+      preprocessor turns that case from a curiosity into a guarantee.
+- [x] update ARCHITECTURE.md in its three spots: the `model` file table (~line 74,
       `readme.go` row), the "passed to glamour as a fixed `WithStandardStyle`" clause
       (~line 134), and the `testReadmeStyle` seam description (~line 399)
-- [ ] check README.md: only the Glamour credit line (~262) touches this area — update
-      only if the rendering description changed
-- [ ] move this plan to `docs/plans/completed/`
+- [x] check README.md: the Glamour credit line, plus the two user-facing panel `[3]`
+      descriptions (feature list and panel list) now say a README is cleaned up before
+      rendering, and **goldmark-emoji joined the Stack** as a new direct dependency
+- [x] move this plan to `docs/plans/completed/`
+
+Docs-sync drift check on the other known-drift spots: mermaid package graph — совпадает
+(`model` already imported `ui`, no new internal edge); `inputMode` enum, key tables,
+timeouts/limits, storage-paths table — не затронуты; test seams — `testReadmeStyle`
+исправлен, новых нет; README Stack vs `go.mod` direct deps — расхождение → исправлено
+(README.md, goldmark-emoji added; the two lists now match exactly, 10 entries).
 
 ## Post-Completion
 
