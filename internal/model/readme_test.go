@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/stanlyzoolo/keepkit/internal/ui"
 )
 
 const sampleReadme = "# Title\n\nSome intro text.\n\n## Usage\n\n- first item\n- second item\n\n```sh\nkeepkit --version\n```\n"
@@ -16,12 +18,17 @@ func visibleLines(s string) []string {
 }
 
 func TestRenderReadmeContent(t *testing.T) {
-	out := renderReadme(sampleReadme, 60, true)
+	out := renderReadme(sampleReadme, 60, true, ui.Default, "")
 	if out == "" {
 		t.Fatal("renderReadme returned empty output")
 	}
 	plain := stripANSI(out)
-	for _, want := range []string{"Title", "Some intro text.", "Usage", "first item", "second item", "keepkit --version"} {
+	// "Title" is deliberately absent: the leading H1 repeats the tool name the
+	// card already prints, so the preprocessor drops it.
+	if strings.Contains(plain, "Title") {
+		t.Errorf("rendered README kept the leading H1\n---\n%s", plain)
+	}
+	for _, want := range []string{"Some intro text.", "Usage", "first item", "second item", "keepkit --version"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("rendered README missing %q\n---\n%s", want, plain)
 		}
@@ -30,7 +37,7 @@ func TestRenderReadmeContent(t *testing.T) {
 
 func TestRenderReadmeEmpty(t *testing.T) {
 	for _, in := range []string{"", "   \n\t\n"} {
-		if got := renderReadme(in, 60, true); got != "" {
+		if got := renderReadme(in, 60, true, ui.Default, ""); got != "" {
 			t.Errorf("renderReadme(%q) = %q, want empty", in, got)
 		}
 	}
@@ -39,7 +46,7 @@ func TestRenderReadmeEmpty(t *testing.T) {
 func TestRenderReadmeWrapRespectsWidth(t *testing.T) {
 	long := "# T\n\n" + strings.Repeat("word ", 200)
 	const width = 40
-	out := renderReadme(long, width, true)
+	out := renderReadme(long, width, true, ui.Default, "")
 	for _, line := range visibleLines(out) {
 		if w := lipgloss.Width(line); w > width {
 			t.Fatalf("line wider than %d (%d): %q", width, w, line)
@@ -51,7 +58,7 @@ func TestRenderReadmeWrapRespectsWidth(t *testing.T) {
 // a one-character column).
 func TestRenderReadmeNarrowWidthUsesFloor(t *testing.T) {
 	long := strings.Repeat("word ", 100)
-	out := renderReadme(long, 1, true)
+	out := renderReadme(long, 1, true, ui.Default, "")
 	if strings.TrimSpace(stripANSI(out)) == "" {
 		t.Fatal("narrow render produced no text")
 	}
@@ -63,8 +70,10 @@ func TestRenderReadmeNarrowWidthUsesFloor(t *testing.T) {
 }
 
 func TestRenderReadmeStripsControlChars(t *testing.T) {
-	raw := "# Ti\x07tle\n\nbo\x1b[31mdy\x1b[0m text\rmore\n"
-	plain := stripANSI(renderReadme(raw, 60, true))
+	// The heading is an H2: an H1 would be dropped as the title, and this test
+	// is about the sanitizer, not about which blocks survive.
+	raw := "## Ti\x07tle\n\nbo\x1b[31mdy\x1b[0m text\rmore\n"
+	plain := stripANSI(renderReadme(raw, 60, true, ui.Default, ""))
 	if strings.ContainsAny(plain, "\x07\x1b\r") {
 		t.Errorf("control characters survived rendering: %q", plain)
 	}
@@ -90,8 +99,8 @@ func TestRenderReadmeFallsBackToPlainText(t *testing.T) {
 			testReadmeStyle = "no-such-style"
 			t.Cleanup(func() { testReadmeStyle = "" })
 
-			got := renderReadme(tt.raw, 60, true)
-			want := cleanReadmeMarkdown(cleanTerminalOutput(tt.raw))
+			got := renderReadme(tt.raw, 60, true, ui.Default, "")
+			want := cleanReadmeMarkdown(cleanTerminalOutput(tt.raw), "")
 			if got != want {
 				t.Errorf("fallback = %q, want the preprocessed input %q", got, want)
 			}
@@ -115,12 +124,12 @@ func TestNewResolvesBackgroundOnce(t *testing.T) {
 // renderer between the two calls: a cache miss would fall back to plain text.
 func TestReadmeRenderCacheHit(t *testing.T) {
 	var c readmeRenderCache
-	first := c.render("tool", sampleReadme, 60, true)
+	first := c.render("tool", sampleReadme, 60, true, ui.Default, "")
 
 	testReadmeStyle = "no-such-style"
 	t.Cleanup(func() { testReadmeStyle = "" })
 
-	if second := c.render("tool", sampleReadme, 60, true); second != first {
+	if second := c.render("tool", sampleReadme, 60, true, ui.Default, ""); second != first {
 		t.Errorf("cached render = %q, want the first result %q", second, first)
 	}
 }
@@ -141,16 +150,16 @@ func TestReadmeRenderCacheInvalidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var c readmeRenderCache
-			first := c.render("tool", sampleReadme, 60, true)
+			first := c.render("tool", sampleReadme, 60, true, ui.Default, "")
 
 			testReadmeStyle = "no-such-style"
 			t.Cleanup(func() { testReadmeStyle = "" })
 
-			got := c.render(tt.tool, tt.raw, tt.width, tt.dark)
+			got := c.render(tt.tool, tt.raw, tt.width, tt.dark, ui.Default, "")
 			if got == first {
 				t.Fatalf("%s: cache was reused, want a re-render", tt.name)
 			}
-			if want := cleanReadmeMarkdown(cleanTerminalOutput(tt.raw)); got != want {
+			if want := cleanReadmeMarkdown(cleanTerminalOutput(tt.raw), ""); got != want {
 				t.Errorf("%s: re-render = %q, want the fallback %q", tt.name, got, want)
 			}
 		})

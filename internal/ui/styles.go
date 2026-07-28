@@ -1,181 +1,162 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
 
-var (
-	// Palette — every color used in the UI is named here; styles below build
-	// only from these (no inline hex literals).
-	ColorPrimary   = lipgloss.Color("#DA7756")
-	ColorOrange    = lipgloss.Color("#E5A040")
-	ColorOrangeDim = lipgloss.Color("#7A5A1E") // darker yellow — the API-usage gauge's empty track
-	ColorGreen     = lipgloss.Color("#6AAF6A")
-	ColorMeta      = lipgloss.Color("#5588AA")
-	ColorMuted     = lipgloss.Color("#AAAAAA")
-	ColorDim       = lipgloss.Color("#888888")
-	ColorBorder    = lipgloss.Color("#555555")
-	ColorText      = lipgloss.Color("#E8E8E8")
-	ColorCategory  = lipgloss.Color("#E8A87C")
-	ColorKey       = lipgloss.Color("#C8A97E")
-	ColorDanger    = lipgloss.Color("#D06060")
-
-	PanelBorder = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorBorder)
-
-	PanelBorderFocused = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(ColorPrimary)
-
-	// SelectionBarStyle renders the ⏺ cursor on the selected row while the
-	// tools panel is focused; SelectionBarDimStyle keeps the cursor visible
-	// (but muted) when focus moves to the brief/help panels.
-	SelectionBarStyle = lipgloss.NewStyle().
-				Foreground(ColorPrimary)
-
-	SelectionBarDimStyle = lipgloss.NewStyle().
-				Foreground(ColorDim)
-
-	// SelectedNameStyle highlights the selected tool's name when the tools
-	// panel is focused.
-	SelectedNameStyle = lipgloss.NewStyle().
-				Foreground(ColorPrimary).
-				Bold(true)
-
-	DescStyle = lipgloss.NewStyle().
-			Foreground(ColorText)
-
-	HelpStyle = lipgloss.NewStyle().
-			Foreground(ColorMuted).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorBorder)
-
-	SearchPromptStyle = lipgloss.NewStyle().
-				Foreground(ColorPrimary).
-				Bold(true)
-
-	SearchMatchStyle = lipgloss.NewStyle().
-				Foreground(ColorKey).
-				Bold(true)
-
-	GithubStyle = lipgloss.NewStyle().
-			Foreground(ColorMuted)
-
-	// Rate-usage gauge (status-bar right corner): yellow brackets + used-count,
-	// yellow ▮ fill glyphs and darker-yellow ░ track glyphs. The bar is drawn
-	// with foreground-colored glyphs, not painted backgrounds, so it stays
-	// visible when a terminal's color profile degrades and ANSI is stripped.
-	// Colors are constant — the bar never recolors on rate pressure.
-	RateBracketStyle    = lipgloss.NewStyle().Foreground(ColorOrange)
-	RateUsageNumStyle   = lipgloss.NewStyle().Foreground(ColorOrange)
-	RateGaugeFillStyle  = lipgloss.NewStyle().Foreground(ColorOrange)
-	RateGaugeTrackStyle = lipgloss.NewStyle().Foreground(ColorOrangeDim)
-
-	// WarnStyle / DangerStyle flag GitHub API rate-limit pressure in the
-	// status bar and API-status overlay.
-	WarnStyle = lipgloss.NewStyle().
-			Foreground(ColorOrange).
-			Bold(true)
-
-	DangerStyle = lipgloss.NewStyle().
-			Foreground(ColorDanger).
-			Bold(true)
-
-	UpdateAvailableStyle = lipgloss.NewStyle().
-				Foreground(ColorOrange).
-				Bold(true)
-
-	// OkStyle marks a benign affirmative state — the card's "installed but
-	// version unknown". Deliberately not UpdateAvailableStyle: orange there
-	// means "act on this", and a working install needs no action.
-	OkStyle = lipgloss.NewStyle().
-		Foreground(ColorGreen).
-		Bold(true)
-
-	// My Tools status colors
-	StatusColorActive   = ColorGreen
-	StatusColorTrying   = ColorOrange
-	StatusColorInactive = ColorMuted
-
-	StatusStyleActive = lipgloss.NewStyle().
-				Foreground(StatusColorActive).
-				Bold(true)
-
-	StatusStyleTrying = lipgloss.NewStyle().
-				Foreground(StatusColorTrying).
-				Bold(true)
-
-	StatusStyleInactive = lipgloss.NewStyle().
-				Foreground(StatusColorInactive)
-
-	HelpFlagStyle = lipgloss.NewStyle().
-			Foreground(ColorPrimary)
-
-	HelpSectionStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(ColorCategory)
-
-	HelpMetaStyle = lipgloss.NewStyle().
-			Foreground(ColorMeta)
-
-	// HelpDimStyle repaints help lines outside the spotlighted entry while the
-	// [3] panel's navigation cursor is active. Same color as OverlayDimStyle
-	// today, but a separate name: the reading tint can be tuned without
-	// touching the overlay compositor.
-	HelpDimStyle = lipgloss.NewStyle().
-			Foreground(ColorDim)
-
-	MetaTagStyle = lipgloss.NewStyle().
-			Foreground(ColorMeta)
-
-	MetaNoteStyle = lipgloss.NewStyle().
-			Foreground(ColorMuted).
-			Italic(true)
-
-	// MetaDetailLabelStyle colors the card's [notes] labels and nothing more:
-	// the column they align to is model.cardLabelWidth, shared with the [info]
-	// labels, which cannot use a style (label and value are one Render call
-	// there). A Width here would be a second, silently drifting definition.
-	MetaDetailLabelStyle = lipgloss.NewStyle().
-				Foreground(ColorMuted)
-
-	RepoStatusStyle = lipgloss.NewStyle().
-			Foreground(ColorMuted).
-			Italic(true)
-
-	// SectionLabelStyle renders the bracketed section headers in the brief
-	// panel, e.g. "[info]". Bold + category color to stand out from the line.
-	SectionLabelStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(ColorCategory)
-
-	// InfoStyle is the non-italic muted style for the [info] section lines.
-	InfoStyle = lipgloss.NewStyle().
-			Foreground(ColorMuted)
-
-	// ChangelogHeadingStyle marks a markdown heading inside the card's
-	// [changelog] body: one emphasis step above the muted InfoStyle body, and
-	// no new color — ColorText keeps it from competing with the peach
-	// SectionLabelStyle that heads the card's own sections.
-	ChangelogHeadingStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(ColorText)
-
-	// TagHeaderStyle / TagRuleStyle draw the tag-group divider rows in the [1]
-	// tools list: "─ dev ────…". The label is muted (ColorDim), the rule lines
-	// the panel-frame gray (ColorBorder), so group boundaries read geometrically
-	// rather than by color — the tool names stay the only color accent in the
-	// list. Deliberately not SectionLabelStyle (its ColorCategory competes with
-	// the peach tool-name accent).
-	TagHeaderStyle = lipgloss.NewStyle().
-			Foreground(ColorDim)
-
-	TagRuleStyle = lipgloss.NewStyle().
-			Foreground(ColorBorder)
-
-	// Scrollbar thumb: peach when the panel is focused, dim otherwise.
-	ScrollThumbStyle = lipgloss.NewStyle().
-				Foreground(ColorPrimary)
-
-	ScrollThumbDimStyle = lipgloss.NewStyle().
-				Foreground(ColorDim)
+	"github.com/stanlyzoolo/keepkit/internal/loader"
 )
+
+// Styles is every lipgloss.Style keepkit renders with, built from one Theme.
+// It is a value, not a package of vars: the model holds one (see model.New), so
+// re-theming the whole app is handing the model a different Styles rather than
+// mutating globals under a running render.
+//
+// The set is deliberately small and named after Theme's roles rather than after
+// the widgets that use it. A per-widget name (the old TagHeaderStyle,
+// HelpSectionStyle, SectionLabelStyle, …) reads well exactly once — at the call
+// site it was invented for — and then quietly multiplies into a palette of
+// near-duplicates that a theme has to keep consistent by hand. Emphasis steps
+// that used to justify a new color are covered here by weight (Bold), italics
+// and the Surface background, so what a call site picks is a *meaning*, and the
+// comment above it says which.
+type Styles struct {
+	// Theme is the palette these styles were built from. Renderers that need a
+	// raw color rather than a style — a border repaint, glamour's StyleConfig,
+	// a background derived per segment — read it from here, so they still go
+	// through the theme instead of reaching for a package-level color.
+	Theme Theme
+
+	// Accent: focus and interaction. AccentBold additionally marks the one
+	// element that *has* focus — the selected tool's name, a search hit.
+	Accent     lipgloss.Style
+	AccentBold lipgloss.Style
+
+	// Signal: requires action. Bold is the card's headline version, plain the
+	// repeated markers in the list.
+	Signal     lipgloss.Style
+	SignalBold lipgloss.Style
+
+	// Ok: healthy state. Danger: broken or exhausted — always bold, it is an
+	// alarm and there is never more than one on screen.
+	Ok     lipgloss.Style
+	Danger lipgloss.Style
+
+	// Link: URLs only.
+	Link lipgloss.Style
+
+	// Emphasis: the brightest text. EmphasisBold heads a section or names the
+	// selected tool in the card — the screen's few typographic peaks.
+	Emphasis     lipgloss.Style
+	EmphasisBold lipgloss.Style
+
+	// Text: ordinary reading text. Dim: labels, counters, SHAs, secondary
+	// hints. Note: the same step down, italic — placeholders and prose that is
+	// not the app's own voice ("no tools tracked", a repo's tagline).
+	Text lipgloss.Style
+	Dim  lipgloss.Style
+	Note lipgloss.Style
+
+	// Rule draws dividers, group headers and the vertical lines between metric
+	// columns. Surface is a background *only* — a call site pairs it with a
+	// foreground style rather than using it alone, because a lipgloss style
+	// applied around already-styled text cannot repaint the segments inside it.
+	Rule    lipgloss.Style
+	Surface lipgloss.Style
+
+	// Panel frames and the status bar. The focused panel differs by color and
+	// by the ▸ its title carries — two signals, so focus survives a colorless
+	// terminal.
+	PanelBorder        lipgloss.Style
+	PanelBorderFocused lipgloss.Style
+	StatusBar          lipgloss.Style
+
+	// Overlays: the modal frame, and the repaint applied to everything behind
+	// it so the modal is the only full-color element on screen.
+	OverlayBorder lipgloss.Style
+	OverlayDim    lipgloss.Style
+
+	// The API-usage gauge. GaugeTrack is Theme.SignalDim's only consumer: fill
+	// and track have to read as one bar, which no other pair of roles can do.
+	GaugeFill  lipgloss.Style
+	GaugeTrack lipgloss.Style
+}
+
+// NewStyles builds the style set for a theme. It is the only function in the
+// codebase allowed to turn a color into a style — every field below is derived
+// from t, never from a literal.
+//
+// It returns a pointer: Styles is ~20 lipgloss.Style values (a few kilobytes),
+// the renderers are value receivers, and a frame reads it dozens of times.
+func NewStyles(t Theme) *Styles {
+	fg := func(c lipgloss.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
+	bold := func(c lipgloss.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c).Bold(true) }
+
+	return &Styles{
+		Theme: t,
+
+		Accent:     fg(t.Accent),
+		AccentBold: bold(t.Accent),
+
+		Signal:     fg(t.Signal),
+		SignalBold: bold(t.Signal),
+
+		Ok:     fg(t.Ok),
+		Danger: bold(t.Danger),
+
+		Link: fg(t.Link),
+
+		Emphasis:     fg(t.Emphasis),
+		EmphasisBold: bold(t.Emphasis),
+
+		Text: fg(t.Text),
+		Dim:  fg(t.Dim),
+		Note: fg(t.Dim).Italic(true),
+
+		Rule:    fg(t.Border),
+		Surface: lipgloss.NewStyle().Background(t.Surface),
+
+		PanelBorder: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(t.Border),
+		PanelBorderFocused: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(t.Accent),
+		StatusBar: fg(t.Text).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(t.Border),
+
+		OverlayBorder: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(t.Accent).
+			Padding(0, 1),
+		OverlayDim: fg(t.Dim),
+
+		GaugeFill:  fg(t.Signal),
+		GaugeTrack: fg(t.SignalDim),
+	}
+}
+
+// Status colors a tool's tracked status: active is a resting healthy state,
+// trying asks for a decision, inactive steps back. An unknown value reads as
+// trying — the state a hand-edited meta.yaml is closest to.
+func (s *Styles) Status(st loader.Status) lipgloss.Style {
+	switch st {
+	case loader.StatusActive:
+		return s.Ok
+	case loader.StatusInactive:
+		return s.Dim
+	case loader.StatusTrying:
+		return s.Signal
+	default:
+		return s.Signal
+	}
+}
+
+// defaultStyles is the Default theme built once. DefaultStyles is what a
+// renderer falls back to when it was handed no styles at all — a Model built as
+// a bare struct literal, which most tests are. Nothing outside that fallback
+// (and package ui's own overlay compositor) may reach for it: a call site that
+// does would keep rendering the default theme after the model switched themes.
+var defaultStyles = NewStyles(Default)
+
+func DefaultStyles() *Styles { return defaultStyles }

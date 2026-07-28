@@ -45,10 +45,10 @@ func TestModeEnterAndEsc(t *testing.T) {
 		{"slash in brief opens help search", focusBrief, keyRunes("/"), modeHelpSearch},
 		{"slash in help opens help search", focusHelp, keyRunes("/"), modeHelpSearch},
 		{"e in brief opens note edit", focusBrief, keyRunes("e"), modeEditNote},
-		{"t in brief opens tags edit", focusBrief, keyRunes("t"), modeEditTags},
+		{"# in brief opens tags edit", focusBrief, keyRunes("#"), modeEditTags},
 		{"t in tools opens track", focusTools, keyRunes("t"), modeTrack},
 		{"u in tools opens untrack confirm", focusTools, keyRunes("u"), modeConfirmUntrack},
-		{"r in tools opens rename", focusTools, keyRunes("r"), modeRename},
+		{"R opens rename", focusTools, keyRunes("R"), modeRename},
 		{"L opens api status", focusTools, keyRunes("L"), modeAPIStatus},
 	}
 	for _, tt := range tests {
@@ -1077,13 +1077,13 @@ func newUpdateTestModel() Model {
 	return m
 }
 
-// TestUpdateKeyWithoutUpdate: [u] in focusBrief on a tool with no pending
+// TestUpdateKeyWithoutUpdate: enter in focusBrief on a tool with no pending
 // release sets a hint and does not enter the confirm mode.
 func TestUpdateKeyWithoutUpdate(t *testing.T) {
 	m := newUpdateTestModel()
 	m.versions["rg"] = VersionInfo{Installed: "2.0.0", Latest: "2.0.0", InstalledKnown: true}
 
-	updated, _ := m.Update(keyRunes("u"))
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	nm := updated.(Model)
 	if nm.mode != modeNormal {
 		t.Fatalf("mode = %d, want modeNormal", nm.mode)
@@ -1093,7 +1093,7 @@ func TestUpdateKeyWithoutUpdate(t *testing.T) {
 	}
 }
 
-// TestUpdateKeyWhileUpdatingNoop: [u] while an update is already running starts
+// TestUpdateKeyWhileUpdatingNoop: enter while an update is already running starts
 // nothing — one update at a time, no queue — and says so, like every other
 // blocked action here (the running update's own indicator is a card spinner,
 // invisible unless that tool is selected).
@@ -1102,7 +1102,7 @@ func TestUpdateKeyWhileUpdatingNoop(t *testing.T) {
 	m := newUpdateTestModel()
 	m.updatingFor = "rg"
 
-	updated, cmd := m.Update(keyRunes("u"))
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	nm := updated.(Model)
 	if nm.mode != modeNormal {
 		t.Errorf("mode = %d, want modeNormal (no confirm)", nm.mode)
@@ -1168,13 +1168,13 @@ func TestUpdateDetectedUnknownManager(t *testing.T) {
 	}
 }
 
-// TestUpdateKeyFiresDetect: [u] in focusBrief on a tool with a pending release
+// TestUpdateKeyFiresDetect: enter in focusBrief on a tool with a pending release
 // fires detection (returns a non-nil command) and stays in modeNormal — the
 // confirm dialog opens only after the async updateDetectedMsg lands.
 func TestUpdateKeyFiresDetect(t *testing.T) {
 	m := newUpdateTestModel()
 
-	updated, cmd := m.Update(keyRunes("u"))
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	nm := updated.(Model)
 	if nm.mode != modeNormal {
 		t.Errorf("mode = %d, want modeNormal (detection is async)", nm.mode)
@@ -1494,10 +1494,10 @@ func TestReadmeKeyBranches(t *testing.T) {
 			t.Errorf("YOffset = %d, want 0 (GotoTop on the mode switch)", nm.helpViewport.YOffset)
 		}
 	})
-	t.Run("tools focus still renames", func(t *testing.T) {
+	t.Run("R renames from the tool list", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		m := newTestModel(focusTools)
-		nm := mustModel(m.Update(keyRunes("r")))
+		nm := mustModel(m.Update(keyRunes("R")))
 		if nm.mode != modeRename {
 			t.Errorf("mode = %d, want modeRename", nm.mode)
 		}

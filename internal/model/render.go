@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,7 +34,7 @@ func (m Model) View() string {
 		if m.mode == modeHotkeys {
 			fg = m.renderHotkeys()
 		}
-		layout = ui.PlaceOverlay(layout, fg)
+		layout = ui.PlaceOverlay(layout, fg, m.sty().OverlayDim)
 	}
 	// Vertical margin only; no horizontal margin so panels/status bar reach the
 	// terminal edges.
@@ -43,7 +42,8 @@ func (m Model) View() string {
 }
 
 func (m Model) renderStatusBar() string {
-	style := ui.HelpStyle.Width(m.width - 2)
+	s := m.sty()
+	style := s.StatusBar.Width(m.width - 2)
 	if m.mode == modeHelpSearch {
 		matchInfo := ""
 		if len(m.helpMatches) > 0 {
@@ -52,55 +52,55 @@ func (m Model) renderStatusBar() string {
 			matchInfo = "  no matches"
 		}
 		return style.Render(fmt.Sprintf(
-			"%s %s  %s next  %s prev  %s exit%s",
-			ui.SearchPromptStyle.Render("/"),
+			"%s %s  %s  %s  %s%s",
+			s.AccentBold.Render("/"),
 			m.helpSearch.View(),
-			keyHint("n"),
-			keyHint("N"),
-			keyHint("esc"),
+			m.hint("n", "next"),
+			m.hint("N", "prev"),
+			m.hint("esc", "exit"),
 			matchInfo,
 		))
 	}
 	if m.mode == modeSearch {
 		return style.Render(fmt.Sprintf(
-			"%s %s  %d/%d  %s open  %s move  %s cancel",
-			ui.SearchPromptStyle.Render("/"),
+			"%s %s  %d/%d  %s  %s  %s",
+			s.AccentBold.Render("/"),
 			m.search.View(),
 			len(m.searchMatches()),
 			len(m.meta),
-			keyHint("enter"),
-			keyHint("↑/↓"),
-			keyHint("esc"),
+			m.hint("enter", "open"),
+			m.hint("↑/↓", "move"),
+			m.hint("esc", "cancel"),
 		))
 	}
 	if m.mode == modeEditNote {
-		return style.Render(keyHint("enter") + " save  " + keyHint("esc") + " cancel")
+		return style.Render(m.hint("enter", "save") + "  " + m.hint("esc", "cancel"))
 	}
 	if m.mode == modeEditTags {
-		return style.Render(keyHint("enter") + " save  " + keyHint("esc") + " cancel  " + ui.MetaNoteStyle.Render("single tag"))
+		return style.Render(m.hint("enter", "save") + "  " + m.hint("esc", "cancel") + "  " + s.Note.Render("single tag"))
 	}
 	if m.mode == modeTrack {
 		return style.Render(fmt.Sprintf(
-			"%s %s  %s cancel",
-			ui.SearchPromptStyle.Render("track (github url or tool name):"),
+			"%s %s  %s",
+			s.AccentBold.Render("track (github url or tool name):"),
 			m.trackInput.View(),
-			keyHint("esc"),
+			m.hint("esc", "cancel"),
 		))
 	}
 	if m.mode == modeConfirmUntrack {
 		return style.Render(fmt.Sprintf(
-			"%s  %s yes  %s no",
-			ui.SearchPromptStyle.Render("Untrack "+m.untrackTarget+"?"),
-			keyHint("enter"),
-			keyHint("esc"),
+			"%s  %s  %s",
+			s.AccentBold.Render("untrack "+m.untrackTarget+"?"),
+			m.hint("enter", "yes"),
+			m.hint("esc", "no"),
 		))
 	}
 	if m.mode == modeRename {
 		return style.Render(fmt.Sprintf(
-			"%s %s  %s cancel",
-			ui.SearchPromptStyle.Render("rename to:"),
+			"%s %s  %s",
+			s.AccentBold.Render("rename to:"),
 			m.nameInput.View(),
-			keyHint("esc"),
+			m.hint("esc", "cancel"),
 		))
 	}
 	if m.mode == modeRunInput {
@@ -109,11 +109,11 @@ func (m Model) renderStatusBar() string {
 			name = mt.Name
 		}
 		return style.Render(fmt.Sprintf(
-			"%s %s  %s run  %s cancel",
-			ui.SearchPromptStyle.Render("run "+name+":"),
+			"%s %s  %s  %s",
+			s.AccentBold.Render("run "+name+":"),
 			m.runInput.View(),
-			keyHint("enter"),
-			keyHint("esc"),
+			m.hint("enter", "run"),
+			m.hint("esc", "cancel"),
 		))
 	}
 	if m.mode == modeConfirmUpdate {
@@ -122,23 +122,23 @@ func (m Model) renderStatusBar() string {
 		// all, with an empty tracker — and for a tool's it may have moved while
 		// detection ran.
 		return style.Render(fmt.Sprintf(
-			"%s  %s run  %s cancel",
-			ui.SearchPromptStyle.Render("update "+m.updateTarget+": "+m.updatePlan.Display),
-			keyHint("enter"),
-			keyHint("esc"),
+			"%s  %s  %s",
+			s.AccentBold.Render("update "+m.updateTarget+": "+m.updatePlan.Display),
+			m.hint("enter", "run"),
+			m.hint("esc", "cancel"),
 		))
 	}
 	if m.mode == modeTokenInput {
-		return style.Render(keyHint("enter") + " validate & save  " + keyHint("esc") + " cancel")
+		return style.Render(m.hint("enter", "validate & save") + "  " + m.hint("esc", "cancel"))
 	}
 	if m.mode == modeAPIStatus {
-		return style.Render(keyHint("r") + " refresh  " + keyHint("esc") + " close")
+		return style.Render(m.hint("r", "refresh") + "  " + m.hint("esc", "close"))
 	}
 	if m.mode == modeHotkeys {
-		return style.Render(keyHint("esc") + " close")
+		return style.Render(m.hint("esc", "close"))
 	}
 	if m.statusMsg != "" {
-		return style.Render(ui.SearchPromptStyle.Render(m.statusMsg))
+		return style.Render(s.AccentBold.Render(m.statusMsg))
 	}
 	// The self-update banner replaces the hint cells in all three normal focus
 	// states — one check here rather than one per focus branch, since those are
@@ -147,61 +147,58 @@ func (m Model) renderStatusBar() string {
 	if cells, ok := m.selfBannerCells(); ok {
 		return m.renderHintsBar(style, cells)
 	}
-	if m.focus == focusBrief {
-		hints := []string{
-			keyHint("o") + " open repo",
-			keyHint("c") + " changelog",
-			keyHint("r") + " refresh",
-			keyHint("s") + " status",
-			keyHint("e") + " note",
-			keyHint("t") + " tags",
-			keyHint("q") + " quit",
-			keyHint("?") + " keys",
-		}
-		if mt, ok := m.selectedMeta(); ok && m.hasUpdate(mt.Name) {
-			hints = append([]string{keyHint("u") + " update"}, hints...)
-		}
-		return m.renderHintsBar(style, hints)
+	return m.renderHintsBar(style, m.globalHints())
+}
+
+// globalHints is the status bar's left half, and it is deliberately the SAME in
+// every focus. It used to be three per-focus lists, which meant the one line
+// always on screen kept rewriting itself as the user moved between panels while
+// the keys it advertised were mostly reachable from anywhere anyway. What is
+// genuinely panel-local now lives in that panel's own footer, next to the thing
+// it acts on; what is left here is the tracker's global verb list.
+//
+// No space/group cell: it is [1]-local and its footer carries it. Cells are
+// ordered most-important-first — renderHintsBar drops from the right.
+func (m Model) globalHints() []string {
+	return []string{
+		m.hint("enter", "run"),
+		m.hint("/", "search"),
+		m.hint("t", "track"),
+		m.hint("u", "untrack"),
+		m.hint("R", "rename"),
+		m.hint("?", "keys"),
+		m.hint("q", "quit"),
 	}
-	if m.focus == focusHelp {
-		var hints []string
-		// With a navigable entry index j/k drive the spotlight cursor while
-		// the arrows keep their line scroll — advertise both; without
-		// entries (update log, placeholders, prose) j/k scroll too.
-		if m.helpNavIdx >= 0 {
-			hints = append(hints, keyHint("esc")+" exit nav")
-		}
-		if len(m.helpEntries) > 0 {
-			hints = append(hints, keyHint("j/k")+" navigate")
-		}
-		hints = append(hints,
-			keyHint("↑↓")+" scroll",
-			keyHint("h")+" --help",
-			keyHint("m")+" man",
-			keyHint("r")+" readme",
-		)
-		// The help search tears glamour's ANSI apart, so [/] is a no-op in
-		// readme mode — don't advertise a key that does nothing there.
-		if m.helpMode != helpModeReadme {
-			hints = append(hints, keyHint("/")+" search")
-		}
-		hints = append(hints, keyHint("←")+" back", keyHint("q")+" quit", keyHint("?")+" keys")
-		return m.renderHintsBar(style, hints)
+}
+
+// updateCountCell is the status bar's right-hand answer to "is there anything
+// to do?": "3 updates ↑" in the signal color, or "" when everything is current.
+// It counts the whole tracker, not the filtered view — a search narrowing the
+// list must not make pending updates disappear from the one place that totals
+// them.
+func (m Model) updateCountCell() string {
+	n := m.updateCount()
+	if n == 0 {
+		return ""
 	}
-	return m.renderHintsBar(style, []string{
-		keyHint("enter") + " run",
-		keyHint("/") + " search",
-		keyHint("t") + " track",
-		keyHint("u") + " untrack",
-		keyHint("r") + " rename",
-		keyHint("q") + " quit",
-		keyHint("?") + " keys",
-	})
-	// No [space] group cell here on purpose: this list already overflows 80
-	// columns (the trailing cells drop), so the hint would be invisible on the
-	// baseline terminal anyway, while on wider ones its 15 columns push the
-	// API-usage gauge from its full form down to the compact one. The [?]
-	// overlay documents the binding instead.
+	word := "updates"
+	if n == 1 {
+		word = "update"
+	}
+	return m.sty().Signal.Render(fmt.Sprintf("%d %s ↑", n, word))
+}
+
+// updateCount is how many tracked tools have a newer release than the version
+// installed locally. It drives both the [1] panel title and the status bar, so
+// the two can never disagree.
+func (m Model) updateCount() int {
+	n := 0
+	for _, mt := range m.meta {
+		if m.hasUpdate(mt.Name) {
+			n++
+		}
+	}
+	return n
 }
 
 // rateGaugeMinGap is the minimum blank columns between the hint bar and the
@@ -228,22 +225,38 @@ const hintSep = "  "
 // dropped, and when even it is too wide (the fused banner cell on a very narrow
 // terminal) it is truncated rather than allowed to wrap.
 //
-// Only then is the right group placed, degrading in a fixed order: full gauge +
-// self cell → compact gauge + self cell → self cell alone → compact gauge. (The
-// full gauge is not a step after the self cell: place() fails monotonically in
-// width and the full gauge is always wider than the cell, so it could never fit
-// where the cell did not.)
+// Only then is the right group placed. It has three members — the API-usage
+// gauge, the pending-updates count and the collapsed self-update cell — and
+// they are dropped in order of how *actionable* they are: the gauge first (a
+// read-only reminder, and it only shows up under quota pressure at all), then
+// the self cell, and the updates count last, since it is the one thing on the
+// bar that says the tracker needs attention. The candidate list spells that
+// order out rather than computing it, because "which combination is next"
+// is a judgement about meaning, not about width.
 func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 	inner := m.width - 2
 	joined := func(cs []string) int { return lipgloss.Width(strings.Join(cs, hintSep)) }
-	// The self cell is reserved for before any dropping starts: it lives in the
-	// right group and is never dropped itself, so the hints have to fit around
-	// it. One loop, one rule — a plain "fit the hints" pass ahead of it would be
-	// dead work whose predicate has to be kept in sync with this one by hand.
-	self := m.selfCompactCell()
+	// join drops empty members so a candidate never renders a stray separator;
+	// an all-empty candidate collapses to "" and place() skips it.
+	join := func(parts ...string) string {
+		kept := parts[:0]
+		for _, p := range parts {
+			if p != "" {
+				kept = append(kept, p)
+			}
+		}
+		return strings.Join(kept, hintSep)
+	}
+	full, compact := m.renderRateGauge(false), m.renderRateGauge(true)
+	upd, self := m.updateCountCell(), m.selfCompactCell()
+
+	// The two undroppable members are reserved for before any dropping starts:
+	// they live in the right group and the hints have to fit around them. One
+	// loop, one rule — a plain "fit the hints" pass ahead of it would be dead
+	// work whose predicate has to be kept in sync with this one by hand.
 	reserve := 0
-	if self != "" {
-		reserve = rateGaugeMinGap + lipgloss.Width(self)
+	if keep := join(upd, self); keep != "" {
+		reserve = rateGaugeMinGap + lipgloss.Width(keep)
 	}
 	for len(cells) > 1 && joined(cells)+reserve > inner {
 		cells = cells[:len(cells)-1]
@@ -265,21 +278,16 @@ func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 		}
 		return hints + strings.Repeat(" ", gap) + right, true
 	}
-	// withGauge pairs a gauge with the self cell, or yields "" when that gauge
-	// form is unavailable (no known rate snapshot) so place() skips the
-	// candidate instead of rendering a stray separator.
-	withGauge := func(gauge string) string {
-		if gauge == "" {
-			return ""
-		}
-		return gauge + hintSep + self
-	}
-	full, compact := m.renderRateGauge(false), m.renderRateGauge(true)
-	candidates := []string{full, compact}
-	if self != "" {
-		candidates = []string{withGauge(full), withGauge(compact), self, compact}
-	}
-	for _, c := range candidates {
+	for _, c := range []string{
+		join(full, upd, self),
+		join(compact, upd, self),
+		join(upd, self),
+		join(compact, upd),
+		join(upd),
+		join(compact, self),
+		join(self),
+		join(compact),
+	} {
 		if line, ok := place(c); ok {
 			return style.Render(line)
 		}
@@ -298,19 +306,20 @@ func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 // besides the live log in [3] (an untracked keepkit has no card, so the card
 // spinner never fires), and the normal hints stay usable meanwhile.
 func (m Model) selfBannerCells() ([]string, bool) {
+	s := m.sty()
 	if m.selfUpdating() {
 		return nil, false
 	}
 	switch m.selfState {
 	case selfOffered:
 		return []string{
-			selfToolName + " " + ui.UpdateAvailableStyle.Render(m.selfLatest) + " available — " + keyHint("U") + " update",
-			keyHint("X") + " dismiss",
+			selfToolName + " " + s.SignalBold.Render(m.selfLatest) + " available — " + m.hint("U", "update"),
+			m.hint("X", "dismiss"),
 		}, true
 	case selfUpdated:
 		return []string{
-			selfToolName + " updated — " + keyHint("U") + " restart",
-			keyHint("X") + " later",
+			selfToolName + " updated — " + m.hint("U", "restart"),
+			m.hint("X", "later"),
 		}, true
 	case selfNone, selfDismissed, selfUpdatedLater:
 		// No full banner: nothing was offered, or [X] folded it into the compact
@@ -332,14 +341,15 @@ func (m Model) selfBannerCells() ([]string, bool) {
 // measures the cell with lipgloss.Width, so an over-wide measurement can only
 // drop the cell earlier, never overflow the line.
 func (m Model) selfCompactCell() string {
+	s := m.sty()
 	if m.selfUpdating() {
 		return selfToolName + " updating…"
 	}
 	switch m.selfState {
 	case selfDismissed:
-		return selfToolName + " " + ui.UpdateAvailableStyle.Render("↑") + " " + keyHint("U")
+		return selfToolName + " " + s.SignalBold.Render("↑") + " " + m.key("U")
 	case selfUpdatedLater:
-		return selfToolName + " " + keyHint("U") + " restart"
+		return selfToolName + " " + m.hint("U", "restart")
 	case selfNone, selfOffered, selfUpdated:
 		// Nothing to collapse: no banner at all, or the full one is on screen.
 	default:
@@ -348,8 +358,21 @@ func (m Model) selfCompactCell() string {
 	return ""
 }
 
-func keyHint(k string) string {
-	return ui.SearchPromptStyle.Render("[" + k + "]")
+// key renders a hotkey the single way keepkit renders one: the bare key in the
+// accent color. The brackets it used to wear are gone — the accent already says
+// "this is a key", and at the status bar's density a pair of brackets per hint
+// cost more columns than the whole [?] overlay's third column. Literal brackets
+// survive only where they name a *panel* ([3] readme), which is a different
+// thing and now the only bracketed thing on screen.
+func (m Model) key(k string) string {
+	return m.sty().Accent.Render(k)
+}
+
+// hint is a key with its label: "enter run", accent then text. Every status-bar
+// and footer cell is built from it, so the key/label contrast is defined once.
+func (m Model) hint(k, label string) string {
+	s := m.sty()
+	return s.Accent.Render(k) + " " + s.Text.Render(label)
 }
 
 // gaugeCells is the fixed width of the API-usage bar, independent of whether the
@@ -367,30 +390,63 @@ const (
 	gaugeTrackGlyph = "░" // U+2591 light shade
 )
 
-// renderRateGauge builds the right-corner "GitHub API Usage" indicator for the
-// current rate snapshot, or "" when there is no known snapshot. It shows
-// used/limit (used = Limit-Remaining), matching the API-status overlay. The bar
-// is ▮ fill / ░ track glyphs (visible even if ANSI is stripped; any usage shows
-// at least one filled cell via gaugeFilled) and constant yellow at every
-// pressure level — exhaustion (used==limit) simply renders a full bar; the ⚠/✕
-// alarm lives only in the [L] overlay. compact drops the label and bar, keeping
-// "GH used/limit [L]" for narrow terminals.
-func (m Model) renderRateGauge(compact bool) string {
-	r := m.rate
+// gaugeShowRemaining / gaugeDangerRemaining are the quota thresholds the gauge
+// appears and turns red at. The gauge is a reminder, not decoration: at rest it
+// is not on screen at all, which is what buys the status bar the room for the
+// updates count.
+//
+// Both are read against the *limit* as well as absolutely, because the two
+// limits differ by two orders of magnitude: 500 left is a warning out of 5000
+// and meaningless out of 60. Absolute-only thresholds would paint a token-less
+// user's bar permanently red — 60 is always under 100 — which is the opposite
+// of a signal. So the danger bound is the tighter of the absolute number and a
+// quarter of the window: <100 with a token, <15 without one.
+const (
+	gaugeShowRemaining   = 500
+	gaugeDangerRemaining = 100
+)
+
+// gaugeVisible reports whether the quota is worth showing: past half the window,
+// or under gaugeShowRemaining requests left. On the token-less 60/hour limit the
+// second clause is effectively always true, and that is correct — 60 requests is
+// three tools' worth of startup, so there the gauge is a permanent fixture until
+// a token lifts the limit.
+func gaugeVisible(r version.RateLimit) bool {
 	if !r.Known || r.Limit <= 0 {
+		return false
+	}
+	return usedOf(r)*2 > r.Limit || r.Remaining < gaugeShowRemaining
+}
+
+// renderRateGauge builds the right-corner API-usage indicator for the current
+// rate snapshot, or "" when there is nothing to show (see gaugeVisible). It
+// shows used/limit (used = Limit-Remaining), matching the API-status overlay.
+// The bar is ▮ fill / ░ track glyphs — foreground-colored, so it survives a
+// stripped-ANSI profile, and any usage shows at least one filled cell via
+// gaugeFilled. The fill turns danger-red as the window runs out; the ⚠/✕ alarm
+// itself still lives only in the [L] overlay, which the [?] overlay documents —
+// the bar spends no columns advertising a key. compact drops the bar, keeping
+// "api used/limit" for narrow terminals.
+func (m Model) renderRateGauge(compact bool) string {
+	s := m.sty()
+	r := m.rate
+	if !gaugeVisible(r) {
 		return ""
 	}
 	used := usedOf(r)
-	nums := ui.RateUsageNumStyle.Render(fmt.Sprintf("%d/%d", used, r.Limit))
+	label := s.Dim.Render("api ")
+	nums := s.Dim.Render(fmt.Sprintf("%d/%d", used, r.Limit))
 	if compact {
-		return ui.GithubStyle.Render("GH ") + nums + " " + keyHint("L")
+		return label + nums
+	}
+	fill := s.GaugeFill
+	if r.Remaining < min(gaugeDangerRemaining, r.Limit/4) {
+		fill = s.Danger
 	}
 	filled := gaugeFilled(used, r.Limit)
-	bar := ui.RateGaugeFillStyle.Render(strings.Repeat(gaugeFillGlyph, filled)) +
-		ui.RateGaugeTrackStyle.Render(strings.Repeat(gaugeTrackGlyph, gaugeCells-filled))
-	return ui.GithubStyle.Render("GitHub API Usage ") +
-		ui.RateBracketStyle.Render("[") + bar + ui.RateBracketStyle.Render("]") +
-		" " + nums + "  " + keyHint("L") + ui.GithubStyle.Render(" details")
+	bar := fill.Render(strings.Repeat(gaugeFillGlyph, filled)) +
+		s.GaugeTrack.Render(strings.Repeat(gaugeTrackGlyph, gaugeCells-filled))
+	return label + bar + " " + nums
 }
 
 // usedOf returns consumed requests (Limit-Remaining) clamped to [0,Limit], the
@@ -459,12 +515,12 @@ func classifyRate(r version.RateLimit) rateLevel {
 // rateIcon returns the styled indicator (none / ⚠ / ✕) for a rate snapshot,
 // sharing classifyRate with the status-bar signal so the overlay and the bar
 // never disagree. Returns "" when nothing should flag.
-func rateIcon(rate version.RateLimit) string {
+func rateIcon(s *ui.Styles, rate version.RateLimit) string {
 	switch classifyRate(rate) {
 	case rateExhausted:
-		return ui.DangerStyle.Render("✕")
+		return s.Danger.Render("✕")
 	case rateWarn:
-		return ui.WarnStyle.Render("⚠")
+		return s.SignalBold.Render("⚠")
 	default:
 		return ""
 	}
@@ -484,63 +540,64 @@ func maskToken(t string) string {
 // nudge (when none is configured), the token source (masked), used/limit with
 // the shared icon, and the reset time.
 func (m Model) renderAPIStatus() string {
+	s := m.sty()
 	var b strings.Builder
-	b.WriteString(ui.SectionLabelStyle.Render("GitHub API status") + "\n\n")
+	b.WriteString(s.EmphasisBold.Render("github api usage") + "\n\n")
 
 	source := version.TokenSource()
 	// Nudge the user to add a token when none is configured — it lifts the hourly
 	// limit from 60 to 5000. Hidden once a token exists or while entering one.
 	if source == "none" && m.mode != modeTokenInput {
-		b.WriteString(ui.WarnStyle.Render("Add a GitHub token to raise the limit (60 → 5000/h)  ") + keyHint("e") + "\n\n")
+		b.WriteString(s.Signal.Render("add a github token to raise the limit (60 → 5000/h)  ") + m.hint("e", "set") + "\n\n")
 	}
 
-	tokenLine := "Token: " + source
+	tokenLine := "token  " + source
 	if tok := version.Token(); tok != "" {
 		tokenLine += " (" + maskToken(tok) + ")"
 	}
-	b.WriteString(ui.InfoStyle.Render(tokenLine) + "\n")
+	b.WriteString(s.Text.Render(tokenLine) + "\n")
 
 	if m.rate.Known {
-		icon := rateIcon(m.rate)
+		icon := rateIcon(s, m.rate)
 		// Used/limit matches the status-bar gauge so the two surfaces agree.
-		usedLine := fmt.Sprintf("Used: %d / %d", usedOf(m.rate), m.rate.Limit)
+		usedLine := fmt.Sprintf("used   %d / %d", usedOf(m.rate), m.rate.Limit)
 		if icon != "" {
 			usedLine = icon + " " + usedLine
 		}
-		b.WriteString(ui.InfoStyle.Render(usedLine) + "\n")
+		b.WriteString(s.Text.Render(usedLine) + "\n")
 		if !m.rate.Reset.IsZero() {
 			mins := int(time.Until(m.rate.Reset).Minutes())
 			if mins < 0 {
 				mins = 0
 			}
-			b.WriteString(ui.InfoStyle.Render(fmt.Sprintf(
-				"Reset: in %d min (%s)", mins, m.rate.Reset.Format("15:04"))) + "\n")
+			b.WriteString(s.Text.Render(fmt.Sprintf(
+				"reset  in %d min (%s)", mins, m.rate.Reset.Format("15:04"))) + "\n")
 		}
 	} else {
-		b.WriteString(ui.InfoStyle.Render("Limit: unknown") + "\n")
+		b.WriteString(s.Text.Render("limit  unknown") + "\n")
 	}
 
 	if m.mode == modeTokenInput {
-		b.WriteString("\n" + ui.SearchPromptStyle.Render("token: ") + m.tokenInput.View() + "\n")
+		b.WriteString("\n" + s.AccentBold.Render("token ") + m.tokenInput.View() + "\n")
 	}
 	if m.tokenError != "" {
-		b.WriteString(ui.DangerStyle.Render(m.tokenError) + "\n")
+		b.WriteString(s.Danger.Render(m.tokenError) + "\n")
 	}
 
 	b.WriteString("\n")
 	var hints string
 	if m.mode == modeTokenInput {
-		hints = keyHint("enter") + " validate & save  " + keyHint("esc") + " cancel"
+		hints = m.hint("enter", "validate & save") + "  " + m.hint("esc", "cancel")
 	} else {
-		hints = keyHint("e") + " set token  "
+		hints = m.hint("e", "set token") + "  "
 		if source == "config" {
-			hints += keyHint("d") + " remove token  "
+			hints += m.hint("d", "remove token") + "  "
 		}
-		hints += keyHint("r") + " refresh  " + keyHint("esc") + " close"
+		hints += m.hint("r", "refresh") + "  " + m.hint("esc", "close")
 	}
-	b.WriteString(ui.InfoStyle.Render(hints))
+	b.WriteString(s.Text.Render(hints))
 
-	return ui.OverlayBorder.Render(b.String())
+	return s.OverlayBorder.Render(b.String())
 }
 
 // hotkeyRow is one binding line in the [?] overlay: a key cell (bracketed by
@@ -553,29 +610,30 @@ type hotkeyGroup struct {
 	rows  []hotkeyRow
 }
 
-// renderHotkeys builds the static [?] hotkeys overlay: a title row with the
-// close hint right-aligned, then a three-column grid of every normal-mode
-// binding, one binding per line, grouped and annotated by the panel/mode it
-// belongs to. Each group header is preceded by a blank line (except the first
-// in its column) and sits directly above its own rows — the blank line that
-// used to follow the header was reclaimed when the readme row pushed the
-// tallest column past the row budget, and no column partition of the five
-// groups fits 20 rows with it. Inside a column every
-// key cell is padded to the column's widest key so descriptions line up and the
-// keys never drift sideways. Styled like the [L] overlay (OverlayBorder frame,
-// SectionLabelStyle headers, keyHint keys, InfoStyle text). Hard size budget:
-// <= 20 rows x <= 76 cols framed, so it fits the 80x24 composited background
-// that PlaceOverlay clips off the bottom.
+// renderHotkeys builds the [?] overlay: a title row with the close hint
+// right-aligned, then a two-column grid of every normal-mode binding, one per
+// line, grouped by the panel or area it belongs to. Inside a column every key
+// cell is padded to the column's widest key, so the descriptions line up and
+// the keys never drift sideways.
+//
+// Hard size budget: <= 20 rows x <= 76 cols framed, so it fits the 80x24
+// composited background PlaceOverlay clips off the bottom. That leaves 16 rows
+// per column, and both columns are AT it — a new binding needs a row freed, not
+// appended, and TestRenderHotkeysSizeBudget is what says so. Rows that were
+// merged to buy that room (o/c, j/k ↑/↓) are the reason the descriptions read
+// as pairs.
+//
+// The close hint lives in the title rather than on a footer row of its own,
+// which is a whole row saved; esc, q and a second ? all close it.
 func (m Model) renderHotkeys() string {
-	hdr := ui.SectionLabelStyle.Render
-	info := ui.InfoStyle.Render
+	s := m.sty()
 	// padTo right-pads a (possibly ANSI-styled) cell to a visible width so the
 	// descriptions line up; measured with lipgloss.Width, which strips ANSI.
-	padTo := func(s string, w int) string {
-		if d := w - lipgloss.Width(s); d > 0 {
-			return s + strings.Repeat(" ", d)
+	padTo := func(str string, w int) string {
+		if d := w - lipgloss.Width(str); d > 0 {
+			return str + strings.Repeat(" ", d)
 		}
-		return s
+		return str
 	}
 
 	// renderColumn stacks groups vertically: a blank line separates groups
@@ -586,7 +644,7 @@ func (m Model) renderHotkeys() string {
 		keyW := 0
 		for _, g := range groups {
 			for _, r := range g.rows {
-				if w := lipgloss.Width(keyHint(r.key)); w > keyW {
+				if w := lipgloss.Width(r.key); w > keyW {
 					keyW = w
 				}
 			}
@@ -596,65 +654,62 @@ func (m Model) renderHotkeys() string {
 			if gi > 0 {
 				lines = append(lines, "")
 			}
-			lines = append(lines, hdr(g.title))
+			lines = append(lines, s.EmphasisBold.Render(g.title))
 			for _, r := range g.rows {
-				lines = append(lines, padTo(keyHint(r.key), keyW)+"  "+info(r.desc))
+				lines = append(lines, padTo(s.Accent.Render(r.key), keyW)+"  "+s.Text.Render(r.desc))
 			}
 		}
 		return strings.Join(lines, "\n")
 	}
 
 	col1 := renderColumn([]hotkeyGroup{
-		{"Global", []hotkeyRow{
+		{"global", []hotkeyRow{
 			{"1/2/3", "focus panel"},
 			{"←/→", "move focus"},
-			{"esc / q", "back / quit"},
-			{"L", "API status"},
-			{"?", "this help"},
+			{"esc/q", "back / quit"},
+			{"/", "search"},
+			{"t", "track a repo"},
+			{"u", "untrack selected"},
+			{"R", "rename selected"},
+			{"L", "api usage"},
+			{"?", "this overlay"},
 		}},
-		{"[1] Tools", []hotkeyRow{
-			{"j/k ↑/↓", "select tool"},
+		{"[1] tools", []hotkeyRow{
+			{"j/k", "move selection"},
 			{"g/G", "first / last"},
 			{"space", "group by tag"},
-			{"enter", "run in tab"},
-			{"t", "track tool"},
-			{"u", "untrack tool"},
-			{"r", "rename tool"},
-			{"/", "filter tools"},
+			{"enter", "run in a tab"},
 		}},
 	})
 
-	// Self lives in column 2 because it is the shortest one: column 1 is exactly
-	// at the 20-row budget, so a group there would clip. Descriptions must stay
-	// <= 12 cells (the column's current widest, "cycle status") or the column —
-	// and with it the overlay — grows past 76 columns.
-	//
-	// It is the one state-dependent group: U and X are bound only while a banner
-	// is on screen, and the two live states bind them differently (update/dismiss
-	// vs restart/later). Listing one fixed wording would document half the state
-	// machine and, on a build with no banner at all (any dev build), advertise two
-	// dead keys.
+	// The self group is the one state-dependent part of the overlay: U and X are
+	// bound only while a banner is on screen, and the two live states bind them
+	// differently (update/dismiss vs restart/later). Listing one fixed wording
+	// would document half the state machine and, on a build with no banner at
+	// all (any dev build), advertise two dead keys.
 	groups2 := []hotkeyGroup{
-		{"[2] Brief", []hotkeyRow{
-			{"o", "open repo"},
-			{"c", "changelog"},
+		{"[2] brief", []hotkeyRow{
+			{"enter", "update to latest"},
 			{"r", "refresh"},
-			{"s", "cycle status"},
 			{"e", "edit note"},
-			{"t", "edit tags"},
-			{"u", "run update"},
-			{"h", "--help"},
-			{"m", "man page"},
+			{"#", "edit tags"},
+			{"s", "cycle status"},
+			{"o/c", "repo / releases"},
+		}},
+		{"[3] readme", []hotkeyRow{
+			{"r/h/m", "readme/help/man"},
+			{"j/k ↑/↓", "navigate / scroll"},
+			{"ctrl+d/u", "half page"},
 		}},
 	}
 	switch m.selfState {
 	case selfOffered, selfDismissed:
-		groups2 = append(groups2, hotkeyGroup{"Self", []hotkeyRow{
+		groups2 = append(groups2, hotkeyGroup{"self", []hotkeyRow{
 			{"U", "self-update"},
 			{"X", "dismiss"},
 		}})
 	case selfUpdated, selfUpdatedLater:
-		groups2 = append(groups2, hotkeyGroup{"Self", []hotkeyRow{
+		groups2 = append(groups2, hotkeyGroup{"self", []hotkeyRow{
 			{"U", "restart"},
 			{"X", "later"},
 		}})
@@ -665,57 +720,121 @@ func (m Model) renderHotkeys() string {
 	}
 	col2 := renderColumn(groups2)
 
-	col3 := renderColumn([]hotkeyGroup{
-		{"[3] Help / Man / Readme", []hotkeyRow{
-			{"j/k", "entry nav"},
-			{"↑/↓", "scroll"},
-			{"esc", "exit nav"},
-			{"h/m", "help / man"},
-			{"r", "readme"},
-			{"/", "search"},
-			{"n/N", "next match"},
-		}},
-		{"Scrolling", []hotkeyRow{
-			{"j/k ↑/↓", "3 lines"},
-			{"ctrl+d/u", "half page"},
-			{"ctrl+f/b", "full page"},
-			{"PgUp/PgDn", "full page"},
-			{"g/G", "top / bottom"},
-		}},
-	})
+	grid := lipgloss.JoinHorizontal(lipgloss.Top, col1, "   ", col2)
 
-	grid := lipgloss.JoinHorizontal(lipgloss.Top, col1, "   ", col2, "   ", col3)
-
-	// Title row: heading left, close hint right-aligned to the grid width so the
-	// overlay reads as a single block, with a blank line below it separating the
-	// title from the grid.
-	title := hdr("Keyboard shortcuts")
-	closeHint := keyHint("esc") + " " + info("close")
+	// Title row: the overlay's name, the running version beside it (the one
+	// question a keys sheet is also asked), and the close hint pinned right.
+	title := s.EmphasisBold.Render("keys")
+	if m.appVersion != "" {
+		title += " " + s.Dim.Render(selfToolName+" "+m.appVersion)
+	}
+	closeHint := m.hint("esc", "close")
 	titleRow := title + " " + closeHint
 	if pad := lipgloss.Width(grid) - lipgloss.Width(title) - lipgloss.Width(closeHint); pad > 0 {
 		titleRow = title + strings.Repeat(" ", pad) + closeHint
 	}
 
 	body := lipgloss.JoinVertical(lipgloss.Left, titleRow, "", grid)
-	return ui.OverlayBorder.Render(body)
+	return s.OverlayBorder.Render(body)
 }
 
 func (m Model) calcVpHeight() int {
 	// Match the panel's inner content height. lipgloss adds borders outside the
 	// configured Height, so Height(m.height-7) gives exactly m.height-7 content
-	// rows; the viewport must fill them so the scrollbar reaches the bottom.
+	// rows; the viewport plus its footer must fill them so the scrollbar reaches
+	// the bottom.
 	return max(m.height-7, 1)
 }
 
+// panelFooterRows is how many of a panel's content rows belong to its footer: a
+// spacer (a rule in [1], a blank line elsewhere) plus the footer line itself.
+// All three panels reserve the same number, which is what keeps their viewports
+// the same height and their bottom edges aligned.
+//
+// Zero on a terminal too short to spare them — two of six content rows is a
+// third of the panel, and a footer is a reminder while the content is the point.
+const panelFooterRows = 2
+
+func (m Model) footerRows() int {
+	if m.calcVpHeight() < 6 {
+		return 0
+	}
+	return panelFooterRows
+}
+
+// calcListHeight is the viewport height inside a panel: the content height its
+// footer does not claim. Both the WindowSizeMsg handler (which sizes the
+// viewports) and the renderers (which stack viewport + footer back to the full
+// height) go through it, so the two cannot drift apart and leave a panel one row
+// too tall — which lipgloss would answer by pushing the status bar off screen.
+func (m Model) calcListHeight() int {
+	return max(m.calcVpHeight()-m.footerRows(), 1)
+}
+
+// panelFooter renders a panel's footer block — the spacer row plus the hints —
+// to exactly footerRows() lines and w cells wide, or "" when the panel is too
+// short for one. left cells are joined by " · " and dropped from the right until
+// they fit (same rule as the status bar, and for the same reason: a footer that
+// wrapped would push the panel past its height); right is pinned to the far
+// edge and dropped first, since it is the least important thing in the block.
+//
+// rule picks the spacer: [1] separates its footer with a border-colored line
+// because its content is a dense list that would otherwise run into it, while
+// [2] and [3] are prose and a blank row is enough.
+func (m Model) panelFooter(w int, rule bool, left []string, right string) string {
+	if m.footerRows() == 0 {
+		return ""
+	}
+	s := m.sty()
+	w = max(w, 1)
+
+	spacer := ""
+	if rule {
+		spacer = s.Rule.Render(strings.Repeat("─", w))
+	}
+
+	fit := func(cells []string, reserve int) string {
+		for len(cells) > 0 {
+			line := strings.Join(cells, footerSep)
+			if lipgloss.Width(line)+reserve <= w {
+				return line
+			}
+			cells = cells[:len(cells)-1]
+		}
+		return ""
+	}
+
+	line := fit(left, rateGaugeMinGap+lipgloss.Width(right))
+	if right != "" {
+		if gap := w - lipgloss.Width(line) - lipgloss.Width(right); gap >= rateGaugeMinGap {
+			line += strings.Repeat(" ", gap) + right
+		} else if line == "" {
+			line = truncateToWidth(stripANSI(right), w)
+		}
+	}
+	if lipgloss.Width(line) > w {
+		line = truncateToWidth(stripANSI(line), w)
+	}
+	return spacer + "\n" + line
+}
+
+// footerSep separates two cells in a panel footer. The status bar uses two
+// spaces; a footer has fewer cells and more room around them, so the middot
+// reads as grouping rather than as clutter.
+const footerSep = " · "
+
 func (m Model) calcPanelWidths() (toolsW, briefW, helpW int) {
-	// 20%-40%-40% layout. lipgloss adds borders OUTSIDE the configured Width,
+	// 20%-46%-34% layout: the card is the panel the redesign gives the room to,
+	// because its metrics strip lays four measurements side by side and the
+	// readme beside it is prose that reads fine in a narrower column.
+	// lipgloss adds borders OUTSIDE the configured Width,
 	// so Width(panelW) renders as panelW+2 on screen, and panel content fills
 	// the full panelW (dividers/viewports use panelW, not panelW-2).
 	// Horizontal overhead reserved here = 6: 2 border cols x 3 panels. There is
 	// no outer horizontal margin and panels sit flush against each other.
 	available := max(m.width-6, 1)
 	toolsW = max((available*20)/100, 15)
-	briefW = max((available*40)/100, 30)
+	briefW = max((available*46)/100, 30)
 	helpW = available - toolsW - briefW
 	if helpW < 30 {
 		helpW = 30
@@ -743,39 +862,43 @@ func (m Model) renderLeftContent() string {
 	return content
 }
 
-// tagHeaderLine renders a tag-group header as a divider row with the label
-// centered: "──────── dev ────────" across the full list width, label in muted
-// TagHeaderStyle and the rule lines in the panel-frame TagRuleStyle (no hashtag)
-// — group boundaries read geometrically so the tool names stay the only color
-// accent. The trailing group's label is "untagged". One header must occupy
-// exactly one screen line — every consumer of the line maps assumes it — so the
-// label is flattened (a tag from a hand-edited meta.yaml can carry a newline,
-// which would silently emit a second row) and the whole line is built to exactly
-// w cells, so the viewport never wraps or truncates it.
+// tagHeaderLine renders a group header as a label followed by a rule running
+// out to the panel edge: "dev ─────────". The label is dim and the rule the
+// panel-frame gray, so a group boundary reads as structure — the tool names stay
+// the only color accent. The trailing group's label is "untagged", the leading
+// one's is updatesGroupLabel.
+//
+// The label leads rather than sits centered because these headers are read down
+// a column: a left edge the eye can run along beats a symmetric frame.
+//
+// One header must occupy exactly one screen line — every consumer of the line
+// maps assumes it — so the label is flattened (a tag from a hand-edited
+// meta.yaml can carry a newline, which would silently emit a second row) and the
+// whole line is built to exactly w cells, so the viewport never wraps or
+// truncates it.
 func (m Model) tagHeaderLine(tag string) string {
+	s := m.sty()
 	label := "untagged"
 	if tag != "" {
 		label = flattenLine(tag)
 	}
 	w := max(m.toolsW-1, 1)
-	// Too narrow to frame a "─ label ─" — degrade to the bare label, cut to the
-	// panel so it still occupies a single line no wider than w.
-	if w < 4 {
-		return ui.TagHeaderStyle.Render(truncateToWidth(label, w))
-	}
-	// Reserve a rule on each side (≥1) + the two spaces around the label = 4
-	// cells of frame, so the label gets w-4. The remaining rule is split evenly
-	// (odd remainder → the extra dash goes right). lipgloss.Width, not a rune
-	// count, so a CJK tag is cut by display cells (the same reason
+	// Too narrow for "label ─" — degrade to the bare label, cut to the panel so
+	// it still occupies a single line no wider than w. lipgloss.Width, not a
+	// rune count, so a CJK tag is cut by display cells (the same reason
 	// truncateToWidth exists).
-	label = truncateToWidth(label, max(w-4, 1))
-	rule := max(w-2-lipgloss.Width(label), 0)
-	head := rule / 2
-	tail := rule - head
-	return ui.TagRuleStyle.Render(strings.Repeat("─", head)+" ") +
-		ui.TagHeaderStyle.Render(label) +
-		ui.TagRuleStyle.Render(" "+strings.Repeat("─", tail))
+	if w < 3 {
+		return s.Dim.Render(truncateToWidth(label, w))
+	}
+	label = truncateToWidth(label, max(w-2, 1))
+	rule := max(w-1-lipgloss.Width(label), 0)
+	return s.Dim.Render(label) + s.Rule.Render(" "+strings.Repeat("─", rule))
 }
+
+// updatesGroupLabel heads the group of tools with a pending release. It is the
+// tracker's headline — the answer to the question the app exists to answer —
+// so in the grouped view it always comes first, ahead of every tag.
+const updatesGroupLabel = "updates"
 
 // flattenLine collapses the line breaks (and the stray control characters that
 // travel with them) of a single-line label into spaces.
@@ -814,93 +937,140 @@ func truncateToWidth(s string, w int) string {
 // buildToolRows renders the tool list and the tool-index ↔ screen-line maps
 // that go with it: toolLine[i] is tool i's screen line, lineTool[l] the tool on
 // screen line l (-1 on a group header). Flat view has no headers, so both are
-// the identity there; the tag view is the only thing that makes them differ,
+// the identity there; the grouped view is the only thing that makes them differ,
 // which is what keeps metaSelected a tool index everywhere else.
+//
+// A row is three columns — marker, name, version — and the version is pinned to
+// the right edge, which is what makes the list scannable down two edges at once:
+// names on the left, what is installed on the right. The name column absorbs the
+// slack between them and is TRUNCATED, never wrapped: a wrapped name would emit
+// a second screen line for one tool and every entry in the line maps below it
+// would be off by one.
 func (m Model) buildToolRows() (string, []int, []int) {
+	s := m.sty()
 	var sb strings.Builder
 	matches := m.searchMatches()
 	query := m.searchQuery()
-	maxName := m.toolsW - 5
 	grouped := m.grouped()
+	w := max(m.toolsW-1, 1) // the scrollbar owns the last column
 
 	toolLine := make([]int, len(matches))
 	lineTool := make([]int, 0, len(matches))
 	line := 0
-	prevTag := ""
+	prevGroup := ""
 
 	for i, sm := range matches {
 		mt := sm.meta
 
-		// Tag view: open a section whenever the tag changes. searchMatches has
-		// already made each tag's rows contiguous, so one pass emits every
-		// header exactly once. The comparison uses the same case-folded key the
-		// grouping does, so `CLI` and `cli` stay one section — the header then
-		// shows the spelling of the group's first tool.
+		// Grouped view: open a section whenever the group changes. searchMatches
+		// has already made each group's rows contiguous, so one pass emits every
+		// header exactly once. The comparison uses the same key the grouping
+		// does, so `CLI` and `cli` stay one section — the header then shows the
+		// spelling of the group's first tool.
 		if grouped {
-			key := tagKey(mt)
-			if i == 0 || key != prevTag {
-				sb.WriteString(m.tagHeaderLine(tagOf(mt)) + "\n")
+			key := m.groupKey(mt)
+			if i == 0 || key != prevGroup {
+				label := tagOf(mt)
+				if key == updatesGroupLabel {
+					label = updatesGroupLabel
+				}
+				sb.WriteString(m.tagHeaderLine(label) + "\n")
 				lineTool = append(lineTool, -1)
 				line++
 			}
-			prevTag = key
-		}
-		name := wrapText(mt.Name, maxName)
-		name = strings.TrimRight(name, "\n")
-		plainNameW := lipgloss.Width(name)
-
-		updateMark, updateW := "", 0
-		if m.hasUpdate(mt.Name) {
-			updateMark = " " + ui.UpdateAvailableStyle.Render("↑")
-			updateW = lipgloss.Width(updateMark)
+			prevGroup = key
 		}
 
-		// While searching, highlight the matched substring of the name —
-		// except on the focused selected row, whose whole name is about to
-		// get the same peach-bold style anyway (nesting the ANSI would only
-		// corrupt it).
 		selected := i == m.metaSelected
-		if query != "" && (!selected || m.focus != focusTools) {
-			name = highlightNameMatch(name, query)
-		}
-
-		// Rows that matched only by tag show the tag that earned them the
-		// spot, dimmed, right of the name — skipped when the row's full
-		// budget (marker column + name column + update mark, see maxName)
-		// cannot absorb it without wrapping.
-		if sm.byTagOnly {
-			if tagW := lipgloss.Width("#" + sm.tag); plainNameW+tagW+updateW <= maxName+1 {
-				name += " " + ui.MetaNoteStyle.Render("#"+sm.tag)
+		// The selected row is a filled block spanning the whole panel, so every
+		// segment of it carries the background itself: a lipgloss style applied
+		// around already-styled text cannot repaint what is inside it — the
+		// inner reset sequences would punch holes in the fill.
+		paint := func(st lipgloss.Style) lipgloss.Style {
+			if selected {
+				return st.Background(s.Theme.Surface)
 			}
+			return st
 		}
 
-		// Marker column (width 1): ⏺ on the selected row — peach while the
+		// Version column: what is installed, right-aligned. A tool with a
+		// pending release trades the dim for the signal color and gains the ↑
+		// — the row's whole job is to say "this one is behind" at a glance.
+		// keepkit's own row instead gets a • in the healthy color: it names the
+		// binary the user is looking at, which no other row can claim. The name
+		// alone decides it — unlike isSelfUpdate, which additionally asks
+		// whether the self-update *feature* is live, because this marker is
+		// identification, not an offer to act on anything.
+		verText, verStyle := m.versions[mt.Name].Installed, paint(s.Dim)
+		switch {
+		case verText == "":
+		case m.hasUpdate(mt.Name):
+			verText += " ↑"
+			verStyle = paint(s.Signal)
+		case mt.Name == selfToolName:
+			verText += " •"
+			verStyle = paint(s.Ok)
+		}
+		verW := lipgloss.Width(verText)
+
+		// Marker column (width 1): ⏺ on the selected row — accent while the
 		// tools panel is focused, dim otherwise so the selection never
 		// disappears when focus moves to brief/help. Non-selected rows get a
 		// plain space (no status edge — tool status lives in the brief card).
 		// The marker stays visible in modeSearch too: the cursor there is
 		// user-controlled (arrows move the highlight through the matches).
-		var mark string
+		mark := paint(s.Dim).Render(" ")
+		nameStyle := paint(s.Text)
 		switch {
 		case selected && m.focus == focusTools:
-			mark = ui.SelectionBarStyle.Render("⏺")
-			name = ui.SelectedNameStyle.Render(name)
+			mark = paint(s.Accent).Render("⏺")
+			nameStyle = paint(s.AccentBold)
 		case selected:
-			mark = ui.SelectionBarDimStyle.Render("⏺")
-		default:
-			mark = " "
+			mark = paint(s.Dim).Render("⏺")
 		}
+
+		// Name column: whatever the marker and version leave, with at least one
+		// blank cell between name and version so the two never touch.
+		nameBudget := max(w-2-verW-1, 1)
+		name := truncateToWidth(flattenLine(mt.Name), nameBudget)
+
+		// Rows that matched only by tag show the tag that earned them the spot,
+		// dimmed, right of the name — skipped when the remaining budget cannot
+		// absorb it.
+		tagSuffix := ""
+		if sm.byTagOnly {
+			if suffix := " #" + sm.tag; lipgloss.Width(name)+lipgloss.Width(suffix) <= nameBudget {
+				tagSuffix = suffix
+			}
+		}
+
+		rendered := nameStyle.Render(name)
+		// While searching, highlight the matched substring — except on the
+		// focused selected row, whose whole name already carries the same
+		// accent-bold style (nesting the ANSI would only corrupt it).
+		if query != "" && (!selected || m.focus != focusTools) {
+			rendered = highlightNameMatch(s, name, query, paint(s.AccentBold), nameStyle)
+		}
+		if tagSuffix != "" {
+			rendered += paint(s.Dim).Render(tagSuffix)
+		}
+
+		// Pad out to the full panel width so a selected row's fill reaches both
+		// edges instead of stopping at the last glyph.
+		gap := max(w-2-lipgloss.Width(name)-lipgloss.Width(tagSuffix)-verW, 1)
+		sb.WriteString(mark + paint(s.Dim).Render(" ") + rendered +
+			paint(s.Dim).Render(strings.Repeat(" ", gap)) + verStyle.Render(verText) + "\n")
+
 		toolLine[i] = line
 		lineTool = append(lineTool, i)
 		line++
-		sb.WriteString(mark + " " + name + updateMark + "\n")
 	}
 
 	if len(matches) == 0 {
 		if m.mode == modeSearch {
-			sb.WriteString(ui.DescStyle.Render("  No matches.") + "\n")
+			sb.WriteString(s.Note.Render("  no matches.") + "\n")
 		} else {
-			sb.WriteString(ui.DescStyle.Render("  No tools tracked.\n  Press t to add one.") + "\n")
+			sb.WriteString(s.Note.Render("  no tools tracked.\n  press t to add one.") + "\n")
 		}
 	}
 
@@ -908,25 +1078,24 @@ func (m Model) buildToolRows() (string, []int, []int) {
 }
 
 // highlightNameMatch renders the first occurrence of the query inside the
-// (possibly wrapped) tool name peach-bold — distinct from highlightMatch
-// (textutil.go), the single-line ColorKey highlighter of the help search.
-// Matching is case-insensitive (rune-wise via runeIndexFold, so names whose
-// lowercase form has a different byte length cannot desync the slice offsets)
-// and per-line: a match split across a wrap boundary stays unhighlighted.
-// query must already be lowercase (searchQuery normalizes it).
-func highlightNameMatch(name, query string) string {
-	lines := strings.Split(name, "\n")
+// tool name in the accent — distinct from highlightMatch (textutil.go), the
+// single-line highlighter of the help search. Matching is case-insensitive
+// (rune-wise via runeIndexFold, so names whose lowercase form has a different
+// byte length cannot desync the slice offsets); query must already be lowercase
+// (searchQuery normalizes it).
+//
+// hit and rest are passed in rather than read off s because the selected row
+// paints its background into every segment: a hit rendered from the bare style
+// would punch a hole in the fill.
+func highlightNameMatch(s *ui.Styles, name, query string, hit, rest lipgloss.Style) string {
+	lr := []rune(name)
 	qr := []rune(query)
-	for i, line := range lines {
-		lr := []rune(line)
-		idx := runeIndexFold(lr, qr)
-		if idx < 0 {
-			continue
-		}
-		end := idx + len(qr)
-		lines[i] = string(lr[:idx]) + ui.SelectedNameStyle.Render(string(lr[idx:end])) + string(lr[end:])
+	idx := runeIndexFold(lr, qr)
+	if idx < 0 {
+		return rest.Render(name)
 	}
-	return strings.Join(lines, "\n")
+	end := idx + len(qr)
+	return rest.Render(string(lr[:idx])) + hit.Render(string(lr[idx:end])) + rest.Render(string(lr[end:]))
 }
 
 // selectedLine is the selected tool's screen line — metaSelected translated
@@ -1019,85 +1188,183 @@ func (m *Model) setToolsContent() {
 	m.syncToolsViewport()
 }
 
-func (m Model) renderTools() string {
-	focused := m.focus == focusTools
-	panelStyle := ui.PanelBorder
+// panelTitle is a panel's inset title in the two forms insetPanelTitle needs:
+// plain for the width arithmetic against the border it is spliced into, styled
+// for the screen. They must spell the same text — a styled form that says more
+// than the plain one would overrun the border it was measured against.
+type panelTitle struct{ plain, styled string }
+
+// focusTitle builds the "▸ [1] tools" head every panel title starts with. Focus
+// is marked twice on purpose: by the accent and by the ▸ — so the focused panel
+// is still identifiable on a monochrome terminal, or to a reader who cannot
+// separate the two panel colors.
+func (m Model) focusTitle(n, name string, focused bool) panelTitle {
+	s := m.sty()
+	label := "[" + n + "] " + name
 	if focused {
-		panelStyle = ui.PanelBorderFocused
+		return panelTitle{"▸ " + label, s.Accent.Render("▸ ") + s.AccentBold.Render(label)}
+	}
+	return panelTitle{label, s.Dim.Render(label)}
+}
+
+// append extends a title with another styled part, keeping both forms in step.
+func (t panelTitle) append(plain, styled string) panelTitle {
+	return panelTitle{t.plain + plain, t.styled + styled}
+}
+
+func (m Model) renderTools() string {
+	s := m.sty()
+	focused := m.focus == focusTools
+
+	// The title carries the two numbers that answer "what is in here": how many
+	// tools are tracked, and how many of them are behind. The second is the
+	// tracker's whole point, so it is the one thing in a panel title that gets
+	// the signal color.
+	title := m.focusTitle("1", "tools", focused)
+	if n := len(m.meta); n > 0 {
+		title = title.append(fmt.Sprintf(" %d", n), " "+s.Dim.Render(fmt.Sprintf("%d", n)))
+	}
+	if n := m.updateCount(); n > 0 {
+		title = title.append(fmt.Sprintf(" %d↑", n), " "+s.Signal.Render(fmt.Sprintf("%d↑", n)))
 	}
 
-	panel := panelStyle.
-		Width(m.toolsW).
-		Height(max(m.height-7, 1)).
-		Render(withScrollbar(m.toolsViewport, m.toolsW, focused))
-	return insetPanelTitle(panel, "[1] Tools", focused)
+	footer := m.panelFooter(m.toolsW, true, []string{
+		m.hint("/", "filter"),
+		m.hint("space", "group"),
+	}, "")
+	return m.framePanel(m.toolsW, focused,
+		withScrollbar(s, m.toolsViewport, m.toolsW, focused), footer, title)
 }
 
 func (m Model) renderBrief() string {
+	s := m.sty()
 	focused := m.focus == focusBrief
-	panelStyle := ui.PanelBorder
-	if focused {
-		panelStyle = ui.PanelBorderFocused
-	}
 
-	panel := panelStyle.
-		Width(m.briefW).
-		Height(max(m.height-7, 1)).
-		Render(withScrollbar(m.briefViewport, m.briefW, focused))
-	return insetPanelTitle(panel, "[2] Brief", focused)
+	// The footer leads with the panel's primary action, and what that action is
+	// depends on the card: with a release pending, installing it outranks
+	// everything else the card can do.
+	var cells []string
+	if t, ok := m.selectedTool(); ok && m.hasUpdate(t.Name) {
+		latest := version.DisplayVersion(m.versions[t.Name].Latest)
+		cells = append(cells, m.hint("enter", "update to "+latest))
+	}
+	cells = append(cells,
+		m.hint("r", "refresh"),
+		m.hint("e", "note"),
+		m.hint("#", "tags"),
+		m.hint("s", "status"),
+		m.hint("o", "repo"),
+		m.hint("c", "changelog"),
+	)
+	footer := m.panelFooter(m.briefW, false, cells, "")
+	return m.framePanel(m.briefW, focused,
+		withScrollbar(s, m.briefViewport, m.briefW, focused), footer,
+		m.focusTitle("2", "brief", focused))
 }
 
 func (m Model) renderHelp() string {
+	s := m.sty()
 	focused := m.focus == focusHelp
-	panelStyle := ui.PanelBorder
-	if focused {
-		panelStyle = ui.PanelBorderFocused
-	}
 
-	title := "[3] Help"
+	name := "help"
 	switch m.helpMode {
 	case helpModeMan:
-		title = "[3] Man"
+		name = "man"
 	case helpModeReadme:
-		title = "[3] Readme"
+		name = "readme"
 	}
 	// While an update log is showing — the selected tool's, or keepkit's own,
 	// which is selection-independent — the panel is the log, not help. Mirror
-	// that in the inset title.
-	if m.showsUpdateLog() {
-		title = "[3] Update"
+	// that in the inset title, and drop the mode hints with it: none of the
+	// three modes is what the panel is currently showing.
+	logShowing := m.showsUpdateLog()
+	if logShowing {
+		name = "update"
 	}
-	panel := panelStyle.
-		Width(m.helpW).
-		Height(max(m.height-7, 1)).
-		Render(withScrollbar(m.helpViewport, m.helpW, focused))
-	return insetPanelTitle(panel, title, focused)
+	title := m.focusTitle("3", name, focused)
+	if !logShowing {
+		// The other two sources of this panel, named in the frame rather than
+		// in the footer: they switch what the panel *is*, which is a property
+		// of the panel, not an action on its content.
+		for _, alt := range [][2]string{{"h", "help"}, {"m", "man"}, {"r", "readme"}} {
+			if alt[1] == name {
+				continue
+			}
+			hint := " · " + alt[0] + " " + alt[1]
+			title = title.append(hint, s.Rule.Render(hint))
+		}
+	}
+
+	// The footer says where in the text the reader is, and — while the entry
+	// index has something to walk — that j/k walk it. Those two hints are
+	// contextual in a way no other panel's are: they appear and disappear with
+	// the content, which is exactly why they belong beside it rather than in
+	// the global bar.
+	cells := []string{s.Dim.Render(name), s.Dim.Render(m.helpPagePosition())}
+	if m.helpNavIdx >= 0 {
+		cells = append(cells, m.hint("esc", "exit nav"))
+	}
+	if len(m.helpEntries) > 0 {
+		cells = append(cells, m.hint("j/k", "navigate"))
+	}
+	footer := m.panelFooter(m.helpW, false, cells, m.hint("ctrl+d/u", "page"))
+	return m.framePanel(m.helpW, focused,
+		withScrollbar(s, m.helpViewport, m.helpW, focused), footer, title)
+}
+
+// helpPagePosition reads the [3] viewport's scroll position as "page/pages" —
+// the one bit of orientation a scrollbar thumb cannot give a reader who is
+// counting how much is left.
+func (m Model) helpPagePosition() string {
+	h := max(m.helpViewport.Height, 1)
+	total := max(m.helpViewport.TotalLineCount(), 1)
+	pages := (total + h - 1) / h
+	return fmt.Sprintf("%d/%d", min(m.helpViewport.YOffset/h+1, pages), pages)
+}
+
+// framePanel is the shared body of the three renderers: content and footer
+// stacked into exactly the panel's content height, wrapped in the focus-aware
+// border, with the title inset into its top edge.
+func (m Model) framePanel(w int, focused bool, content, footer string, title panelTitle) string {
+	s := m.sty()
+	panelStyle := s.PanelBorder
+	if focused {
+		panelStyle = s.PanelBorderFocused
+	}
+	body := content
+	if footer != "" {
+		body = lipgloss.JoinVertical(lipgloss.Left, content, footer)
+	}
+	panel := panelStyle.Width(w).Height(m.calcVpHeight()).Render(body)
+	return insetPanelTitle(s, panel, title, focused)
 }
 
 // insetPanelTitle splices " title " into the top border line of a rendered
-// panel, starting at the 3rd visible cell. The top border is a homogeneously
-// colored run of single-width runes, so instead of ANSI-aware splicing the
-// line is rebuilt from its stripANSI text and repainted whole with the border
-// color (peach when focused). A title that does not fit is dropped whole —
-// the panel is returned unchanged (a chopped title reads worse than none).
-func insetPanelTitle(panel, title string, focused bool) string {
+// panel, starting at the 3rd visible cell. The border runs are repainted from
+// their stripANSI text (a homogeneously colored run of single-width runes, so
+// no ANSI-aware splicing is needed) and the title is dropped in already styled,
+// which is what lets one title carry several colors — the [1] panel's tracked
+// count and update count are the point of the whole mechanism. A title that
+// does not fit is dropped whole and the panel returned unchanged (a chopped
+// title reads worse than none), which is why the plain form is measured rather
+// than the styled one: escape sequences are not cells.
+func insetPanelTitle(s *ui.Styles, panel string, title panelTitle, focused bool) string {
 	lines := strings.SplitN(panel, "\n", 2)
 	top := []rune(stripANSI(lines[0]))
-	label := []rune(" " + title + " ")
+	label := []rune(" " + title.plain + " ")
 	const start = 2               // keep the corner + one ─ cell
 	avail := len(top) - start - 1 // keep the closing corner
 	if len(label) > avail {
 		return panel
 	}
-	rebuilt := make([]rune, 0, len(top))
-	rebuilt = append(rebuilt, top[:start]...)
-	rebuilt = append(rebuilt, label...)
-	rebuilt = append(rebuilt, top[start+len(label):]...)
-	color := ui.ColorBorder
+	color := s.Theme.Border
 	if focused {
-		color = ui.ColorPrimary
+		color = s.Theme.Accent
 	}
-	lines[0] = lipgloss.NewStyle().Foreground(color).Render(string(rebuilt))
+	border := lipgloss.NewStyle().Foreground(color)
+	lines[0] = border.Render(string(top[:start])) +
+		" " + title.styled + " " +
+		border.Render(string(top[start+len(label):]))
 	return strings.Join(lines, "\n")
 }
 
@@ -1105,12 +1372,12 @@ func insetPanelTitle(panel, title string, focused bool) string {
 // edge. The gutter stays blank unless the content is taller than the viewport,
 // in which case a thumb (no track) is drawn proportional to the scroll position.
 // The thumb is peach when the panel is focused, dim otherwise.
-func withScrollbar(vp viewport.Model, panelWidth int, focused bool) string {
+func withScrollbar(s *ui.Styles, vp viewport.Model, panelWidth int, focused bool) string {
 	left := lipgloss.NewStyle().Width(max(panelWidth-1, 1)).Render(vp.View())
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, scrollColumn(vp, focused))
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, scrollColumn(s, vp, focused))
 }
 
-func scrollColumn(vp viewport.Model, focused bool) string {
+func scrollColumn(s *ui.Styles, vp viewport.Model, focused bool) string {
 	height := vp.Height
 	if height <= 0 {
 		return ""
@@ -1121,9 +1388,9 @@ func scrollColumn(vp viewport.Model, focused bool) string {
 	}
 	total := vp.TotalLineCount()
 	if total > height {
-		thumbStyle := ui.ScrollThumbDimStyle
+		thumbStyle := s.Dim
 		if focused {
-			thumbStyle = ui.ScrollThumbStyle
+			thumbStyle = s.Accent
 		}
 		thumb := max(height*height/total, 1)
 		pos := 0
@@ -1138,32 +1405,6 @@ func scrollColumn(vp viewport.Model, focused bool) string {
 	return strings.Join(rows, "\n")
 }
 
-// cardLabelWidth is the card's value column: every "label: value" line in the
-// card — [info] and [notes] alike — pads its label to it, so the values line
-// up in one column instead of each label pushing its own value to a different
-// indent. It is the widest label buildCard can print ("maintenance:", 12) plus
-// the separating space, so no line ever needs more room than the column gives.
-// A label longer than this would still render (cardLabel never truncates), it
-// would just push its own value one column past the rest.
-const cardLabelWidth = len("maintenance:") + 1
-
-// cardLabel pads a card label to cardLabelWidth, separator included — it is
-// the single definition of the value column, so a label added to either
-// section lands in it for free (ui.MetaDetailLabelStyle deliberately carries
-// no Width of its own anymore, or the two would drift).
-func cardLabel(label string) string {
-	return label + strings.Repeat(" ", max(cardLabelWidth-utf8.RuneCountInString(label), 1))
-}
-
-// hangIndent pushes every line after the first to the value column, so a
-// wrapped note or tag reads as one block under its label instead of falling
-// back to column 0. Applied to already-styled text: each rendered line carries
-// its own escape sequences, so inserting plain spaces between them is safe and
-// keeps the indent itself unstyled.
-func hangIndent(s string) string {
-	return strings.ReplaceAll(s, "\n", "\n"+strings.Repeat(" ", cardLabelWidth))
-}
-
 // renderCard is the card text alone — the shape ~30 SetContent call sites want.
 // The clickable-link index is built by buildCard and only handleMouse needs it.
 func (m Model) renderCard() string {
@@ -1172,237 +1413,349 @@ func (m Model) renderCard() string {
 }
 
 // buildCard renders the brief panel and, alongside it, the index of its
-// clickable lines: 0-based content-line number → URL. Line heights vary
-// (dividers are 3 lines, about/note/changelog bodies wrap), so the indices are
-// recorded while writing — strings.Count(sb, "\n") immediately before the line
-// is the line's own index — rather than reconstructed by parsing the result.
-// bubbles/viewport is line-based (no soft wrap), so a content-line index is a
-// viewport line index, which is what the mouse handler maps a click row to.
+// clickable lines: 0-based content-line number → URL. Line heights vary (the
+// metrics strip is several rows, the tagline and changelog body wrap), so the
+// indices are recorded while writing — strings.Count(sb, "\n") immediately
+// before the line is the line's own index — rather than reconstructed by
+// parsing the result. bubbles/viewport is line-based (no soft wrap), so a
+// content-line index is a viewport line index, which is what the mouse handler
+// maps a click row to.
+//
+// The card reads top-down as one answer: what this tool IS (name, repo,
+// tagline), what STATE it is in (the metrics strip), what the user has said
+// about it (the meta line), and what changed (the changelog). The old
+// "[section] ─────" headers are gone with the label column that went with
+// them: four labelled sections over a dozen one-value lines spent most of the
+// panel on scaffolding, and the strip says the same thing in three rows.
 func (m Model) buildCard() (string, map[int]string) {
+	s := m.sty()
 	links := make(map[int]string)
 	if len(m.meta) == 0 {
-		return ui.DescStyle.Render("no tools tracked.\npress t to add one."), links
+		return s.Note.Render("no tools tracked.\npress t to add one."), links
 	}
 
 	t, ok := m.selectedTool()
 	if !ok {
-		return ui.DescStyle.Render("select a tool from the left panel."), links
+		return s.Note.Render("select a tool from the left panel."), links
 	}
 
 	inner := max(m.briefW-2, 1)
+	card, hasCard := m.repoCards[t.Name]
 
 	var sb strings.Builder
 
-	card, hasCard := m.repoCards[t.Name]
-
-	// Title line: tool name (bold orange) + about (gray italic). Name is always
-	// shown; about is appended when available.
-	name := t.Name
-	maxNameLen := 30
-	if utf8.RuneCountInString(name) > maxNameLen {
-		name = name[:maxNameLen-3] + "..."
-	}
-	nameRendered := lipgloss.NewStyle().Bold(true).Foreground(ui.ColorOrange).Render(name)
-	var title string
-	if m.updatingFor == t.Name {
-		// While an update is running, the title becomes a status line:
-		// "updating <name> <spinner>" (twin of the refresh spinner; the two are
-		// mutually exclusive via the [u]/[r] guards). The about is hidden until
-		// the update completes.
-		title = ui.InfoStyle.Render("updating ") + nameRendered + ui.InfoStyle.Render(" ") + m.spinner.View()
-	} else if m.refreshingFor == t.Name {
-		// While a force refresh is in flight, the title line becomes a status
-		// line: "refreshing <name> data <spinner>" (name keeps its bold style,
-		// spinner frames advance on spinner.TickMsg). The about is hidden until
-		// the refreshed card lands.
-		title = ui.InfoStyle.Render("refreshing ") + nameRendered + ui.InfoStyle.Render(" data ") + m.spinner.View()
-	} else {
-		title = nameRendered
-		if hasCard && card.About != "" {
-			aboutWidth := max(inner-utf8.RuneCountInString(name)-3, 20)
-			aboutWrapped := wrapText(card.About, aboutWidth)
-			title += " — " + ui.MetaNoteStyle.Render(aboutWrapped)
-		}
-	}
-	sb.WriteString(title + "\n")
-
-	// [info] section: repo / stars / installed / latest / languages / repo
-	// status. Local detection alone (installed version, no GitHub ref and no
-	// card) is enough to open the section.
-	vinfo := m.versions[t.Name]
-	installed := vinfo.Installed
-	hasInfo := t.GitHub != "" || installed != "" ||
-		(hasCard && (card.Stars > 0 || card.Latest != "" || len(card.Languages) > 0 || card.RepoStatus != ""))
-	if hasInfo {
-		sb.WriteString(m.sectionDivider("info"))
+	// Title: the tool's name is the single largest thing on the screen, so it
+	// takes the brightest role and the only bold in the block. The repo ref
+	// rides beside it in dim — it identifies the name rather than competing
+	// with it, and it is what the whole [info] section used to spend a line on.
+	name := truncateToWidth(flattenLine(t.Name), max(inner-2, 8))
+	switch {
+	case m.updatingFor == t.Name:
+		// While an update runs the title becomes a status line (twin of the
+		// refresh spinner; the two are mutually exclusive via their guards).
+		sb.WriteString(s.Text.Render("updating ") + s.EmphasisBold.Render(name) +
+			" " + m.spinner.View() + "\n")
+	case m.refreshingFor == t.Name:
+		sb.WriteString(s.Text.Render("refreshing ") + s.EmphasisBold.Render(name) +
+			s.Text.Render(" data ") + m.spinner.View() + "\n")
+	default:
+		title := s.EmphasisBold.Render(name)
 		if t.GitHub != "" {
-			// The value shows the bare owner/repo: the host is implied, and its
-			// 11 cells are worth more than the label column costs — at the
-			// 80-column baseline the panel is 30 wide, where the full ref was
-			// cut mid-name. NormalizeRepo answering "" (an unsupported or
-			// spoofed host, e.g. "github.com.evil.com/x/y") falls back to the
-			// raw value on purpose: shortening there would hide the very host
-			// that makes the link not what it looks like.
+			// The bare owner/repo: the host is implied, and its 11 cells are
+			// worth more than they cost in a 30-column panel. NormalizeRepo
+			// answering "" (an unsupported or spoofed host, e.g.
+			// "github.com.evil.com/x/y") falls back to the raw value on
+			// purpose — shortening exactly there would hide the very host that
+			// makes the link not what it looks like.
 			repoText := t.GitHub
 			if short := loader.NormalizeRepo(t.GitHub); short != "" {
 				repoText = short
 			}
-			// Clickable: resolves exactly like the [o] key does — the full
-			// t.GitHub, never the shortened display text.
-			links[strings.Count(sb.String(), "\n")] = "https://" + t.GitHub
-			sb.WriteString(ui.GithubStyle.Render(cardLabel("repo:")+repoText) + "\n")
-			if !hasCard && m.repoStatus[t.Name] == "rate-limited" {
-				sb.WriteString(ui.WarnStyle.Render("rate limited — press [L]") + "\n")
+			if lipgloss.Width(name)+1+lipgloss.Width(repoText) <= inner {
+				// Clickable, and it resolves exactly like [o] does — the full
+				// t.GitHub, never the shortened display text.
+				links[strings.Count(sb.String(), "\n")] = "https://" + t.GitHub
+				title += " " + s.Dim.Render(repoText)
 			}
 		}
-		if hasCard && card.Stars > 0 {
-			sb.WriteString(ui.InfoStyle.Render(cardLabel("stars:")+formatStars(card.Stars)) + "\n")
-		}
-		// The version-less states resolve only once the local probe reported
-		// back (InstalledKnown) — before that an empty Installed just means the
-		// detection is still in flight. Present-but-version-less is a working
-		// install (a TUI app that ignores --version), so it reads green and
-		// affirmative; only a genuine absence gets the red ✕.
-		// A resolved version carries the same U+F412 (nf-oct-tag) glyph the
-		// latest: line uses — here it marks a version, not specifically a
-		// release tag; the two version lines read as a pair. The states with no
-		// version to tag stay bare. Written as a \u escape on purpose — the raw
-		// glyph is invisible in most editors and diffs and gets silently lost.
-		switch {
-		case installed != "":
-			sb.WriteString(ui.InfoStyle.Render(cardLabel("installed:")+"\uf412 "+version.DisplayVersion(installed)) + "\n")
-		case vinfo.InstalledKnown && vinfo.InstalledPresent:
-			sb.WriteString(ui.InfoStyle.Render(cardLabel("installed:")) +
-				ui.OkStyle.Render("✓") +
-				ui.InfoStyle.Render(" no version") + "\n")
-		case vinfo.InstalledKnown:
-			sb.WriteString(ui.InfoStyle.Render(cardLabel("installed:")) +
-				ui.DangerStyle.Render("✕") +
-				ui.InfoStyle.Render(" not installed") + "\n")
-		default:
-			sb.WriteString(ui.InfoStyle.Render(cardLabel("installed:")+"detecting…") + "\n")
-		}
-		if hasCard {
-			if card.Latest != "" {
-				var suffix string
-				if card.PublishedAt != "" {
-					date := card.PublishedAt
-					if len(date) > 10 {
-						date = date[:10]
-					}
-					suffix = " (" + date + ")"
-				}
-				if m.hasUpdate(t.Name) {
-					sb.WriteString(ui.InfoStyle.Render(cardLabel("latest:")) +
-						ui.UpdateAvailableStyle.Render("\uf412 "+version.DisplayVersion(card.Latest)+" ↑") +
-						ui.InfoStyle.Render(suffix) + "\n")
-				} else {
-					sb.WriteString(ui.InfoStyle.Render(cardLabel("latest:")+"\uf412 "+version.DisplayVersion(card.Latest)+suffix) + "\n")
-				}
-			}
-			if len(card.Languages) > 0 {
-				label := cardLabel("languages:")
-				bar := renderLangBar(card.Languages, inner, utf8.RuneCountInString(label))
-				sb.WriteString(ui.InfoStyle.Render(label) + bar + "\n")
-			}
-			if card.RepoStatus != "" {
-				sb.WriteString(ui.InfoStyle.Render(cardLabel("maintenance:")) + renderRepoStatus(card.RepoStatus) + "\n")
-			}
-		}
+		sb.WriteString(title + "\n")
 	}
 
-	// [notes] section: status / note / tags (with inline editing via e/t).
-	if mt, ok := m.selectedMeta(); ok {
-		sb.WriteString(m.sectionDivider("notes"))
-		sym := loader.StatusSymbol[mt.Status]
-		symStyled := ui.StatusStyle(mt.Status).Render(sym + " " + string(mt.Status))
-		sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("status:")) + symStyled + "\n")
-
-		// Wrapped values are cut to what is left of the panel once the label
-		// column is spent — wrapping to the full inner width let the first line
-		// run cardLabelWidth cells past the panel edge, where the viewport
-		// truncates it (it does not soft-wrap) — and their continuation lines
-		// hang under the value column instead of falling back to column 0.
-		valueW := max(inner-cardLabelWidth, 10)
-
-		if m.mode == modeEditNote {
-			sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("note:")) + m.noteInput.View() + "\n")
-		} else {
-			noteText := mt.Note
-			if noteText == "" {
-				noteText = "— (press e to edit)"
-			}
-			wrapped := wrapText(noteText, valueW)
-			sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("note:")) +
-				hangIndent(ui.MetaNoteStyle.Render(wrapped)) + "\n")
-		}
-
-		if m.mode == modeEditTags {
-			sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("tags:")) + m.tagsInput.View() + "\n")
-		} else {
-			tagsText := tagOf(mt)
-			if tagsText == "" {
-				tagsText = "— (press t to edit)"
-			}
-			wrapped := wrapText(tagsText, valueW)
-			sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("tags:")) +
-				hangIndent(ui.MetaTagStyle.Render(wrapped)) + "\n")
-		}
+	// Tagline: the repo's own one-liner, in reading text. Not italic and not
+	// dimmed — it is the first real sentence about the tool.
+	if hasCard && card.About != "" {
+		sb.WriteString(s.Text.Render(wrapText(card.About, inner)) + "\n")
+	}
+	if !hasCard && m.repoStatus[t.Name] == "rate-limited" {
+		sb.WriteString(s.SignalBold.Render("rate limited — press L") + "\n")
 	}
 
-	// [changelog] section (only when there is content to show).
+	if strip := m.metricsStrip(t, inner); len(strip) > 0 {
+		sb.WriteString("\n" + strings.Join(strip, "\n") + "\n")
+	}
+
+	if meta := m.metaLine(t, inner); meta != "" {
+		sb.WriteString("\n" + meta + "\n")
+	}
+
+	// Changelog: a heading row carrying the version transition and a link to
+	// the release page, then the notes themselves.
 	var changelogContent, changelogURL string
 	if m.changelogLoadingFor == t.Name {
-		changelogContent = ui.DescStyle.Render("loading changelog...") + "\n"
-	} else if data, ok := m.changelogData[t.Name]; ok {
+		changelogContent = s.Note.Render("loading changelog…") + "\n"
+	} else if data, hasLog := m.changelogData[t.Name]; hasLog {
 		changelogContent = m.renderChangelogBlock(data)
-		// The block leads with the release URL only on a successful fetch with
-		// one — that is the line to register, and it is derived from the same
-		// data the block rendered from, so the two cannot drift.
+		// Only a successful fetch with a URL leads with one — that is the line
+		// to register, and it comes from the same data the block rendered from,
+		// so the two cannot drift.
 		if data.err == nil {
 			changelogURL = data.htmlUrl
 		}
 	} else if t.GitHub != "" {
-		changelogContent = ui.DescStyle.Render("loading changelog...") + "\n"
+		changelogContent = s.Note.Render("loading changelog…") + "\n"
 	}
 	if changelogContent != "" {
-		sb.WriteString(m.sectionDivider("changelog"))
-		if changelogURL != "" {
-			// Registered after the divider, before the block: the URL is the
-			// block's first line. Note this is the release's own page, not the
-			// [c] key's <repo>/releases index.
+		sb.WriteString("\n")
+		heading, linked := m.changelogHeading(t, inner, changelogURL != "")
+		// Registered only when the heading actually shows the "release notes ↗"
+		// affordance: a row that looks like plain text must not open a browser.
+		if linked {
 			links[strings.Count(sb.String(), "\n")] = changelogURL
 		}
-		sb.WriteString(changelogContent)
+		sb.WriteString(heading + "\n\n" + changelogContent)
 	}
 
 	return sb.String(), links
 }
 
-// renderRepoStatus highlights the maintenance state of the upstream repo: a
-// green dot for an active repo, a yellow warning sign for an archived one.
-func renderRepoStatus(status string) string {
-	switch status {
-	case "active":
-		return lipgloss.NewStyle().Foreground(ui.StatusColorActive).Render("● active")
-	case "archived":
-		return lipgloss.NewStyle().Foreground(ui.StatusColorTrying).Render("⚠ archived")
-	default:
-		return ui.RepoStatusStyle.Render(status)
-	}
+// metricLabels are the strip's captions, uppercased so they read as a caption
+// row rather than as four more words: the values are what the eye should land
+// on, and in a terminal there is no smaller type size to demote a label with.
+//
+// metricMinCol is the narrowest a column may get before the strip re-flows onto
+// fewer columns — the widest label plus a cell of breathing room.
+const metricMinCol = len("MAINTENANCE") + 1
+
+// metricCell is one measurement in the strip: a caption, its value with the
+// style that carries the value's meaning, and an optional second line under it.
+type metricCell struct {
+	label string
+	value string
+	style lipgloss.Style
+	sub   string
 }
 
-// sectionDivider renders a labeled section header that spans the panel's content
-// width, e.g. "[info] ───────────". The label is rendered only by callers when
-// the section actually has content, so no empty dividers are produced.
-func (m Model) sectionDivider(label string) string {
-	tag := "[" + label + "] "
-	// briefW-1 to leave room for the scrollbar gutter; leading blank line adds
-	// breathing room between sections.
-	dashes := max(m.briefW-1-utf8.RuneCountInString(tag), 0)
-	// Blank line above and below the header for breathing room.
-	return "\n" + ui.SectionLabelStyle.Render(tag) +
-		lipgloss.NewStyle().Foreground(ui.ColorBorder).Render(strings.Repeat("─", dashes)) + "\n\n"
+// metricsStrip is the card's headline block: installed / latest / maintenance /
+// stars as a filled panel, captions above values, columns separated by rules.
+// It replaces six "label: value" lines whose labels ran down the left edge and
+// pushed every value into a column of its own — here the values sit side by side
+// and the block reads as one instrument panel.
+//
+// It re-flows rather than truncates: at the 80-column baseline the panel is ~30
+// cells and four columns would leave seven each, so the grid drops to two
+// columns and then to one. A metric with nothing to report is left out entirely,
+// so a tool with no GitHub ref shows a one-cell strip instead of three empty
+// captions.
+func (m Model) metricsStrip(t loader.Tool, inner int) []string {
+	s := m.sty()
+	vinfo := m.versions[t.Name]
+	card, hasCard := m.repoCards[t.Name]
+
+	var cells []metricCell
+
+	// installed: four states, and the two version-less ones are deliberately
+	// different — a tool that is installed but will not name its version (a TUI
+	// app that ignores --version) is a working install and reads affirmative,
+	// while a genuine absence is the one thing on the card that is wrong.
+	switch {
+	case vinfo.Installed != "":
+		cells = append(cells, metricCell{"INSTALLED", version.DisplayVersion(vinfo.Installed), s.Emphasis, ""})
+	case vinfo.InstalledKnown && vinfo.InstalledPresent:
+		cells = append(cells, metricCell{"INSTALLED", "✓ no version", s.Ok, ""})
+	case vinfo.InstalledKnown:
+		cells = append(cells, metricCell{"INSTALLED", "✕ not installed", s.Danger, ""})
+	default:
+		cells = append(cells, metricCell{"INSTALLED", "detecting…", s.Dim, ""})
+	}
+
+	if hasCard && card.Latest != "" {
+		date := card.PublishedAt
+		if len(date) > 10 {
+			date = date[:10]
+		}
+		value, style := version.DisplayVersion(card.Latest), s.Emphasis
+		if m.hasUpdate(t.Name) {
+			// The one place on the card that means "act on this", and the whole
+			// reason the tool is in the tracker.
+			value += " ↑"
+			style = s.SignalBold
+		}
+		cells = append(cells, metricCell{"LATEST", value, style, date})
+	}
+	if hasCard && card.RepoStatus != "" {
+		value, style := "● "+card.RepoStatus, s.Ok
+		if card.RepoStatus == "archived" {
+			value, style = "⚠ "+card.RepoStatus, s.Signal
+		}
+		cells = append(cells, metricCell{"MAINTENANCE", value, style, ""})
+	}
+	if hasCard && card.Stars > 0 {
+		cells = append(cells, metricCell{"STARS", formatStars(card.Stars), s.Emphasis, ""})
+	}
+	// Below one column's worth of room the grid cannot say anything a caption
+	// would not eat whole, so the strip stands down rather than printing
+	// single-letter columns. Only a hand-built model gets here: the brief panel
+	// has a 30-cell minimum.
+	if len(cells) == 0 || inner < metricMinCol {
+		return nil
+	}
+
+	// As many columns as fit at metricMinCol, capped by how many metrics there
+	// actually are.
+	cols := min(max((inner-1)/metricMinCol, 1), len(cells))
+	sep := " │ "
+	colW := max((inner-2-(cols-1)*lipgloss.Width(sep))/cols, 1)
+
+	// pad renders one cell's text on the block background and pads it to the
+	// column. Every segment carries the background itself: a style applied
+	// around already-styled text cannot repaint what is inside it, and the
+	// inner reset sequences would punch holes in the fill.
+	pad := func(text string, style lipgloss.Style) string {
+		text = truncateToWidth(text, colW)
+		return style.Background(s.Theme.Surface).Render(text) +
+			s.Surface.Render(strings.Repeat(" ", max(colW-lipgloss.Width(text), 0)))
+	}
+	blank := s.Surface.Render(" ")
+	rule := s.Rule.Background(s.Theme.Surface).Render(sep)
+
+	var out []string
+	// A blank row above and below turns the strip into a block with air in it
+	// rather than three crowded lines of text.
+	pad0 := s.Surface.Render(strings.Repeat(" ", inner))
+	out = append(out, pad0)
+	for start := 0; start < len(cells); start += cols {
+		row := cells[start:min(start+cols, len(cells))]
+		var labels, values, subs []string
+		hasSub := false
+		for _, c := range row {
+			labels = append(labels, pad(c.label, s.Dim))
+			values = append(values, pad(c.value, c.style))
+			subs = append(subs, pad(c.sub, s.Dim))
+			hasSub = hasSub || c.sub != ""
+		}
+		line := func(parts []string) string {
+			body := blank + strings.Join(parts, rule) + blank
+			if fill := inner - lipgloss.Width(body); fill > 0 {
+				body += s.Surface.Render(strings.Repeat(" ", fill))
+			}
+			return body
+		}
+		out = append(out, line(labels), line(values))
+		if hasSub {
+			out = append(out, line(subs))
+		}
+	}
+	return append(out, pad0)
+}
+
+// metaLine is everything the user has told keepkit about the tool, plus what
+// the repo says it is written in, on one wrapped line instead of four labelled
+// ones. Empty values do not get a line of their own — they get the key that
+// fills them ("tags — # add"), which is the only thing an empty field is for.
+func (m Model) metaLine(t loader.Tool, inner int) string {
+	s := m.sty()
+	mt, ok := m.selectedMeta()
+	if !ok {
+		return ""
+	}
+	card := m.repoCards[t.Name]
+
+	var cells []string
+	if len(card.Languages) > 0 {
+		// renderLangBar wraps on its own budget; here it is one cell among
+		// several, so it gets the line and nothing follows it on that line.
+		cells = append(cells, s.Dim.Render("lang ")+renderLangBar(s, card.Languages, inner, 5))
+	}
+	cells = append(cells, s.Dim.Render("status ")+
+		s.Status(mt.Status).Render(loader.StatusSymbol[mt.Status]+" "+string(mt.Status)))
+
+	// The two editable fields. In edit mode the input replaces the value in
+	// place, so the card never jumps while it is being typed into.
+	// A value is cut to what a cell may occupy before it is styled: cutting
+	// afterwards would land inside an escape sequence, which the viewport
+	// re-emits to the terminal verbatim. A note is prose and the card is not
+	// where it is read in full — the editor shows all of it.
+	value := func(label, text string) string {
+		budget := max(inner-lipgloss.Width(label)-1, 8)
+		if lipgloss.Width(text) > budget {
+			text = truncateToWidth(flattenLine(text), max(budget-1, 1)) + "…"
+		}
+		return s.Dim.Render(label+" ") + s.Text.Render(text)
+	}
+	switch {
+	case m.mode == modeEditTags:
+		cells = append(cells, s.Dim.Render("tags ")+m.tagsInput.View())
+	case tagOf(mt) != "":
+		cells = append(cells, value("tags", tagOf(mt)))
+	default:
+		cells = append(cells, s.Dim.Render("tags ")+s.Dim.Render("— ")+m.hint("#", "add"))
+	}
+	switch {
+	case m.mode == modeEditNote:
+		cells = append(cells, s.Dim.Render("note ")+m.noteInput.View())
+	case mt.Note != "":
+		cells = append(cells, value("note", mt.Note))
+	default:
+		cells = append(cells, s.Dim.Render("note ")+s.Dim.Render("— ")+m.hint("e", "write"))
+	}
+
+	// Wrapping is by whole cells: a cell carries ANSI, so it must never be cut
+	// mid-escape, and half a "note …" reads as noise anyway.
+	sep := s.Dim.Render(" · ")
+	var lines []string
+	cur, curW := "", 0
+	for _, c := range cells {
+		w := lipgloss.Width(c)
+		switch {
+		case cur == "":
+			cur, curW = c, w
+		case curW+lipgloss.Width(sep)+w <= inner:
+			cur += sep + c
+			curW += lipgloss.Width(sep) + w
+		default:
+			lines = append(lines, cur)
+			cur, curW = c, w
+		}
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// changelogHeading is the changelog's own header row: the word, the version
+// transition it covers, and — right-aligned — the link to the release page. The
+// transition is what the block is actually about, so it is stated rather than
+// left for the reader to infer from two version numbers in the strip above.
+//
+// The second result says whether the link actually fit, and buildCard registers
+// the clickable line only then: a heading rendered without the affordance must
+// not silently open a browser.
+func (m Model) changelogHeading(t loader.Tool, inner int, hasLink bool) (string, bool) {
+	s := m.sty()
+	head := s.EmphasisBold.Render("changelog")
+	vinfo := m.versions[t.Name]
+	if vinfo.Installed != "" && vinfo.Latest != "" && vinfo.Installed != vinfo.Latest {
+		head += "  " + s.Dim.Render(version.DisplayVersion(vinfo.Installed)+" → "+version.DisplayVersion(vinfo.Latest))
+	}
+	if !hasLink {
+		return head, false
+	}
+	link := s.Link.Render("release notes ↗")
+	if gap := inner - lipgloss.Width(head) - lipgloss.Width(link); gap >= 2 {
+		return head + strings.Repeat(" ", gap) + link, true
+	}
+	return head, false
 }
 
 // changelogRenderCache memoizes the last markdown conversion. The whole card
@@ -1435,15 +1788,14 @@ func (c *changelogRenderCache) lines(body string, width int) []mdLine {
 }
 
 func (m Model) renderChangelogBlock(msg changelogMsg) string {
+	s := m.sty()
 	if msg.err != nil {
-		return ui.InfoStyle.Render("changelog unavailable: "+msg.err.Error()) + "\n"
+		return s.Text.Render("changelog unavailable: "+msg.err.Error()) + "\n"
 	}
 	var sb strings.Builder
-	// Only the link to the tag + the changelog text; version/date are already
-	// shown in [info]. Unified muted style (InfoStyle), same as the [info] text.
-	if msg.htmlUrl != "" {
-		sb.WriteString(ui.InfoStyle.Render(msg.htmlUrl) + "\n\n")
-	}
+	// The release notes alone: the link to the release page and the version
+	// transition are the changelog heading's job, and the versions themselves
+	// are already in the metrics strip above.
 	// markdownToLines wraps as it converts (hanging indents need the block
 	// structure), so styling lands on whole finished lines — the only way to
 	// keep ANSI out of the rune-based wrap math. An empty result covers both
@@ -1451,7 +1803,7 @@ func (m Model) renderChangelogBlock(msg changelogMsg) string {
 	// separators).
 	lines := m.changelogRender.lines(msg.body, max(m.briefW-2, 10))
 	if len(lines) == 0 {
-		sb.WriteString(ui.InfoStyle.Render("no release notes available.") + "\n")
+		sb.WriteString(s.Text.Render("no release notes available.") + "\n")
 		return sb.String()
 	}
 	for _, line := range lines {
@@ -1461,9 +1813,9 @@ func (m Model) renderChangelogBlock(msg changelogMsg) string {
 			// only emit an empty escape pair.
 			sb.WriteString("\n")
 		case line.kind == mdHeading:
-			sb.WriteString(ui.ChangelogHeadingStyle.Render(line.text) + "\n")
+			sb.WriteString(s.EmphasisBold.Render(line.text) + "\n")
 		default:
-			sb.WriteString(ui.InfoStyle.Render(line.text) + "\n")
+			sb.WriteString(s.Text.Render(line.text) + "\n")
 		}
 	}
 	return sb.String()
@@ -1570,12 +1922,13 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // applySpotlight dims every line outside the current navigation entry while
 // the [3] cursor is active: the entry's lines keep their full colorizeHelp
 // styling, the rest are stripped of their own coloring and repainted with
-// ui.HelpDimStyle — the same strip-then-repaint trick the [L] overlay uses,
+// s.Dim — the same strip-then-repaint trick the [L] overlay uses,
 // but per whole line, so no ANSI-safe splicing is needed. A stale
 // out-of-bounds index renders undimmed rather than panicking (entries and
 // cursor are reset together in setHelpContent, but a value-receiver render
 // must not trust that).
 func (m Model) applySpotlight(text string) string {
+	s := m.sty()
 	if m.helpNavIdx < 0 || m.helpNavIdx >= len(m.helpEntries) {
 		return text
 	}
@@ -1583,7 +1936,7 @@ func (m Model) applySpotlight(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if i < e.start || i >= e.end {
-			lines[i] = ui.HelpDimStyle.Render(stripANSI(line))
+			lines[i] = s.Dim.Render(stripANSI(line))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -1628,12 +1981,13 @@ func (m Model) readmeContent(name string) (string, bool) {
 	case errors.Is(data.err, version.ErrNoReadme):
 		return "No README in " + t.GitHub + ".\nPress [h] for --help.", false
 	case errors.Is(data.err, version.ErrRateLimited):
-		return "rate limited — press [L]", false
+		return "rate limited — press L", false
 	}
 	return "No README for " + name + ".\nPress [h] for --help.", false
 }
 
 func (m Model) renderHelpContent() string {
+	s := m.sty()
 	// Live update log: while a tool is (or was just) being updated, [3] shows the
 	// merged stdout+stderr buffer instead of help. This branch sits ahead of the
 	// helpLoadingFor/cache branches so re-selecting the updating tool never paints
@@ -1644,14 +1998,14 @@ func (m Model) renderHelpContent() string {
 	// next update starts.
 	if m.showsUpdateLog() {
 		if len(m.updateLog) == 0 {
-			return ui.MetaNoteStyle.Render("starting update…")
+			return s.Note.Render("starting update…")
 		}
 		return wrapText(strings.Join(m.updateLog, "\n"), m.helpWrapWidth())
 	}
 
 	mt, ok := m.selectedMeta()
 	if !ok {
-		return ui.MetaNoteStyle.Render("No tool selected")
+		return s.Note.Render("No tool selected")
 	}
 
 	// README mode: content comes from readmeData (glamour-rendered into helpBase
@@ -1661,7 +2015,7 @@ func (m Model) renderHelpContent() string {
 	if m.helpMode == helpModeReadme {
 		text, real := m.readmeContent(mt.Name)
 		if !real {
-			return ui.MetaNoteStyle.Render(text)
+			return s.Note.Render(text)
 		}
 		return text
 	}
@@ -1671,15 +2025,15 @@ func (m Model) renderHelpContent() string {
 	// selected tool's help is already cached — that cache must render, or the
 	// panel would stick on "Loading..." when the stale fetch lands unselected.
 	if m.helpLoadingFor == mt.Name {
-		return ui.MetaNoteStyle.Render("Loading...")
+		return s.Note.Render("Loading...")
 	}
 
 	cached, has := m.helpCache[mt.Name]
 	if !has || cached[m.helpMode] == "" {
 		if m.helpMode == helpModeHelp {
-			return ui.MetaNoteStyle.Render("Press [h] for --help\nPress [m] for man page")
+			return s.Note.Render("Press [h] for --help\nPress [m] for man page")
 		}
-		return ui.MetaNoteStyle.Render("Press [m] for man page\nPress [h] for --help")
+		return s.Note.Render("Press [m] for man page\nPress [h] for --help")
 	}
 	if m.mode != modeHelpSearch || m.helpSearch.Value() == "" {
 		// Cursor moves and clear-cursor repaints hit this path once per
@@ -1690,14 +2044,14 @@ func (m Model) renderHelpContent() string {
 		if m.helpBase != "" {
 			return m.applySpotlight(m.helpBase)
 		}
-		return m.applySpotlight(colorizeHelp(wrapText(cached[m.helpMode], m.helpWrapWidth())))
+		return m.applySpotlight(colorizeHelp(s, wrapText(cached[m.helpMode], m.helpWrapWidth())))
 	}
 	text := wrapText(cached[m.helpMode], m.helpWrapWidth())
 	query := m.helpSearch.Value()
 	lines := strings.Split(text, "\n")
 	result := make([]string, len(lines))
 	for i, line := range lines {
-		result[i] = highlightMatch(line, query)
+		result[i] = highlightMatch(s, line, query)
 	}
 	return strings.Join(result, "\n")
 }

@@ -54,13 +54,13 @@ func languagePercents(langs map[string]int) []languagePercent {
 // renderLangBar renders a horizontal language bar with percentages, wrapping by
 // words at width. firstLineUsed is the column budget already consumed on the
 // first line (e.g. by an inline "languages: " label) so wrapping lines up.
-func renderLangBar(langs map[string]int, width, firstLineUsed int) string {
+func renderLangBar(s *ui.Styles, langs map[string]int, width, firstLineUsed int) string {
 	percents := languagePercents(langs)
 	if len(percents) == 0 {
 		return ""
 	}
-	// Language names lowercase in the normal note color; percentages dimmed.
-	pctStyle := lipgloss.NewStyle().Foreground(ui.ColorDim)
+	// Language names lowercase in the reading color; percentages dimmed.
+	pctStyle := s.Dim
 
 	var lines []string
 	var cur strings.Builder
@@ -84,7 +84,7 @@ func renderLangBar(langs map[string]int, width, firstLineUsed int) string {
 		if sep > 0 {
 			cur.WriteString("  ")
 		}
-		cur.WriteString(ui.InfoStyle.Render(name) + " " + pctStyle.Render(pct))
+		cur.WriteString(s.Text.Render(name) + " " + pctStyle.Render(pct))
 		curW += sep + tokenW
 	}
 	if cur.Len() > 0 {
@@ -510,13 +510,13 @@ func stylePrefix(s lipgloss.Style) string {
 	return ""
 }
 
-func colorizeHelp(s string) string {
-	base := stylePrefix(ui.InfoStyle)
+func colorizeHelp(s *ui.Styles, text string) string {
+	base := stylePrefix(s.Text)
 	const reset = "\x1b[0m"
-	lines := strings.Split(s, "\n")
+	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if isHelpSectionHeader(line) {
-			lines[i] = ui.HelpSectionStyle.Render(line)
+			lines[i] = s.EmphasisBold.Render(line)
 			continue
 		}
 		if line == "" {
@@ -533,11 +533,11 @@ func colorizeHelp(s string) string {
 			switch {
 			case m[4] >= 0: // flag: group 1 = boundary, group 2 = flag text
 				b.WriteString(line[m[2]:m[3]])
-				b.WriteString(ui.HelpFlagStyle.Render(line[m[4]:m[5]]))
+				b.WriteString(s.Accent.Render(line[m[4]:m[5]]))
 			case m[6] >= 0: // <angle> meta
-				b.WriteString(ui.HelpMetaStyle.Render(line[m[6]:m[7]]))
+				b.WriteString(s.Dim.Render(line[m[6]:m[7]]))
 			case m[8] >= 0: // [bracket] meta
-				b.WriteString(ui.HelpMetaStyle.Render(line[m[8]:m[9]]))
+				b.WriteString(s.Dim.Render(line[m[8]:m[9]]))
 			}
 			b.WriteString(base)
 			last = m[1]
@@ -686,7 +686,7 @@ func findMatches(text, query string) []int {
 	return matches
 }
 
-func highlightMatch(line, query string) string {
+func highlightMatch(s *ui.Styles, line, query string) string {
 	if query == "" {
 		return line
 	}
@@ -697,7 +697,7 @@ func highlightMatch(line, query string) string {
 		return line
 	}
 	end := idx + len(qr)
-	return string(lr[:idx]) + ui.SearchMatchStyle.Render(string(lr[idx:end])) + string(lr[end:])
+	return string(lr[:idx]) + s.AccentBold.Render(string(lr[idx:end])) + string(lr[end:])
 }
 
 // runeIndexFold returns the rune index of the first occurrence of query

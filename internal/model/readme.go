@@ -5,6 +5,8 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/stanlyzoolo/keepkit/internal/ui"
 )
 
 // readmeMinWrap is the floor for the glamour word-wrap width; it mirrors the
@@ -32,15 +34,15 @@ var testReadmeStyle string
 // Bubble Tea's input reader and breaks the project's terminal-sandboxing
 // policy. Any glamour failure falls back to the preprocessed plain text: an
 // unstyled README beats an empty panel.
-func renderReadme(raw string, width int, dark bool) string {
-	clean := cleanReadmeMarkdown(cleanTerminalOutput(raw))
+func renderReadme(raw string, width int, dark bool, t ui.Theme, about string) string {
+	clean := cleanReadmeMarkdown(cleanTerminalOutput(raw), about)
 	if strings.TrimSpace(clean) == "" {
 		return ""
 	}
 	if width < readmeMinWrap {
 		width = readmeMinWrap
 	}
-	style := glamour.WithStyles(keepkitStyle(dark))
+	style := glamour.WithStyles(keepkitStyle(t, dark))
 	if testReadmeStyle != "" {
 		style = glamour.WithStandardStyle(testReadmeStyle)
 	}
@@ -77,17 +79,24 @@ type readmeRenderCache struct {
 	raw   string
 	width int
 	dark  bool
+	// theme is part of the key because it is part of the render: a theme
+	// switch has to invalidate the entry, or the panel would keep serving the
+	// previous palette's ANSI until the tool changed. about likewise decides
+	// what the preprocessor drops, and it arrives asynchronously — a card that
+	// lands after the first render must re-run the pass.
+	theme ui.Theme
+	about string
 	out   string
 	ok    bool
 }
 
 // render returns the rendered README for name, reusing the cached result when
 // every key component matches.
-func (c *readmeRenderCache) render(name, raw string, width int, dark bool) string {
-	if c.ok && c.name == name && c.width == width && c.dark == dark && c.raw == raw {
+func (c *readmeRenderCache) render(name, raw string, width int, dark bool, t ui.Theme, about string) string {
+	if c.ok && c.name == name && c.width == width && c.dark == dark && c.theme == t && c.about == about && c.raw == raw {
 		return c.out
 	}
-	out := renderReadme(raw, width, dark)
-	*c = readmeRenderCache{name: name, raw: raw, width: width, dark: dark, out: out, ok: true}
+	out := renderReadme(raw, width, dark, t, about)
+	*c = readmeRenderCache{name: name, raw: raw, width: width, dark: dark, theme: t, about: about, out: out, ok: true}
 	return out
 }

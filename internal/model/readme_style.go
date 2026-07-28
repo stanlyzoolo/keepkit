@@ -15,18 +15,26 @@ import (
 func ptrTo[T any](v T) *T { return &v }
 
 // keepkitStyle is panel [3]'s glamour theme: the standard config for the
-// terminal's background, with the accents moved onto keepkit's palette so a
-// README reads as part of the app instead of pasted in from another one.
+// terminal's background, with the accents moved onto the theme's roles so a
+// README reads as part of the app instead of pasted in from another one. It
+// takes the Theme rather than reading colors from a package — that is what puts
+// the readme panel under the same one-value theme switch as everything else
+// (the panel is re-rendered on the existing switchHelpMode path).
 //
 // It CLONES rather than builds from scratch. StyleConfig has dozens of fields —
 // chroma tokens, table separators, list indents — and inheriting them means a
 // glamour upgrade that adds one cannot leave the panel with a hole in it.
 //
-// The light variant takes only the peach heading accents and the structural
-// fixes: the rest of the palette (#E8E8E8 text, #555555 rules) is chosen
-// against a dark panel and would be unreadable on white, so there the standard
-// light colors stay.
-func keepkitStyle(dark bool) ansi.StyleConfig {
+// The light variant takes only the heading accents and the structural fixes:
+// the rest of the palette is chosen against a dark panel and would be
+// unreadable on white, so there the standard light colors stay.
+//
+// One part of the redesign is deliberately missing: a section heading is meant
+// to carry a border-colored rule out to the panel edge. StyleConfig cannot
+// express that — Prefix/Suffix are inline and HorizontalRule is a fixed string,
+// so the only way to fake it is to inject a `---` the author never wrote into
+// their README. Weight and Emphasis carry the heading on their own instead.
+func keepkitStyle(t ui.Theme, dark bool) ansi.StyleConfig {
 	cfg := styles.LightStyleConfig
 	if dark {
 		cfg = styles.DarkStyleConfig
@@ -38,17 +46,26 @@ func keepkitStyle(dark bool) ansi.StyleConfig {
 
 	// The standard H1 is bright text on a colored plate — the loudest thing on
 	// the screen and the main reason a rendered README looked tasteless here.
-	// Peach and bold carries the same weight; the padding spaces go with the
-	// plate, since without a background they only read as a stray indent.
-	cfg.H1.Color = ptrTo(string(ui.ColorPrimary))
+	// Accent and bold carries the same weight; the padding spaces go with the
+	// plate, since without a background they only read as a stray indent. (The
+	// preprocessor drops a README's leading H1 outright — it repeats the card's
+	// tool name — so this styles the ones further down.)
+	cfg.H1.Color = ptrTo(string(t.Accent))
 	cfg.H1.BackgroundColor = nil
 	cfg.H1.Bold = ptrTo(true)
 	cfg.H1.Prefix = ""
 	cfg.H1.Suffix = ""
 
-	// H2 takes the same color the brief card heads its sections with.
-	cfg.H2.Color = ptrTo(string(ui.ColorCategory))
+	// H2 is the panel's section heading — the brightest text role, matching the
+	// card's own. The "## " prefix goes with it: the standard style reprints the
+	// markdown marker in front of every heading, which is source, not text, and
+	// weight already says the line is a heading.
+	cfg.H2.Color = ptrTo(string(t.Emphasis))
 	cfg.H2.Bold = ptrTo(true)
+	cfg.H2.Prefix = ""
+	for _, h := range []*ansi.StyleBlock{&cfg.H3, &cfg.H4, &cfg.H5, &cfg.H6} {
+		h.Prefix = ""
+	}
 
 	if !dark {
 		return cfg
@@ -57,20 +74,34 @@ func keepkitStyle(dark bool) ansi.StyleConfig {
 	// Heading is the base every Hn cascades onto, so this is the H3-H5 rule;
 	// H6 needs its own, because the standard dark config singles it out with a
 	// green non-bold override.
-	cfg.Heading.Color = ptrTo(string(ui.ColorText))
+	cfg.Heading.Color = ptrTo(string(t.Text))
 	cfg.Heading.Bold = ptrTo(true)
-	cfg.H6.Color = ptrTo(string(ui.ColorText))
+	cfg.H6.Color = ptrTo(string(t.Text))
 	cfg.H6.Bold = ptrTo(true)
 
+	// The bold lead of a feature line ("Check agent visibility — …") is the
+	// readme's own emphasis peak, matching the card's.
+	cfg.Strong.Color = ptrTo(string(t.Emphasis))
+
+	// Inline code is where a README names a file or a flag, and in a tools
+	// tracker that is nearly always the thing that can be broken or missing —
+	// danger, and no plate, so it reads as a word rather than a block.
+	cfg.Code.Color = ptrTo(string(t.Danger))
+	cfg.Code.BackgroundColor = nil
+
+	// A code block is an install command the user is about to run: the one
+	// place the readme gets the Surface background, so it reads as a plate.
+	cfg.CodeBlock.Color = ptrTo(string(t.Emphasis))
+	cfg.CodeBlock.BackgroundColor = ptrTo(string(t.Surface))
+
 	// What is still a link after the preprocessor is an autolink or a bare URL,
-	// whose text IS the URL — the same blue the help panel gives its meta
-	// tokens.
-	cfg.LinkText.Color = ptrTo(string(ui.ColorMeta))
+	// whose text IS the URL — the Link role's only consumer here.
+	cfg.LinkText.Color = ptrTo(string(t.Link))
 
 	// Rules and quote bars in the panel-frame grays, so they read as structure
 	// rather than as content.
-	cfg.HorizontalRule.Color = ptrTo(string(ui.ColorBorder))
-	cfg.BlockQuote.Color = ptrTo(string(ui.ColorDim))
+	cfg.HorizontalRule.Color = ptrTo(string(t.Border))
+	cfg.BlockQuote.Color = ptrTo(string(t.Dim))
 
 	return cfg
 }

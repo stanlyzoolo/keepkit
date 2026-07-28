@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/ui"
 	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
@@ -22,7 +23,7 @@ const (
 func linkedCardModel(t *testing.T, github string) Model {
 	t.Helper()
 	m := New([]loader.ToolMeta{{Name: "gh", GitHub: github}})
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
 	return updated.(Model)
 }
 
@@ -49,7 +50,7 @@ func TestBuildCardLinks(t *testing.T) {
 		{
 			name:  "repo line only while the changelog loads",
 			setup: func(m *Model) { m.changelogLoadingFor = "gh" },
-			want:  map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkShort},
+			want:  map[string]string{"https://" + linkRepo: linkShort},
 		},
 		{
 			name: "changelog url linked alongside the repo",
@@ -57,8 +58,8 @@ func TestBuildCardLinks(t *testing.T) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, body: "release notes"}
 			},
 			want: map[string]string{
-				"https://" + linkRepo: cardLabel("repo:") + linkShort,
-				linkRelURL:            linkRelURL,
+				"https://" + linkRepo: linkShort,
+				linkRelURL:            "release notes",
 			},
 		},
 		{
@@ -66,14 +67,14 @@ func TestBuildCardLinks(t *testing.T) {
 			setup: func(m *Model) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, err: errors.New("boom")}
 			},
-			want: map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkShort},
+			want: map[string]string{"https://" + linkRepo: linkShort},
 		},
 		{
 			name: "release without an html url",
 			setup: func(m *Model) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", body: "release notes"}
 			},
-			want: map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkShort},
+			want: map[string]string{"https://" + linkRepo: linkShort},
 		},
 		{
 			name: "update marker and wrapped about shift both lines",
@@ -86,8 +87,8 @@ func TestBuildCardLinks(t *testing.T) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, body: "release notes"}
 			},
 			want: map[string]string{
-				"https://" + linkRepo: cardLabel("repo:") + linkShort,
-				linkRelURL:            linkRelURL,
+				"https://" + linkRepo: linkShort,
+				linkRelURL:            "release notes",
 			},
 		},
 	}
@@ -115,10 +116,11 @@ func TestBuildCardLinks(t *testing.T) {
 		})
 	}
 
-	t.Run("wrapping really moved the lines", func(t *testing.T) {
-		// Guards the table's last case against passing trivially: the recorded
-		// indices must have shifted past the fixed-layout positions, which is
-		// what "record while writing" buys over hardcoded offsets.
+	t.Run("wrapping really moved the changelog link", func(t *testing.T) {
+		// Guards the table's last case against passing trivially: the changelog
+		// heading's index must shift when the tagline above it wraps, which is
+		// what "record while writing" buys over hardcoded offsets. (The repo
+		// link rides the title line and is pinned at 0 by construction.)
 		plain := linkedCardModel(t, linkRepo)
 		plain.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, body: "release notes"}
 		_, plainLinks := plain.buildCard()
@@ -128,12 +130,17 @@ func TestBuildCardLinks(t *testing.T) {
 		wrapped.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, body: "release notes"}
 		_, wrappedLinks := wrapped.buildCard()
 
-		for line, url := range plainLinks {
-			for wline, wurl := range wrappedLinks {
-				if url == wurl && wline <= line {
-					t.Errorf("%q at line %d wrapped and at line %d unwrapped, want it pushed down", url, wline, line)
+		lineOf := func(links map[int]string, url string) int {
+			for line, u := range links {
+				if u == url {
+					return line
 				}
 			}
+			return -1
+		}
+		before, after := lineOf(plainLinks, linkRelURL), lineOf(wrappedLinks, linkRelURL)
+		if before < 0 || after <= before {
+			t.Errorf("changelog link at line %d unwrapped and %d wrapped, want it pushed down", before, after)
 		}
 	})
 
@@ -149,7 +156,7 @@ func TestBuildCardLinks(t *testing.T) {
 				continue
 			}
 			got := cardLine(content, line)
-			if !strings.Contains(got, cardLabel("repo:")+linkShort) {
+			if !strings.Contains(got, linkShort) {
 				t.Errorf("repo line = %q, want the bare %q", got, linkShort)
 			}
 			if strings.Contains(got, "github.com") {
@@ -196,28 +203,23 @@ func TestBuildCardLinks(t *testing.T) {
 // screen row and every link below an overlong line would silently shift.
 func TestBriefContentLineIsScreenRow(t *testing.T) {
 	m := linkedCardModel(t, linkRepo)
-	longURL := "https://github.com/cli/cli/releases/tag/" + strings.Repeat("v", 80)
-	m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: longURL, body: "release notes"}
+	// A synthetic overlong line: the card's own renderers all fit the panel by
+	// construction now, and what is under test is the viewport's behaviour, not
+	// theirs — a bubbles that soft-wrapped would break the mapping no matter
+	// which line was too wide.
+	long := "https://github.com/cli/cli/releases/tag/" + strings.Repeat("v", 120)
+	m.briefViewport.SetContent("first\n" + long + "\nthird")
 
-	content, links := m.buildCard()
-	m.briefViewport.SetContent(content)
-
-	var urlLine int
-	for line, url := range links {
-		if url == longURL {
-			urlLine = line
-		}
+	rows := strings.Split(withScrollbar(ui.DefaultStyles(), m.briefViewport, m.briefW, false), "\n")
+	if len(rows) < 3 {
+		t.Fatalf("rendered %d rows, want at least 3", len(rows))
 	}
-	rows := strings.Split(withScrollbar(m.briefViewport, m.briefW, false), "\n")
-	if urlLine >= len(rows) {
-		t.Fatalf("url line %d beyond the %d rendered rows", urlLine, len(rows))
+	if got := strings.TrimSpace(stripANSI(rows[1])); !strings.HasPrefix(got, "https://github.com/cli/cli") {
+		t.Errorf("screen row 1 = %q, want the (truncated) long line", got)
 	}
-	if got := stripANSI(rows[urlLine]); !strings.HasPrefix(strings.TrimSpace(got), "https://github.com/cli/cli") {
-		t.Errorf("screen row %d = %q, want the (truncated) release URL — the viewport wrapped it", urlLine, got)
-	}
-	// The row below must be the next content line, not the URL's tail.
-	if got := stripANSI(rows[urlLine+1]); strings.Contains(got, "vvvv") {
-		t.Errorf("screen row %d = %q, want the next content line — the URL spilled over", urlLine+1, got)
+	// The row below must be the next content line, not the long line's tail.
+	if got := strings.TrimSpace(stripANSI(rows[2])); got != "third" {
+		t.Errorf("screen row 2 = %q, want the next content line — the long line spilled over", got)
 	}
 }
 
@@ -257,13 +259,14 @@ func TestMouseBriefLinkClick(t *testing.T) {
 	t.Run("other lines do nothing", func(t *testing.T) {
 		m := newModel(t)
 		_, links := m.buildCard()
-		// Line 0 is the title, never a link.
-		if _, ok := links[0]; ok {
-			t.Fatalf("setup: line 0 unexpectedly linked")
+		// Line 1 is the tagline (line 0 is the title, which carries the repo
+		// link), so it is never clickable.
+		if _, ok := links[1]; ok {
+			t.Fatalf("setup: line 1 unexpectedly linked")
 		}
-		updated, cmd := m.Update(leftClick(briefX(m), 0+2))
+		updated, cmd := m.Update(leftClick(briefX(m), 1+2))
 		if cmd != nil {
-			t.Errorf("click on the title line dispatched a command")
+			t.Errorf("click on an unlinked line dispatched a command")
 		}
 		if updated.(Model).focus != focusBrief {
 			t.Errorf("click did not focus the brief panel")
@@ -277,19 +280,22 @@ func TestMouseBriefLinkClick(t *testing.T) {
 			t.Fatalf("setup: YOffset = %d, want 3 (card not tall enough?)", m.briefViewport.YOffset)
 		}
 		_, links := m.buildCard()
-		var repoLine int
+		var logLine int
 		for line, url := range links {
-			if url == "https://"+linkRepo {
-				repoLine = line
+			if url == linkRelURL {
+				logLine = line
 			}
 		}
+		if logLine < 4 {
+			t.Fatalf("setup: changelog link at line %d, too close to the top to scroll past", logLine)
+		}
 		// The same screen row now shows a different content line: clicking where
-		// the repo line was before the scroll must no longer open it.
-		if _, cmd := m.Update(leftClick(briefX(m), repoLine+2)); cmd != nil {
+		// the changelog heading was before the scroll must no longer open it.
+		if _, cmd := m.Update(leftClick(briefX(m), logLine+2)); cmd != nil {
 			t.Errorf("click ignored the scroll offset and still opened a link")
 		}
-		if _, cmd := m.Update(leftClick(briefX(m), repoLine-3+2)); cmd == nil {
-			t.Errorf("click at the scrolled repo row dispatched no command")
+		if _, cmd := m.Update(leftClick(briefX(m), logLine-3+2)); cmd == nil {
+			t.Errorf("click at the scrolled changelog row dispatched no command")
 		}
 	})
 

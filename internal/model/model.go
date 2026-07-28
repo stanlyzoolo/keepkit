@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -398,6 +399,27 @@ type Model struct {
 	// tokenError holds the inline "token invalid" message.
 	tokenInput textinput.Model
 	tokenError string
+
+	// styles is the whole app's color vocabulary, built from one ui.Theme in
+	// New(). Every renderer reads it through sty() rather than reaching for a
+	// package-level style, which is what makes a theme a *value*: handing the
+	// model a different ui.Styles re-colors the entire UI, and nothing else has
+	// to know. A pointer because renderers are value receivers and a frame
+	// reads it dozens of times.
+	styles *ui.Styles
+}
+
+// sty returns the model's styles, falling back to the default theme when it has
+// none. The fallback exists for the Model{} literals most tests are built from
+// — the same nil-tolerant shape changelogRender uses — and is the *only* place
+// below internal/ui allowed to read a package-level style: a renderer that
+// called ui.DefaultStyles() itself would keep painting the default palette
+// after the model switched themes.
+func (m Model) sty() *ui.Styles {
+	if m.styles == nil {
+		return ui.DefaultStyles()
+	}
+	return m.styles
 }
 
 func New(meta []loader.ToolMeta) Model {
@@ -435,11 +457,14 @@ func New(meta []loader.ToolMeta) Model {
 	tki.EchoMode = textinput.EchoPassword
 	tki.EchoCharacter = '•'
 
+	styles := ui.NewStyles(ui.Default)
+
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
-	sp.Style = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	sp.Style = styles.Accent
 
 	m := Model{
+		styles:          styles,
 		tools:           loader.ToolsFromMeta(meta),
 		versions:        make(map[string]VersionInfo),
 		repoStatus:      make(map[string]string),
@@ -577,6 +602,27 @@ func (m Model) showsUpdateLog() bool {
 	}
 	mt, ok := m.selectedMeta()
 	return ok && mt.Name == m.updateLogFor
+}
+
+// startToolUpdate is enter in [2]: install the release the card is showing. It
+// fires only when the tool actually has a pending one (else a hint) and no
+// update is already running — one at a time, no queue, and the refusal reports
+// itself like every other blocked action here, because a running update's only
+// other sign is a card spinner invisible unless that tool is selected.
+// Detection spawns subprocesses, so it runs in a tea.Cmd; the updateDetectedMsg
+// handler is what opens the confirm dialog.
+func (m *Model) startToolUpdate() tea.Cmd {
+	if m.updatingFor != "" {
+		return m.setStatus(updateBusyStatus)
+	}
+	t, ok := m.selectedTool()
+	if !ok {
+		return nil
+	}
+	if !m.hasUpdate(t.Name) {
+		return m.setStatus("no update available for " + t.Name)
+	}
+	return detectUpdateCmd(t, false)
 }
 
 // dismissSelfLog releases a *completed* self-update log's claim on panel [3],
@@ -788,7 +834,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// still carried usable cache values: a fresh tag from a partial fetch, or
 		// the stale card kept on a total failure. In those cases render the data so
 		// known tags/cards survive the outage. Only a rate-limit failure with
-		// nothing to show falls back to the "rate limited — press [L]" hint. A
+		// nothing to show falls back to the "rate limited — press L" hint. A
 		// generic error carries no data and must not touch the caches.
 		hasData := msg.latest != "" || msg.card.About != ""
 		switch {
@@ -807,7 +853,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.briefViewport.SetContent(m.renderCard())
 		case msg.repoStatus == "rate-limited":
 			// Rate-limited with no card to show: mark the tool so the card can
-			// render "rate limited — press [L]" instead of a bare failure.
+			// render "rate limited — press L" instead of a bare failure.
 			m.repoStatus[msg.toolName] = "rate-limited"
 			m.briefViewport.SetContent(m.renderCard())
 		}
@@ -882,7 +928,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// A rate-limited README is a session-cached negative that needsReadme
 		// treats as answered — drop those entries so the backfill can actually
-		// retry them, which is what the "rate limited — press [L]" placeholder
+		// retry them, which is what the "rate limited — press L" placeholder
 		// promises. Fetched content and 404s stay.
 		for name, data := range m.readmeData {
 			if data.content == "" && errors.Is(data.err, version.ErrRateLimited) {
@@ -1104,12 +1150,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.toolsW, m.briefW, m.helpW = m.calcPanelWidths()
-		vpH := m.calcVpHeight()
-		leftVpH := vpH
+		vpH := m.calcListHeight()
+		
 		if !m.ready {
 			// Viewports are 1 col narrower than their panel to leave a gutter
 			// for the scrollbar rendered by withScrollbar.
-			m.toolsViewport = viewport.New(m.toolsW-1, leftVpH)
+			m.toolsViewport = viewport.New(m.toolsW-1, vpH)
 			m.briefViewport = viewport.New(m.briefW-1, vpH)
 			m.helpViewport = viewport.New(m.helpW-1, vpH)
 			// Zero the default pager keymap on all three viewports: every
@@ -1124,7 +1170,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ready = true
 		} else {
 			m.toolsViewport.Width = m.toolsW - 1
-			m.toolsViewport.Height = leftVpH
+			m.toolsViewport.Height = vpH
 			m.briefViewport.Width = m.briefW - 1
 			m.briefViewport.Height = vpH
 			m.helpViewport.Width = m.helpW - 1
@@ -1467,10 +1513,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
+			// enter is the panel's primary action, and each panel has exactly
+			// one: in [1] run the selected tool, in [2] install the release the
+			// card is showing. Same key, because in both panels it is the thing
+			// the user came to that panel to do.
+			if m.focus == focusBrief {
+				// Assigned first: startToolUpdate mutates m (a status message),
+				// and Go copies m into the return before evaluating the call.
+				cmd = m.startToolUpdate()
+				return m, cmd
+			}
 			// Run the selected tool: open the one-line command prompt,
 			// prefilled with the last command dispatched for it this session
-			// (else the tool name), cursor at the end. focusTools only; an
-			// empty list is a no-op.
+			// (else the tool name), cursor at the end. An empty list is a no-op.
 			if m.focus == focusTools {
 				if mt, ok := m.selectedMeta(); ok {
 					m.mode = modeRunInput
@@ -1532,7 +1587,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		// t / u / R are the tracker's own verbs and fire in every focus. They
+		// used to be [1]-only because each collided with a [2] action (t tags,
+		// u update, r refresh); the redesign moved those onto keys of their own
+		// (# tags, enter update) and freed all three to mean one thing
+		// everywhere, which is what lets the status bar advertise a single
+		// global key list instead of three per-focus ones.
 		case "t":
+			m.mode = modeTrack
+			m.trackInput.SetValue("")
+			m.trackInput.Focus()
+			return m, textinput.Blink
+
+		case "u":
+			if mt, ok := m.selectedMeta(); ok {
+				m.mode = modeConfirmUntrack
+				m.untrackTarget = mt.Name
+				return m, nil
+			}
+
+		case "R":
+			if mt, ok := m.selectedMeta(); ok {
+				m.mode = modeRename
+				m.nameInput.SetValue(mt.Name)
+				m.nameInput.Focus()
+				return m, textinput.Blink
+			}
+
+		case "#":
+			// Edit the tag. Its own key now: t is the global track verb, and a
+			// tag editor reachable only from the card is where the tag is shown.
 			if m.focus == focusBrief {
 				if mt, ok := m.selectedMeta(); ok {
 					m.mode = modeEditTags
@@ -1541,52 +1625,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.briefViewport.SetContent(m.renderCard())
 					return m, textinput.Blink
 				}
-			} else if m.focus == focusTools {
-				m.mode = modeTrack
-				m.trackInput.SetValue("")
-				m.trackInput.Focus()
-				return m, textinput.Blink
-			}
-
-		case "u":
-			if m.focus == focusTools {
-				if mt, ok := m.selectedMeta(); ok {
-					m.mode = modeConfirmUntrack
-					m.untrackTarget = mt.Name
-					return m, nil
-				}
-			} else if m.focus == focusBrief {
-				// Update the selected tool: only when it has a pending release
-				// (else a hint) and no update is already running (one at a time,
-				// no queue — the refusal reports itself like every other blocked
-				// action here). Detection spawns subprocesses, so it runs in a
-				// tea.Cmd — the updateDetectedMsg handler opens the confirm mode.
-				if m.updatingFor != "" {
-					return m, m.setStatus(updateBusyStatus)
-				}
-				if t, ok := m.selectedTool(); ok {
-					if !m.hasUpdate(t.Name) {
-						return m, m.setStatus("no update available for " + t.Name)
-					}
-					return m, detectUpdateCmd(t, false)
-				}
 			}
 
 		case "r":
-			if m.focus == focusTools {
-				if mt, ok := m.selectedMeta(); ok {
-					m.mode = modeRename
-					m.nameInput.SetValue(mt.Name)
-					m.nameInput.Focus()
-					return m, textinput.Blink
-				}
-			} else if m.focus == focusBrief {
+			if m.focus == focusBrief {
 				if t, ok := m.selectedTool(); ok {
 					return m, m.refreshSelectedCmd(t)
 				}
 			} else if m.focus == focusHelp {
-				// Third source of [3]: back to the README. Only in focusHelp —
-				// r stays rename in [1] and refresh in [2].
+				// Third source of [3]: back to the README. r means refresh in
+				// [2] and readme in [3]; rename moved to R, so [1] leaves it
+				// unbound rather than inventing a third meaning.
 				return m, m.switchHelpMode(helpModeReadme)
 			}
 
@@ -1752,7 +1801,7 @@ func (m Model) searchMatches() []searchMatch {
 	// Tag view: the two orderings are exclusive — grouping wins, so the tag
 	// sections stay contiguous (the ` ↑` marker still renders per row).
 	if m.grouped() {
-		return groupMatchesByTag(out)
+		return m.groupMatchesByTag(out)
 	}
 
 	// Stable two-pass partition: updatable rows first, the rest after, each
@@ -1846,31 +1895,54 @@ func (m Model) grouped() bool {
 	return m.groupByTag && m.searchQuery() == "" && m.hasTaggedTool()
 }
 
-// groupMatchesByTag reorders matches so tools sharing a tag sit together,
-// untagged ones last. Groups appear in first-appearance (meta.yaml) order and
-// keep that order inside a group too — the same stability rule as the update
-// partition it replaces, so the list only ever regroups rows the user's own
-// file order already fixed. One tag per tool (tagOf), so no row can land in two
-// groups.
-func groupMatchesByTag(matches []searchMatch) []searchMatch {
+// groupKey is the section a tool belongs to in the grouped view: the updates
+// group when it has a pending release, otherwise its case-folded tag ("" =
+// untagged). Case-folded because matchingTag already compares that way and two
+// spellings the search treats as one tag must not split into two sections; the
+// header then shows the group's first spelling.
+//
+// The updates group cuts across the tags on purpose. A tag says what a tool IS,
+// which is a stable fact the user chose; an update is what the tool NEEDS right
+// now, which is the reason the app is open. Sorting the second under the first
+// would scatter the answer across the whole list.
+func (m Model) groupKey(mt loader.ToolMeta) string {
+	if m.hasUpdate(mt.Name) {
+		return updatesGroupLabel
+	}
+	return tagKey(mt)
+}
+
+// groupMatchesByTag reorders matches so tools in the same section sit together:
+// the updates section first, then each tag in first-appearance (meta.yaml)
+// order, untagged last. Order inside a section is meta.yaml's too — the same
+// stability rule as the flat view's update partition, so the list only ever
+// regroups rows the user's own file order already fixed. One section per tool
+// (groupKey), so no row can land in two.
+func (m Model) groupMatchesByTag(matches []searchMatch) []searchMatch {
 	var order []string
 	seen := make(map[string]bool, len(matches))
 	for _, sm := range matches {
-		if key := tagKey(sm.meta); key != "" && !seen[key] {
+		if key := m.groupKey(sm.meta); key != "" && !seen[key] {
 			seen[key] = true
 			order = append(order, key)
 		}
 	}
+	// The updates section leads regardless of where its first tool sits in
+	// meta.yaml — it is the one section whose position is a statement.
+	if seen[updatesGroupLabel] {
+		order = append([]string{updatesGroupLabel},
+			slices.DeleteFunc(order, func(k string) bool { return k == updatesGroupLabel })...)
+	}
 	out := make([]searchMatch, 0, len(matches))
 	for _, key := range order {
 		for _, sm := range matches {
-			if tagKey(sm.meta) == key {
+			if m.groupKey(sm.meta) == key {
 				out = append(out, sm)
 			}
 		}
 	}
 	for _, sm := range matches {
-		if tagKey(sm.meta) == "" {
+		if m.groupKey(sm.meta) == "" {
 			out = append(out, sm)
 		}
 	}
@@ -1966,6 +2038,7 @@ func (m Model) helpWrapWidth() int {
 // call SetContent(renderHelpContent()) directly — they must not reset the
 // cursor. Never scrolls; callers keep their own GotoTop/GotoBottom.
 func (m *Model) setHelpContent() {
+	s := m.sty()
 	m.helpEntries = nil
 	m.helpNavIdx = -1
 	m.helpBase = ""
@@ -1982,7 +2055,7 @@ func (m *Model) setHelpContent() {
 			// j/k are plain scroll and colorizeHelp/parseHelpEntries never touch
 			// the ANSI output glamour produces.
 			if data, has := m.readmeData[mt.Name]; has && data.content != "" {
-				m.helpBase = m.readmeRender.render(mt.Name, data.content, m.helpWrapWidth(), m.darkBG)
+				m.helpBase = m.readmeRender.render(mt.Name, data.content, m.helpWrapWidth(), m.darkBG, m.sty().Theme, m.repoCards[mt.Name].About)
 			}
 		case m.helpLoadingFor != mt.Name:
 			if raw := m.rawHelpText(); raw != "" {
@@ -1990,7 +2063,7 @@ func (m *Model) setHelpContent() {
 				// Built here, not via renderHelpContent: the render can be in the
 				// search-highlight branch mid-search, and the cache must always
 				// hold the plain full-color base the spotlight dims against.
-				m.helpBase = colorizeHelp(wrapText(raw, m.helpWrapWidth()))
+				m.helpBase = colorizeHelp(s, wrapText(raw, m.helpWrapWidth()))
 			}
 		}
 	}

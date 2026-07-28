@@ -362,8 +362,13 @@ func TestSelfStateSitesAreExhaustive(t *testing.T) {
 				t.Errorf("selfCompactCell present = %v, want %v", got, tt.wantCompact)
 			}
 			hk := mustModel(m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}}))
-			if got := strings.Contains(hk.renderHotkeys(), "Self"); got != tt.wantHotkeys {
-				t.Errorf("[?] Self group present = %v, want %v", got, tt.wantHotkeys)
+			// The group header is lowercase like every other one, so match on a
+			// row only it can produce rather than on the word "self", which the
+			// version line in the title also carries.
+			overlay := hk.renderHotkeys()
+			hasGroup := strings.Contains(overlay, "self-update") || strings.Contains(overlay, "restart")
+			if hasGroup != tt.wantHotkeys {
+				t.Errorf("[?] self group present = %v, want %v", hasGroup, tt.wantHotkeys)
 			}
 			u := m
 			cmd := u.selfUpdateKey()
@@ -428,41 +433,41 @@ func TestSelfBannerInStatusBar(t *testing.T) {
 		{
 			name:   "no banner",
 			state:  selfNone,
-			want:   []string{"[t] track"},
+			want:   []string{"t track"},
 			absent: []string{"keepkit"},
 		},
 		{
 			name:   "offer replaces the hints",
 			state:  selfOffered,
-			want:   []string{"keepkit v0.5.0 available", "[U] update", "[X] dismiss"},
-			absent: []string{"[t] track"},
+			want:   []string{"keepkit v0.5.0 available", "U update", "X dismiss"},
+			absent: []string{"t track"},
 		},
 		{
 			name:     "dismissed keeps the hints and folds to a cell",
 			state:    selfDismissed,
-			want:     []string{"[t] track", "keepkit ↑ [U]"},
+			want:     []string{"t track", "keepkit ↑ U"},
 			absent:   []string{"available", "dismiss"},
-			wantCell: "keepkit ↑ [U]",
+			wantCell: "keepkit ↑ U",
 		},
 		{
 			name:   "updated offers the restart",
 			state:  selfUpdated,
-			want:   []string{"keepkit updated", "[U] restart", "[X] later"},
-			absent: []string{"[t] track", "available"},
+			want:   []string{"keepkit updated", "U restart", "X later"},
+			absent: []string{"t track", "available"},
 		},
 		{
 			name:     "restart later folds to a cell",
 			state:    selfUpdatedLater,
-			want:     []string{"[t] track", "keepkit [U] restart"},
+			want:     []string{"t track", "keepkit U restart"},
 			absent:   []string{"later", "available"},
-			wantCell: "keepkit [U] restart",
+			wantCell: "keepkit U restart",
 		},
 		{
 			name:     "in flight shows neither banner",
 			state:    selfOffered,
 			updating: true,
-			want:     []string{"[t] track", "keepkit updating…"},
-			absent:   []string{"available", "[X] dismiss"},
+			want:     []string{"t track", "keepkit updating…"},
+			absent:   []string{"available", "X dismiss"},
 			wantCell: "keepkit updating…",
 		},
 	}
@@ -498,7 +503,7 @@ func TestSelfBannerInEveryNormalFocus(t *testing.T) {
 		m := selfModel(t, selfBarTools(), 120, selfOffered)
 		m.focus = focus
 		bar := stripANSI(m.renderStatusBar())
-		if !strings.Contains(bar, "keepkit v0.5.0 available") || !strings.Contains(bar, "[U] update") {
+		if !strings.Contains(bar, "keepkit v0.5.0 available") || !strings.Contains(bar, "U update") {
 			t.Errorf("focus %d bar = %q, want the self-update banner", focus, bar)
 		}
 	}
@@ -528,17 +533,20 @@ func TestSelfCompactCellRightGroupDegradation(t *testing.T) {
 	wide := selfModel(t, selfBarTools(), 160, selfDismissed)
 	wide.rate = rate
 	bar := stripANSI(wide.renderStatusBar())
-	if !strings.Contains(bar, "GitHub API Usage") || !strings.Contains(bar, "keepkit ↑ [U]") {
+	if !strings.Contains(bar, gaugeFillGlyph) || !strings.Contains(bar, "keepkit ↑ U") {
 		t.Errorf("wide status bar = %q, want the full gauge and the self cell", bar)
 	}
 
-	tight := selfModel(t, selfBarTools(), 100, selfDismissed)
+	// Wide enough for the hints plus the cell, too narrow for even the compact
+	// gauge beside it. The exact number tracks the hint bar's width, which
+	// shrank when the key hints dropped their brackets.
+	tight := selfModel(t, selfBarTools(), 88, selfDismissed)
 	tight.rate = rate
 	bar = stripANSI(tight.renderStatusBar())
-	if !strings.Contains(bar, "keepkit ↑ [U]") {
+	if !strings.Contains(bar, "keepkit ↑ U") {
 		t.Errorf("tight status bar = %q, want the self cell to outrank the gauge", bar)
 	}
-	if strings.Contains(bar, "GitHub API Usage") || strings.Contains(bar, "GH 18/60") {
+	if strings.Contains(bar, "18/60") {
 		t.Errorf("tight status bar = %q, want no gauge next to the self cell", bar)
 	}
 }
@@ -554,7 +562,7 @@ func TestSelfCompactCellFitsBaselineTerminal(t *testing.T) {
 		m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
 
 		bar := stripANSI(m.renderStatusBar())
-		if !strings.Contains(bar, "keepkit ↑ [U]") {
+		if !strings.Contains(bar, "keepkit ↑ U") {
 			t.Errorf("focus %d: 80-col bar = %q, want the collapsed self cell", focus, bar)
 		}
 		// A dropped hint cell is the price; the leading one must survive.
@@ -569,14 +577,20 @@ func TestSelfCompactCellFitsBaselineTerminal(t *testing.T) {
 func TestRateGaugeUnaffectedWithoutSelfCell(t *testing.T) {
 	m := selfModel(t, selfBarTools(), 160, selfNone)
 	m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
-	if bar := stripANSI(m.renderStatusBar()); !strings.Contains(bar, "GitHub API Usage") {
+	if bar := stripANSI(m.renderStatusBar()); !strings.Contains(bar, gaugeFillGlyph) {
 		t.Errorf("status bar = %q, want the full gauge", bar)
 	}
 
-	m = selfModel(t, selfBarTools(), 100, selfNone)
+	// Narrow enough that the bar no longer fits beside the hints, wide enough
+	// for the numbers.
+	m = selfModel(t, selfBarTools(), 84, selfNone)
 	m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
-	if bar := stripANSI(m.renderStatusBar()); !strings.Contains(bar, "GH 18/60") {
+	bar := stripANSI(m.renderStatusBar())
+	if !strings.Contains(bar, "api 18/60") {
 		t.Errorf("status bar = %q, want the compact gauge", bar)
+	}
+	if strings.Contains(bar, gaugeFillGlyph) {
+		t.Errorf("status bar = %q, want the bar dropped at this width", bar)
 	}
 }
 
@@ -791,7 +805,7 @@ func TestToolUpdateKeyBlockedBySelfUpdate(t *testing.T) {
 		t.Fatal("fixture: rg must have a pending update for [u] to be live")
 	}
 
-	updated, cmd := m.Update(keyRunes("u"))
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if got.statusMsg != updateBusyStatus {
 		t.Errorf("statusMsg = %q, want %q", got.statusMsg, updateBusyStatus)
@@ -1216,7 +1230,7 @@ func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 		{name: "offered", state: selfOffered, latest: "v0.5.0", wantContains: "v0.5.0 available"},
 		{name: "folded offer", state: selfDismissed, latest: "v0.5.0", wantContains: "keepkit ↑"},
 		{name: "restart pending", state: selfUpdated, wantContains: "keepkit updated"},
-		{name: "restart folded", state: selfUpdatedLater, wantContains: "keepkit [U] restart"},
+		{name: "restart folded", state: selfUpdatedLater, wantContains: "keepkit U restart"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1310,10 +1324,10 @@ func TestKeepkitUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 				}
 				return
 			}
-			if strings.Contains(bar, "keepkit updated") || strings.Contains(bar, "[U]") {
+			if strings.Contains(bar, "keepkit updated") || strings.Contains(bar, "U restart") {
 				t.Errorf("status bar = %q, want no self-update surface on a dev build", bar)
 			}
-			if strings.Contains(overlay, "Self") {
+			if strings.Contains(overlay, "self-update") || strings.Contains(overlay, "U  restart") {
 				t.Errorf("[?] overlay = %q, want no Self group on a dev build", overlay)
 			}
 			if m.RestartRequested() {
@@ -1385,8 +1399,8 @@ func TestSelfUpdateLogOwnsHelpPanel(t *testing.T) {
 		if content := stripANSI(m.renderHelpContent()); !strings.Contains(content, "==> Upgrading keepkit") {
 			t.Errorf("tracker %v: [3] = %q, want the self-update log", meta, content)
 		}
-		if panel := stripANSI(m.renderHelp()); !strings.Contains(panel, "[3] Update") {
-			t.Errorf("tracker %v: panel title missing [3] Update", meta)
+		if panel := stripANSI(m.renderHelp()); !strings.Contains(panel, "[3] update") {
+			t.Errorf("tracker %v: panel title missing [3] update", meta)
 		}
 	}
 }

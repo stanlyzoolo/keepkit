@@ -64,11 +64,11 @@ func TestGroupedOrderingByTag(t *testing.T) {
 	}
 }
 
-// TestGroupedOrderingSuppressesUpdatePartition: grouping and the update
-// partition are exclusive — an updatable untagged tool stays in the trailing
-// untagged group instead of floating to the top, or the tag sections would not
-// be contiguous.
-func TestGroupedOrderingSuppressesUpdatePartition(t *testing.T) {
+// TestGroupedOrderingLeadsWithUpdates: in the grouped view an outdated tool
+// leaves its tag section for the leading updates section — a tag says what a
+// tool is, an update says what it needs, and the second is the reason the app
+// is open. The section leads regardless of where its tools sit in meta.yaml.
+func TestGroupedOrderingLeadsWithUpdates(t *testing.T) {
 	m := groupTestModel(t)
 	m.versions["jq"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
 
@@ -77,8 +77,11 @@ func TestGroupedOrderingSuppressesUpdatePartition(t *testing.T) {
 	}
 
 	m.groupByTag = true
-	if got, want := displayedNames(m), []string{"rg", "fd", "git", "lazygit", "jq"}; !sameNames(got, want) {
-		t.Errorf("grouped order = %v, want %v (update partition suppressed)", got, want)
+	if got, want := displayedNames(m), []string{"jq", "rg", "fd", "git", "lazygit"}; !sameNames(got, want) {
+		t.Errorf("grouped order = %v, want %v (updates section first)", got, want)
+	}
+	if content := stripANSI(m.renderLeftContent()); !strings.HasPrefix(content, "updates ") {
+		t.Errorf("grouped content does not lead with the updates header:\n%s", content)
 	}
 }
 
@@ -146,15 +149,15 @@ func TestBuildToolRowsMapsGrouped(t *testing.T) {
 		t.Fatalf("rendered %d lines, lineTool covers %d", len(lines), len(lineTool))
 	}
 
-	// Divider headers: "─ <label> ────…". Match by the framed label rather than
-	// the full line, whose dash count depends on the panel width.
+	// Divider headers: "<label> ────…". Match by the label and its rule rather
+	// than the full line, whose dash count depends on the panel width.
 	wantHeaders := map[int]string{0: "cli", 3: "scm", 6: "untagged"}
 	for i, line := range lines {
 		if label, isHeader := wantHeaders[i]; isHeader {
 			if lineTool[i] != -1 {
 				t.Errorf("line %d (%q) maps to tool %d, want -1", i, line, lineTool[i])
 			}
-			if !strings.Contains(line, "─ "+label+" ") {
+			if !strings.HasPrefix(line, label+" ─") {
 				t.Errorf("line %d = %q, want the %q divider header", i, line, label)
 			}
 			continue
@@ -331,10 +334,10 @@ func TestGroupingIsCaseInsensitive(t *testing.T) {
 	content := stripANSI(m.renderLeftContent())
 	// The header shows the group's first spelling ("CLI"); the case-folded key
 	// keeps "cli" in the same section, so no second lowercase divider appears.
-	if n := strings.Count(content, "─ CLI "); n != 1 {
+	if n := strings.Count(content, "CLI ─"); n != 1 {
 		t.Errorf("content has %d CLI divider headers, want 1:\n%s", n, content)
 	}
-	if strings.Contains(content, "─ cli ") {
+	if strings.Contains(content, "cli ─") {
 		t.Errorf("content split the group into a second cli section:\n%s", content)
 	}
 }
@@ -568,17 +571,17 @@ func TestTagHeaderLineFitsOneLine(t *testing.T) {
 		}
 	}
 
-	// A tag renders as a full-width divider with the label centered (odd
-	// remainder → extra dash on the right): "─ ab ──" at toolsW-1 = 7 cells.
-	if got, want := stripANSI(m.tagHeaderLine("ab")), "─ ab ──"; got != want {
+	// A tag renders as the label followed by a rule out to the panel edge:
+	// "ab ────" at toolsW-1 = 7 cells.
+	if got, want := stripANSI(m.tagHeaderLine("ab")), "ab ────"; got != want {
 		t.Errorf("short header = %q, want %q", got, want)
 	}
 }
 
-// TestTagHeaderDividerFormat pins the divider look: "───… <label> ───…" to
-// exactly the panel width with the label centered, the empty-tag label is
-// "untagged" (no hashtag), and a panel too narrow to frame degrades to the bare
-// label without panicking.
+// TestTagHeaderDividerFormat pins the divider look: "<label> ───…" to exactly
+// the panel width with the label leading, the empty-tag label is "untagged" (no
+// hashtag), and a panel too narrow to frame degrades to the bare label without
+// panicking.
 func TestTagHeaderDividerFormat(t *testing.T) {
 	m := groupTestModel(t)
 
@@ -586,9 +589,9 @@ func TestTagHeaderDividerFormat(t *testing.T) {
 		m.toolsW = 20
 		w := m.toolsW - 1
 		got := stripANSI(m.tagHeaderLine("dev"))
-		// Label centered: a rule on each side, the label spaced in the middle.
-		if !strings.HasPrefix(got, "─") || !strings.HasSuffix(got, "─") || !strings.Contains(got, " dev ") {
-			t.Errorf("header = %q, want the \"───… dev ───…\" divider (no hashtag)", got)
+		// Label first, then the rule out to the edge.
+		if !strings.HasPrefix(got, "dev ─") || !strings.HasSuffix(got, "─") {
+			t.Errorf("header = %q, want the \"dev ───…\" divider (no hashtag)", got)
 		}
 		if strings.Contains(got, "#") {
 			t.Errorf("header = %q, want no hashtag", got)
@@ -601,8 +604,8 @@ func TestTagHeaderDividerFormat(t *testing.T) {
 	t.Run("empty tag renders untagged divider", func(t *testing.T) {
 		m.toolsW = 20
 		got := stripANSI(m.tagHeaderLine(""))
-		if !strings.HasPrefix(got, "─") || !strings.HasSuffix(got, "─") || !strings.Contains(got, " untagged ") {
-			t.Errorf("empty-tag header = %q, want the \"───… untagged ───…\" divider", got)
+		if !strings.HasPrefix(got, "untagged ─") || !strings.HasSuffix(got, "─") {
+			t.Errorf("empty-tag header = %q, want the \"untagged ───…\" divider", got)
 		}
 		if lw := lipgloss.Width(got); lw != m.toolsW-1 {
 			t.Errorf("untagged header width = %d, want %d", lw, m.toolsW-1)
