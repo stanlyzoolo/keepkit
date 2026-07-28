@@ -3936,3 +3936,41 @@ func TestRenderStatusBarFocusToolsRunHint(t *testing.T) {
 		t.Errorf("narrow focusTools bar kept right-side cells that should drop first: %q", got)
 	}
 }
+
+// TestChangelogRenderCache: the card is rebuilt on every spinner frame while a
+// refresh or an update runs, so the converter must not re-parse the same body
+// each time. A nil cache stays a working cache-less mode — most tests build
+// Model{} literals and never call New().
+func TestChangelogRenderCache(t *testing.T) {
+	const body = "## What's Changed\n* one\n* two\n"
+
+	var c changelogRenderCache
+	first := c.lines(body, 60)
+	again := c.lines(body, 60)
+	if len(first) == 0 {
+		t.Fatalf("converter returned nothing for %q", body)
+	}
+	if &first[0] != &again[0] {
+		t.Errorf("same body and width re-converted instead of hitting the cache")
+	}
+
+	if wider := c.lines(body, 20); &wider[0] == &first[0] {
+		t.Errorf("a width change was served from the cache")
+	}
+	if other := c.lines("## Other\n* x\n", 60); &other[0] == &first[0] {
+		t.Errorf("a body change was served from the cache")
+	}
+
+	var nilCache *changelogRenderCache
+	if got := nilCache.lines(body, 60); !slices.Equal(mdDump(got), mdDump(first)) {
+		t.Errorf("nil cache = %q, want the plain conversion %q", mdDump(got), mdDump(first))
+	}
+}
+
+// TestNewSeedsChangelogCache pins the wiring: without it every card render
+// would take the cache-less path and the memo would be dead code.
+func TestNewSeedsChangelogCache(t *testing.T) {
+	if New(nil).changelogRender == nil {
+		t.Error("New() left changelogRender nil — the memo is never used")
+	}
+}

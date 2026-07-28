@@ -360,9 +360,13 @@ type Model struct {
 	readmeLoading map[string]bool
 	// readmeRender memoizes the last glamour render (see readme.go).
 	readmeRender readmeRenderCache
-	helpSearch   textinput.Model
-	helpMatches  []int
-	helpMatchIdx int
+	// changelogRender memoizes the last release-notes markdown conversion
+	// (see render.go). A pointer, so the value-receiver card renderers can
+	// fill it; nil is a working cache-less mode for Model{} literals.
+	changelogRender *changelogRenderCache
+	helpSearch      textinput.Model
+	helpMatches     []int
+	helpMatchIdx    int
 
 	// helpEntries indexes the navigable entries (flag/subcommand line plus its
 	// description block) of the current help text, in wrapped display-line
@@ -436,26 +440,27 @@ func New(meta []loader.ToolMeta) Model {
 	sp.Style = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
 
 	m := Model{
-		tools:         loader.ToolsFromMeta(meta),
-		versions:      make(map[string]VersionInfo),
-		repoStatus:    make(map[string]string),
-		repoCards:     make(map[string]version.RepoCard),
-		changelogData: make(map[string]changelogMsg),
-		helpCache:     make(map[string][2]string),
-		readmeData:    make(map[string]readmeMsg),
-		readmeLoading: make(map[string]bool),
-		search:        ti,
-		noteInput:     ni,
-		tagsInput:     tgi,
-		helpSearch:    hsi,
-		trackInput:    tri,
-		nameInput:     nmi,
-		runInput:      rni,
-		lastRun:       make(map[string]string),
-		tokenInput:    tki,
-		spinner:       sp,
-		meta:          meta,
-		helpNavIdx:    -1,
+		tools:           loader.ToolsFromMeta(meta),
+		versions:        make(map[string]VersionInfo),
+		repoStatus:      make(map[string]string),
+		repoCards:       make(map[string]version.RepoCard),
+		changelogData:   make(map[string]changelogMsg),
+		helpCache:       make(map[string][2]string),
+		readmeData:      make(map[string]readmeMsg),
+		readmeLoading:   make(map[string]bool),
+		changelogRender: &changelogRenderCache{},
+		search:          ti,
+		noteInput:       ni,
+		tagsInput:       tgi,
+		helpSearch:      hsi,
+		trackInput:      tri,
+		nameInput:       nmi,
+		runInput:        rni,
+		lastRun:         make(map[string]string),
+		tokenInput:      tki,
+		spinner:         sp,
+		meta:            meta,
+		helpNavIdx:      -1,
 		// The README is the default source of [3]: it is the only one that
 		// exists for a tracked-but-not-installed tool, which is exactly the
 		// state where docs matter most.

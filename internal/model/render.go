@@ -1358,6 +1358,35 @@ func (m Model) sectionDivider(label string) string {
 		lipgloss.NewStyle().Foreground(ui.ColorBorder).Render(strings.Repeat("─", dashes)) + "\n\n"
 }
 
+// changelogRenderCache memoizes the last markdown conversion. The whole card
+// is rebuilt on every spinner frame while a refresh or an update runs (see the
+// spinner.TickMsg handler), so the body of a large release note would go
+// through the converter's regexes ~12 times a second to animate one glyph.
+// Same shape as readmeRenderCache, one entry keyed by (body, width) — the two
+// inputs markdownToLines has.
+//
+// It hangs off Model as a POINTER so a value receiver can still fill it, and
+// its method tolerates a nil receiver: most tests build Model{} literals and
+// must keep working without New().
+type changelogRenderCache struct {
+	body  string
+	width int
+	out   []mdLine
+	ok    bool
+}
+
+func (c *changelogRenderCache) lines(body string, width int) []mdLine {
+	if c == nil {
+		return markdownToLines(body, width)
+	}
+	if c.ok && c.width == width && c.body == body {
+		return c.out
+	}
+	out := markdownToLines(body, width)
+	*c = changelogRenderCache{body: body, width: width, out: out, ok: true}
+	return out
+}
+
 func (m Model) renderChangelogBlock(msg changelogMsg) string {
 	if msg.err != nil {
 		return ui.InfoStyle.Render("changelog unavailable: "+msg.err.Error()) + "\n"
@@ -1373,7 +1402,7 @@ func (m Model) renderChangelogBlock(msg changelogMsg) string {
 	// keep ANSI out of the rune-based wrap math. An empty result covers both
 	// an empty body and one the converter consumed whole (all comments, all
 	// separators).
-	lines := markdownToLines(msg.body, max(m.briefW-2, 10))
+	lines := m.changelogRender.lines(msg.body, max(m.briefW-2, 10))
 	if len(lines) == 0 {
 		sb.WriteString(ui.InfoStyle.Render("no release notes available.") + "\n")
 		return sb.String()
