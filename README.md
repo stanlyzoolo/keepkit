@@ -36,10 +36,12 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
 - **Track your tools** — add by GitHub URL or short name, cycle statuses
   (`active` / `trying` / `inactive`), keep a note and one tag per tool; rename a tool
   when the binary name differs from the repo name (e.g. `claude-code` → `claude`)
-- **Versions at a glance** — the installed version is detected locally (with Homebrew
-  and cargo fallbacks for tools that won't answer `--version`), the latest release
-  comes from GitHub; outdated tools are marked `↑` and gathered at the top of the list
-- **Update from inside the TUI** — one key detects the package manager
+- **Versions at a glance** — every row carries the installed version in its own
+  right-hand column (detected locally, with Homebrew and cargo fallbacks for tools
+  that won't answer `--version`); the latest release comes from GitHub. Outdated
+  tools are marked `↑`, gathered at the top of the list, and counted in the panel
+  title and the status bar
+- **Update from inside the TUI** — `enter` on the card detects the package manager
   (brew / go / cargo / pipx / uv / pnpm / bun / npm, or `update_cmd` from
   `meta.yaml`), asks for
   confirmation and streams the command output into panel `[3]` in real time
@@ -48,25 +50,28 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
 - **Docs panel** — panel `[3]` switches between the rendered repository README,
   `--help` output and the `man` page by hotkeys; in `--help` / `man` mode `j` / `k`
   walk flags and subcommands with the current entry spotlighted. Every README is
-  rendered in one house style: badges, logos, HTML wrappers, unclickable link URLs
-  and the pictographic emoji a terminal font cannot draw are stripped, and the
-  headings follow keepkit's own palette — code samples are left exactly as written
+  rendered in one house style: badges, logos, HTML wrappers, unclickable link URLs,
+  the pictographic emoji a terminal font cannot draw and the title page the card
+  already shows are stripped, and the headings follow keepkit's own palette — code
+  samples are left exactly as written
 - **Clickable card** — the repository and release links on the tool card open in the
   browser by mouse click, or by hotkeys for the repo and changelog pages
-- **Tags and grouping** — one tag per tool; `space` regroups the flat list under tag
-  divider headers and back
+- **Tags and grouping** — one tag per tool; `space` regroups the flat list under
+  section headers, led by everything with a pending update, and back
 - **Run tools** — launch any tracked tool in a new terminal tab (tmux / iTerm2 /
   kitty / WezTerm / Terminal.app) or in the current window, without leaving keepkit
 - **Search** — `/` filters by name and tag with match highlighting and an `N/M` counter
-- **GitHub API token** — an on-screen quota gauge plus token management in the `L`
-  overlay lifts the anonymous 60 requests/hour to 5000
+- **GitHub API token** — a quota gauge that appears when the quota is worth acting
+  on, plus token management in the `L` overlay, lifts the anonymous 60 requests/hour
+  to 5000
 - **Session error log** — errors (and only errors) are journaled to a per-session
   file, so a misbehaving session can be researched after the fact; no errors — no file
 - **Mouse support** — scrolling, panel focus, selection and card links all respond
   to the mouse
 
-Every panel shows its own keys in the help bar at the bottom, and `?` opens the full
-hotkeys overlay — every keybinding, grouped by panel. That is all you need to learn.
+The status bar carries the global keys, each panel's own actions sit in its footer,
+and `?` opens the full hotkeys overlay — every keybinding, grouped by panel. That is
+all you need to learn.
 
 ## Installation
 
@@ -116,20 +121,26 @@ by design.
 
 Run `keepkit` — a three-panel interface opens:
 
-- **`[1] Tools`** — the tracker list: search, tag grouping, track / untrack / rename,
-  and `enter` to run the selected tool.
-- **`[2] Brief`** — the tool card: repository, stars, languages, installed and latest
-  versions with the release date, status, note and tag. From here tools are updated,
-  the repo or changelog opened in the browser, and the card data force-refreshed.
+- **`[1] Tools`** — the tracker list, each row carrying its installed version:
+  search, tag grouping, track / untrack / rename, and `enter` to run the selected
+  tool.
+- **`[2] Brief`** — the tool card: the tool's name and repo, its tagline, then a
+  metrics strip (installed / latest / maintenance / stars) and a line carrying
+  languages, status, tag and note. From here `enter` installs a pending release, the
+  repo or changelog opens in the browser, and the card data is force-refreshed.
 - **`[3] Readme / Help / Man`** — the docs panel: the rendered repository README (the
   default), the tool's `--help` output or its `man` page. A README is cleaned up
   before rendering — badges, logos, HTML and pictographic emoji go, link text stays
-  without its URL, and code blocks are untouched. While an update runs, this panel
-  shows its live log instead.
+  without its URL, the title (and a slogan under it that only repeats the card's own)
+  is dropped so the panel opens on the first sentence that says something new, and
+  code blocks are untouched. While an update runs, this panel shows its live log
+  instead.
 
 Focus moves with `←` / `→` or the digits `1` / `2` / `3` (each panel's number is in
-its title). Each panel lists its keys in the help bar; press `?` any time for the
-full hotkeys overlay, grouped by panel.
+its title, and the focused panel is marked with `▸` as well as by color). The status
+bar carries the global keys — `enter` run, `/` search, `t` track, `u` untrack,
+`R` rename, `?` keys, `q` quit — while each panel's own actions sit in its footer.
+Press `?` any time for the full hotkeys overlay, grouped by panel.
 
 When you enter a GitHub URL (`https://github.com/owner/repo`, with `.git`, without a
 scheme, or in SSH form `git@github.com:owner/repo.git`), keepkit puts the short tool
@@ -138,10 +149,11 @@ A new tool gets the `trying` status.
 
 ## Updating tools
 
-![in-TUI update — the card shows installed vs latest, [u] detects the manager, the log streams into panel [3], refresh confirms the new version](demo/update.gif)
+![in-TUI update — the card shows installed vs latest, enter detects the manager, the log streams into panel [3], refresh confirms the new version](demo/update.gif)
 
-When the installed version lags behind the latest release (the `↑` marker), press `u`
-on the tool card. keepkit detects the package manager the binary was installed with:
+When the installed version lags behind the latest release (the `↑` marker), press
+`enter` on the tool card. keepkit detects the package manager the binary was
+installed with:
 
 - `brew` — a `/Cellar/<formula>/…` path → `brew upgrade <formula>`;
 - `go` — buildinfo (`go version -m`) with a `path` field → `go install <module>@latest`;
@@ -209,23 +221,23 @@ request, cached for 24 hours; on a build from a working copy the feature is off
 entirely. When a newer version exists, the status bar shows a notice:
 
 ```
-keepkit v0.5.0 available — [U] update  [X] dismiss
+keepkit v0.5.0 available — U update  X dismiss
 ```
 
 `U` updates through the same pipeline as any tool — manager detection, confirmation,
 live log in panel `[3]` (visible whichever tool is selected, even with an empty
 tracker). `X` folds the notice into a compact cell next to the API gauge where `U`
 keeps working; nothing is written to disk, so a dismissed notice returns on the next
-launch. After a successful update the bar reads `keepkit updated — [U] restart`:
+launch. After a successful update the bar reads `keepkit updated — U restart`:
 `U` replaces the running process with the new binary — same terminal tab, same tmux
 pane, same arguments. On Windows there is no in-place restart: keepkit prints
 `keepkit updated — run keepkit again` and exits.
 
 keepkit does not need to be in your own tracker for any of this — the check is built
 in. If it *is* tracked, its `update_cmd` governs the self-update exactly as it
-governs `u` on that row, and the release data is shared with its card. Good to know:
+governs `enter` on that row, and the release data is shared with its card. Good to know:
 
-- One update at a time: while any update runs, both `U` and `u` answer
+- One update at a time: while any update runs, both `U` and `enter` answer
   `another update is running` instead of starting a second one.
 - A Homebrew formula can lag behind the GitHub release: after updating, the installed
   version may still be older than the latest tag and the notice comes back. That is
@@ -248,16 +260,18 @@ its README in panel `[3]`; a cold start with a large list and no token can hit t
 limit — cards stay empty until the window resets. The keepkit release check adds one
 more request per 24 hours (none on a dev build).
 
-Quota usage is visible in the right corner of the status bar
-(`▮▮░░░░░░░░░░ 12/60`). The `L` key opens the API status overlay: token source,
-quota usage with a warning icon and the reset time; right in the overlay a token can
-be entered (validated before it is saved), removed or the numbers refreshed.
+Quota usage appears in the right corner of the status bar (`api ▮▮░░░░░░░░░░ 12/60`)
+once it is worth acting on — past half the window, or under 500 requests left — and
+the fill turns red as the window runs out. At rest it is not on screen at all. The
+`L` key opens the API status overlay: token source, quota usage with a warning icon
+and the reset time; right in the overlay a token can be entered (validated before it
+is saved), removed or the numbers refreshed.
 
 The token source follows environment precedence: the `GITHUB_TOKEN` variable always
 wins over the file. A token entered in the TUI is stored in `~/.config/keepkit/token`
 with `0600` permissions; an environment token is never written to disk. When the
 quota is exhausted, already-loaded cards are not erased, and a card with no data
-shows the `rate limited — press [L]` hint.
+shows the `rate limited — press L` hint.
 
 ## Data storage
 
