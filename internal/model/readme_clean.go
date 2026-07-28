@@ -99,6 +99,11 @@ var rcSpanMarkRe = regexp.MustCompile("\x00(\\d+)\x00")
 // rcMaskSpans replaces every inline code span with an opaque placeholder so the
 // removal rules cannot rewrite what a README meant to show verbatim. The second
 // result is the restore table for rcUnmaskSpans.
+//
+// Known limit: two spans separated by nothing but a removed construct come back
+// adjacent (`x`![i](u)`y` → `x``y`), which CommonMark then reads as one span.
+// It needs zero whitespace on either side of the construct, so no real prose
+// hits it; fixing it means inventing a separator the author did not write.
 func rcMaskSpans(s string) (string, []string) {
 	if !strings.Contains(s, "`") {
 		return s, nil
@@ -169,8 +174,11 @@ func rcUnmaskSpans(s string, spans []string) string {
 		return s
 	}
 	return rcSpanMarkRe.ReplaceAllStringFunc(s, func(m string) string {
+		// The index was written by rcMaskSpans and the sentinel is stripped from
+		// the input, so neither branch should ever fire; they are here because a
+		// broken invariant must degrade to a lost span, not panic mid-render.
 		idx, err := strconv.Atoi(strings.Trim(m, rcSpanMark))
-		if err != nil || idx < 0 || idx >= len(spans) {
+		if err != nil || idx >= len(spans) {
 			return ""
 		}
 		return spans[idx]
@@ -194,9 +202,17 @@ var (
 	// against a fixed list rather than a generic identifier shape, which is
 	// what lets autolinks (<https://…>, <user@host>) and prose angle brackets
 	// (Vec<String>, a < b) through untouched — an unknown name is left as
-	// written, the honest degradation.
-	rcHTMLTagRe = regexp.MustCompile(`(?is)</?(?:` + strings.Join(rcHTMLNames, "|") + `)\b(?:\s[^<>]*)?/?>`)
+	// written, the honest degradation. The trailing \b on the name is what makes
+	// the alternation order-independent: Go's regexp picks the leftmost-FIRST
+	// branch, so without it "a" would claim "<abbr>" and leave "br>" behind.
+	rcHTMLTagRe = regexp.MustCompile(`(?is)</?(?:` + strings.Join(rcHTMLNames, "|") + `)\b` + rcTagAttrs + `/?>`)
 )
+
+// rcTagAttrs matches the attribute part of an HTML tag. Quoted values are
+// matched whole, because a flat [^<>]* ends the tag at the first ">" it sees —
+// including one inside a value, which left `<img alt="a > b" src="x.png">`
+// rendering as ` b" src="x.png">`.
+const rcTagAttrs = `(?:\s(?:"[^"]*"|'[^']*'|[^<>"'])*)?`
 
 // rcHTMLNames is the tag allowlist for rcHTMLTagRe: the elements READMEs
 // actually use. The bodied names appear here too, so a stray closing tag left
@@ -217,7 +233,7 @@ var rcHTMLNames = []string{
 func rcCompileBodyElems(names ...string) []*regexp.Regexp {
 	res := make([]*regexp.Regexp, 0, len(names))
 	for _, n := range names {
-		res = append(res, regexp.MustCompile(`(?is)<`+n+`\b[^<>]*>.*?</`+n+`\s*>`))
+		res = append(res, regexp.MustCompile(`(?is)<`+n+`\b`+rcTagAttrs+`>.*?</`+n+`\s*>`))
 	}
 	return res
 }
@@ -226,17 +242,30 @@ func rcCompileBodyElems(names ...string) []*regexp.Regexp {
 // mdLinkRe — the same grammar fact, a different consumer.
 var (
 	// A link-reference definition line: pure metadata, and after image removal
-	// and link unwrapping nothing points at it any more.
-	rcLinkDefRe = regexp.MustCompile(`^[ \t]{0,3}\[([^\]]+)\]:[ \t]*\S`)
+	// and link unwrapping nothing points at it any more. Deleting a line of
+	// someone's README is the most destructive thing this pass does, so the
+	// shape is strict — a single-token destination (or an <angle> one) and at
+	// most a quoted title, nothing else. A looser "[label]: <non-space>" ate
+	// "[1]: first item explained", an ordinary line of prose.
+	rcLinkDefRe = regexp.MustCompile(`^[ \t]{0,3}\[([^\]]+)\]:[ \t]*(?:<[^<>]*>|\S+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$`)
 
-	rcRefImageRe = regexp.MustCompile(`!\[([^\]]*)\]\[([^\]]*)\]`)
-	rcRefLinkRe  = regexp.MustCompile(`\[([^\]]*)\]\[([^\]]*)\]`)
+	// The reference forms, [text][label] and ![alt][label], plus their collapsed
+	// [text][] variants whose label is the text. Gated on a declared label for
+	// the same reason the shortcut form below is: ungated, prose carrying two
+	// bracket pairs in a row — "the value arr[i][j] is used" — came out as
+	// "the value arri is used".
+	rcRefRe = regexp.MustCompile(`(!?)\[([^\]]*)\]\[([^\]]*)\]`)
 
 	// The shortcut form, [label] with the definition supplying the URL. It runs
 	// last, when every bracketed construct with a destination is already gone,
 	// and only for labels a definition actually declared — otherwise a task-list
 	// "[x]" or a prose "[experimental]" would lose its brackets.
 	rcShortcutRe = regexp.MustCompile(`(!?)\[([^\]]*)\]`)
+
+	// A setext underline, kept for one job only: dropping the one left orphaned
+	// when removal emptied the title above it. Only the "=" form — a "-" run is
+	// equally a thematic break, and leaving it renders a rule either way.
+	rcSetextRe = regexp.MustCompile(`^[ \t]{0,3}=+[ \t]*$`)
 
 	// A leading block marker, stripped only to ask "did removal leave this line
 	// with nothing to say?". The heading and list forms require whitespace (or
@@ -320,16 +349,38 @@ func cleanReadmeMarkdown(s string) string {
 	// here keeps a direct caller from smuggling a placeholder into the restore
 	// table.
 	s = strings.ReplaceAll(s, rcSpanMark, "")
+	// CRLF is normalized for markdownToLines' reason, and this pass needs it
+	// just as badly: a "```\r" closing fence never matches rcFenceCloseRe, so
+	// the first fence protects everything to EOF and nothing is cleaned at all.
+	// Production is safe (cleanTerminalOutput drops \r first) but every test
+	// calls this function directly, which is exactly the path that broke.
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
 
 	segs := rcSegments(s)
-	labels := rcDefinedLabels(segs)
-	out := make([]string, 0, len(segs))
-	for _, seg := range segs {
+
+	// Two phases, because the label set has to be right before a single line is
+	// rewritten. Masking and the segment-wide HTML rules run first — collecting
+	// labels ahead of them let a "[x]: url" commented out with <!-- --> gate the
+	// unwrapping, and eat the task-list "[x]" the gate exists to protect.
+	spans := make([][]string, len(segs))
+	for i, seg := range segs {
 		if seg.protected {
-			out = append(out, seg.text)
 			continue
 		}
-		out = append(out, rcCleanSegment(seg.text, labels))
+		masked, sp := rcMaskSpans(seg.text)
+		segs[i].text = rcStripHTML(masked)
+		spans[i] = sp
+	}
+
+	labels := rcDefinedLabels(segs)
+	out := make([]string, len(segs))
+	for i, seg := range segs {
+		if seg.protected {
+			out[i] = seg.text
+			continue
+		}
+		out[i] = rcUnmaskSpans(rcCollapseBlankRuns(rcCleanLines(seg.text, labels)), spans[i])
 	}
 	return strings.Join(out, "\n")
 }
@@ -343,8 +394,12 @@ func rcDefinedLabels(segs []rcSegment) map[string]bool {
 		if seg.protected {
 			continue
 		}
-		for _, line := range strings.Split(seg.text, "\n") {
-			if m := rcLinkDefRe.FindStringSubmatch(line); m != nil {
+		lines := strings.Split(seg.text, "\n")
+		for i, isDef := range rcDefinitionLines(lines) {
+			if !isDef {
+				continue
+			}
+			if m := rcLinkDefRe.FindStringSubmatch(lines[i]); m != nil {
 				labels[rcNormalizeLabel(m[1])] = true
 			}
 		}
@@ -352,20 +407,32 @@ func rcDefinedLabels(segs []rcSegment) map[string]bool {
 	return labels
 }
 
+// rcDefinitionLines marks which lines are link-reference definitions. Matching
+// the shape is not enough: CommonMark forbids a definition from interrupting a
+// paragraph, so a line only counts when what sits above it is the start of the
+// segment, a blank line, or another definition. Without that rule a paragraph
+// reading "Some prose here / [note]: this matters / more prose" silently lost
+// its middle line.
+func rcDefinitionLines(lines []string) []bool {
+	defs := make([]bool, len(lines))
+	inParagraph := false
+	for i, line := range lines {
+		switch {
+		case strings.TrimSpace(line) == "":
+			inParagraph = false
+		case !inParagraph && rcLinkDefRe.MatchString(line):
+			defs[i] = true
+		default:
+			inParagraph = true
+		}
+	}
+	return defs
+}
+
 // rcNormalizeLabel folds a reference label the way CommonMark matches them:
 // case-insensitively, with internal whitespace collapsed.
 func rcNormalizeLabel(s string) string {
 	return strings.ToLower(strings.Join(strings.Fields(s), " "))
-}
-
-// rcCleanSegment applies every removal rule to one cleanable segment, with
-// inline code spans masked out for the duration.
-func rcCleanSegment(s string, labels map[string]bool) string {
-	masked, spans := rcMaskSpans(s)
-	masked = rcStripHTML(masked)
-	masked = rcCleanLines(masked, labels)
-	masked = rcCollapseBlankRuns(masked)
-	return rcUnmaskSpans(masked, spans)
 }
 
 // rcStripHTML runs the segment-wide HTML rules. Comments go first: a script or
@@ -382,14 +449,23 @@ func rcStripHTML(s string) string {
 }
 
 // rcCleanLines applies the per-line rules and drops what removal emptied. Both
-// the tidy-up and the drop are gated on the line having actually changed, so an
-// untouched line keeps its trailing spaces (a hard line break) and a "- - -"
-// thematic break is never mistaken for an emptied bullet.
+// the tidy-up and the drop are gated on the line having actually changed, so a
+// "- - -" thematic break is never mistaken for an emptied bullet.
 func rcCleanLines(s string, labels map[string]bool) string {
 	lines := strings.Split(s, "\n")
+	defs := rcDefinitionLines(lines)
 	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if rcLinkDefRe.MatchString(line) {
+	// A setext title is two lines, and removal only ever empties the first;
+	// without this the underline outlives it as a visible row of equals signs.
+	dropUnderline := false
+	for i, line := range lines {
+		if dropUnderline {
+			dropUnderline = false
+			if rcSetextRe.MatchString(line) {
+				continue
+			}
+		}
+		if defs[i] {
 			continue
 		}
 		cleaned := rcCleanLine(line, labels)
@@ -399,6 +475,7 @@ func rcCleanLines(s string, labels map[string]bool) string {
 		}
 		cleaned = rcTidyLine(line, cleaned)
 		if rcLineContent(cleaned) == "" {
+			dropUnderline = true
 			continue
 		}
 		out = append(out, cleaned)
@@ -413,12 +490,34 @@ func rcCleanLines(s string, labels map[string]bool) string {
 // link is reduced to its text first and the pictograph is then found there.
 func rcCleanLine(line string, labels map[string]bool) string {
 	line = mdImageRe.ReplaceAllString(line, "")
-	line = rcRefImageRe.ReplaceAllString(line, "")
 	line = mdLinkRe.ReplaceAllString(line, "$1")
-	line = rcRefLinkRe.ReplaceAllString(line, "$1")
+	line = rcUnwrapRefs(line, labels)
 	line = rcUnwrapShortcuts(line, labels)
 	line = rcStripEmoji(line)
 	return rcStripShortcodes(line)
+}
+
+// rcUnwrapRefs resolves [text][label] and ![alt][label] — and the collapsed
+// [text][] form, whose label is its own text — for declared labels only. An
+// undeclared one is left as written, which is also what a browser shows.
+func rcUnwrapRefs(s string, labels map[string]bool) string {
+	if len(labels) == 0 || !strings.Contains(s, "][") {
+		return s
+	}
+	return rcRefRe.ReplaceAllStringFunc(s, func(m string) string {
+		g := rcRefRe.FindStringSubmatch(m)
+		label := g[3]
+		if strings.TrimSpace(label) == "" {
+			label = g[2]
+		}
+		if !labels[rcNormalizeLabel(label)] {
+			return m
+		}
+		if g[1] == "!" {
+			return ""
+		}
+		return g[2]
+	})
 }
 
 // rcUnwrapShortcuts resolves the [label] form for declared labels only.
@@ -442,23 +541,39 @@ func rcUnwrapShortcuts(s string, labels map[string]bool) string {
 // the ORIGINAL line, not the cleaned one: list nesting depends on it, while a
 // leading "🚀 " that removal turned into a space would otherwise become an
 // indent the author never wrote — four of them and markdown reads the line as
-// an indented code block.
+// an indented code block. A hard line break is carried over for the same
+// reason: two trailing spaces are markup, and removal inside the line has no
+// business retiring them.
 func rcTidyLine(orig, cleaned string) string {
 	indent := orig[:len(orig)-len(strings.TrimLeft(orig, " \t"))]
 	body := strings.TrimSpace(cleaned)
-	return indent + rcInnerSpacesRe.ReplaceAllString(body, " ")
+	if body == "" {
+		return indent
+	}
+	body = rcInnerSpacesRe.ReplaceAllString(body, " ")
+	if strings.HasSuffix(orig, "  ") {
+		body += "  "
+	}
+	return indent + body
 }
 
 // rcLineContent strips leading block markers so the caller can ask whether a
 // line still says anything. "## 🚀" cleans to "##", which is a heading with no
 // content — glamour would render it as a styled blank row.
+//
+// The loop slices rather than calling ReplaceAllString, and that is not a
+// micro-optimization: the pattern is ^-anchored, so each replace could only
+// ever rewrite the head, yet it copied the whole remaining line every pass.
+// One line of "🚀 " + 262144 "- " markers — a 512 KiB README, exactly the cap
+// version.getReadme enforces — took 8.4 s of a synchronous Update(), i.e. the
+// whole TUI frozen on untrusted remote input. Slicing makes it linear.
 func rcLineContent(line string) string {
 	for {
-		next := rcBlockMarkerRe.ReplaceAllString(line, "")
-		if next == line {
+		loc := rcBlockMarkerRe.FindStringIndex(line)
+		if loc == nil {
 			break
 		}
-		line = next
+		line = line[loc[1]:]
 	}
 	return strings.TrimSpace(line)
 }

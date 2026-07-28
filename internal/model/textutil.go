@@ -158,9 +158,17 @@ func wrapLine(line string, width int) []string {
 // CommonMark flanking rule in miniature), so "2 * 3 * 4" keeps its asterisks;
 // the underscore pair additionally requires a non-word rune outside both
 // delimiters, or an identifier like update_cmd would lose its underscore.
+// mdDest matches an inline link destination. It allows ONE level of nested
+// parentheses, which is what a flat "[^)]*" got wrong: a shields.io badge
+// (…/badge/a-(b)-blue.svg) or a Wikipedia article (…/wiki/Foo_(bar)) stopped at
+// the inner ")" and left the rest of the URL on screen as text. Deeper nesting
+// needs recursion, which RE2 does not have; an unbalanced "(" matches nothing
+// and the construct is left as written.
+const mdDest = `[^()]*(?:\([^()]*\)[^()]*)*`
+
 var (
-	mdImageRe    = regexp.MustCompile(`!\[([^\]]*)\]\([^)]*\)`)
-	mdLinkRe     = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+	mdImageRe    = regexp.MustCompile(`!\[([^\]]*)\]\(` + mdDest + `\)`)
+	mdLinkRe     = regexp.MustCompile(`\[([^\]]*)\]\(` + mdDest + `\)`)
 	mdAutolinkRe = regexp.MustCompile(`<((?:https?|ftp|mailto):[^>\s]+)>`)
 	mdHTMLTagRe  = regexp.MustCompile(`<[^<>]*>`)
 

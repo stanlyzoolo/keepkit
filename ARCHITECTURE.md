@@ -144,7 +144,12 @@ before rendering. It rests on one rule — **code is never rewritten** — becau
 block and an inline span are exactly how a README *shows* the markup being deleted, so
 fences are segmented out (an unterminated one protects to EOF, since the
 `readmeMaxBytes` cut can land mid-fence) and inline spans are masked for the duration.
-Autolinks and bare URLs survive: there the URL *is* the content. `keepkitStyle` then
+Autolinks and bare URLs survive: there the URL *is* the content. Every rule that could
+swallow ordinary prose is gated — a `[label]` form is unwrapped only for labels a
+definition declared (ungated, `arr[i][j]` became `arri`), and a definition line is
+deleted only when it cannot be part of a paragraph. Because the pass runs inside
+`Update()` on up to `readmeMaxBytes`, no step in it may be superlinear;
+`TestCleanReadmeMarkdownPathologicalInputIsFast` is the guard. `keepkitStyle` then
 clones the standard config rather than building one, so a glamour upgrade that adds a
 field cannot leave the panel with a hole in it — and because the package globals it
 clones hold pointers that `styles.DefaultStyles` aliases, every override assigns a fresh

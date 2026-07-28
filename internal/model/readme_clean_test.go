@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // segJoin reassembles what rcSegments split, which must reproduce the input
@@ -252,6 +253,44 @@ func TestCleanReadmeMarkdownImagesAndLinks(t *testing.T) {
 			in:   "## [Installation](#installation)\n",
 			want: "## Installation\n",
 		},
+		{
+			// A flat "[^)]*" destination stopped at the inner ")" and left the
+			// rest of the URL on screen — the exact noise this pass removes.
+			name: "badge url carrying parentheses goes whole",
+			in:   "![alt](https://img.shields.io/badge/a-(b)-blue.svg)\n",
+			want: "",
+		},
+		{
+			name: "link url carrying parentheses",
+			in:   "See [Foo](https://en.wikipedia.org/wiki/Foo_(bar)) here.\n",
+			want: "See Foo here.\n",
+		},
+		{
+			name: "ten-badge header folds to one blank line",
+			in:   "# T\n\n![a](x)\n![b](y)\n![c](z)\n\nbody\n",
+			want: "# T\n\nbody\n",
+		},
+		{
+			// Two trailing spaces are markup; a removal inside the line has no
+			// business retiring them.
+			name: "hard line break survives a removal",
+			in:   "see [docs](https://example.com)  \nsecond\n",
+			want: "see docs  \nsecond\n",
+		},
+		{
+			// Removal empties the title, and the underline must go with it
+			// rather than staying behind as a row of equals signs.
+			name: "orphaned setext underline goes with its title",
+			in:   "\U0001F680\n=====\n\nbody\n",
+			want: "\nbody\n",
+		},
+		{
+			// A stray backtick must not pair with one further down and exempt
+			// everything between from cleaning.
+			name: "stray backtick does not protect the rest of the document",
+			in:   "stray ` here\n\n![b](https://b.svg)\n\ntail\n",
+			want: "stray ` here\n\ntail\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -312,6 +351,21 @@ func TestCleanReadmeMarkdownHTML(t *testing.T) {
 			name: "br keeps the line",
 			in:   "first<br>\nsecond\n",
 			want: "first\nsecond\n",
+		},
+		{
+			// A flat [^<>]* ends the tag at the ">" inside the quoted value and
+			// leaves the tail of the tag on screen.
+			name: "attribute value carrying a greater-than",
+			in:   "<img alt=\"a > b\" src=\"x.png\">\n\n# Title\n",
+			want: "\n# Title\n",
+		},
+		{
+			// The label set is collected AFTER the HTML rules run: gathering it
+			// first let a commented-out definition gate the unwrapping and eat
+			// the task-list bracket the gate exists to protect.
+			name: "label declared inside a comment gates nothing",
+			in:   "<!--\n[x]: https://example.com\n-->\n\n- [x] done\n",
+			want: "\n- [x] done\n",
 		},
 	}
 	for _, tt := range tests {
@@ -434,6 +488,12 @@ func TestCleanReadmeMarkdownLeavesContentAlone(t *testing.T) {
 		{"bmp symbols a terminal font carries", "✓ done ★ starred → next\n"},
 		{"task list brackets", "- [x] done\n- [ ] todo\n"},
 		{"undeclared shortcut label", "marked [experimental] for now\n"},
+		{"undeclared reference link", "see [text][nope] here\n"},
+		// Two bracket pairs in a row are an array index far more often than a
+		// reference link, which is why the reference form is label-gated too.
+		{"array index in prose", "the value arr[i][j] is used\n"},
+		{"definition-shaped line inside a paragraph", "Some prose here\n[note]: this matters\nmore prose\n"},
+		{"numbered prose line", "[1]: first item explained\n"},
 		{"thematic break", "above\n\n- - -\n\nbelow\n"},
 		{"issue reference", "#123 fixed the crash\n"},
 		{"hard line break", "first  \nsecond\n"},
@@ -443,6 +503,44 @@ func TestCleanReadmeMarkdownLeavesContentAlone(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := cleanReadmeMarkdown(tt.in); got != tt.in {
 				t.Errorf("cleanReadmeMarkdown(%q) = %q, want it unchanged", tt.in, got)
+			}
+		})
+	}
+}
+
+// CRLF is normalized on entry. Without it a "```\r" closing fence never
+// matches, the first fence protects everything to EOF, and nothing is cleaned
+// at all — invisible to a suite that only ever feeds LF.
+func TestCleanReadmeMarkdownNormalizesCRLF(t *testing.T) {
+	const lf = "# T\n\n```go\ncode\n```\n\n![b](https://b.svg)\n\ntail\n"
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+
+	want := cleanReadmeMarkdown(lf)
+	if got := cleanReadmeMarkdown(crlf); got != want {
+		t.Errorf("CRLF input\n = %q\nwant the LF result %q", got, want)
+	}
+	if strings.Contains(want, "b.svg") {
+		t.Fatalf("fixture is not exercising the badge removal: %q", want)
+	}
+}
+
+// The pass runs synchronously inside Update() on up to readmeMaxBytes of
+// untrusted remote markdown, so a pathological input must not freeze the TUI.
+// The shape that did: one line of leading block markers, which made
+// rcLineContent copy the remaining line once per marker — 8.4 s at the cap.
+func TestCleanReadmeMarkdownPathologicalInputIsFast(t *testing.T) {
+	const budget = 2 * time.Second
+	inputs := map[string]string{
+		"leading bullets":  "\U0001F680 " + strings.Repeat("- ", 262144),
+		"leading quotes":   "\U0001F680 " + strings.Repeat("> ", 262144),
+		"leading headings": "\U0001F680 " + strings.Repeat("# ", 262144),
+	}
+	for name, in := range inputs {
+		t.Run(name, func(t *testing.T) {
+			start := time.Now()
+			cleanReadmeMarkdown(in)
+			if elapsed := time.Since(start); elapsed > budget {
+				t.Errorf("%d bytes took %v, want under %v", len(in), elapsed, budget)
 			}
 		})
 	}

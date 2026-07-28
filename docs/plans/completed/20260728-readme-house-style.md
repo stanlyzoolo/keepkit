@@ -383,6 +383,45 @@ timeouts/limits, storage-paths table — не затронуты; test seams —
 исправлен, новых нет; README Stack vs `go.mod` direct deps — расхождение → исправлено
 (README.md, goldmark-emoji added; the two lists now match exactly, 10 entries).
 
+## Review findings (PR #47, 2026-07-28) — fixed on the branch
+
+A full review of the finished branch found nine confirmed defects that the whole test
+suite, `go vet` and `golangci-lint` all passed over. All are fixed; each has a test row.
+
+1. **`rcLineContent` was quadratic — 8.4 s of frozen TUI.** The `^`-anchored pattern went
+   through `ReplaceAllString`, copying the remaining line once per leading marker. One
+   line of `🚀 ` + 262144 `- ` (512 KiB, exactly `readmeMaxBytes`) inside a synchronous
+   `Update()`, driven by untrusted remote markdown. Now slices; guarded by a perf test.
+2. **A URL containing `)` leaked its tail on screen** — shields.io badges and Wikipedia
+   links routinely carry one. `mdDest` now allows one level of nested parentheses, which
+   fixes the card's converter at the same time.
+3. **A paragraph line shaped like a link definition was deleted.** `[note]: this matters`
+   mid-paragraph vanished. Now needs a plausible destination *and* may not interrupt a
+   paragraph.
+4. **The reference form `[text][ref]` was ungated** while the shortcut form three lines
+   below it was carefully gated for the identical reason: `arr[i][j]` → `arri`.
+5. **A label declared inside an HTML comment gated the unwrapping** — the label set was
+   collected before the HTML rules ran, so a commented-out `[x]: url` ate a task list's
+   `[x]`. Collection moved after stripping.
+6. **An HTML attribute containing `>`** ended the tag early: `<img alt="a > b" src="x">`
+   rendered as ` b" src="x">`. The attribute pattern now matches quoted values whole.
+7. **An orphaned setext underline outlived its dropped title**, leaving a row of equals
+   signs.
+8. **CRLF fed directly to `cleanReadmeMarkdown` disabled the entire pass** (a `` ```\r ``
+   closer never matches, so the first fence protected to EOF). Production was safe;
+   every unit test took the broken path. Normalized on entry, like `markdownToLines`.
+9. **The hard-line-break claim in the code comment and in CLAUDE.md was false** — two
+   trailing spaces were dropped whenever the line changed. `rcTidyLine` now carries them.
+
+Documented rather than fixed: two code spans separated by nothing but a removed
+construct come back adjacent (`` `x`![i](u)`y` `` → `` `x``y` ``). It needs zero
+whitespace on both sides, and any fix invents a separator the author did not write.
+
+Test gaps closed along the way: a pathological-input perf guard, paren URLs, CRLF, the
+ungated reference form, the definition-in-a-paragraph case, the ten-badge fold, the
+stray-backtick end-to-end case, and a table-cell autolink row that actually kills the
+`WithInlineTableLinks` mutation (verified by removing the option — the test fails).
+
 ## Post-Completion
 
 **Manual verification:**

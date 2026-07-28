@@ -121,11 +121,13 @@ func TestKeepkitStyleLeavesGlobalsUntouched(t *testing.T) {
 // content, not styling.
 func TestRenderReadmeHouseStyle(t *testing.T) {
 	tests := []struct {
-		name    string
-		raw     string
-		want    []string
-		absent  []string
-		noEmpty bool
+		name   string
+		raw    string
+		want   []string
+		absent []string
+		// sameLine[0] must render on the same line as sameLine[1] — the only way
+		// to pin a table cell's content against glamour's footnote layout.
+		sameLine [2]string
 	}{
 		{
 			name:   "link keeps its text and drops the href",
@@ -144,6 +146,16 @@ func TestRenderReadmeHouseStyle(t *testing.T) {
 			name: "autolink survives",
 			raw:  "Read <https://example.com/docs> first.\n",
 			want: []string{"https://example.com/docs"},
+		},
+		{
+			// What WithInlineTableLinks is actually for: the preprocessor
+			// unwrapped every inline link already, so only an autolink can still
+			// reach a cell — and without the option glamour moves it to a
+			// numbered footnote under the table instead of leaving it in place.
+			name:     "table autolink stays in its cell",
+			raw:      "| topic | where |\n|---|---|\n| usage | <https://example.com/m> |\n",
+			want:     []string{"https://example.com/m"},
+			sameLine: [2]string{"usage", "https://example.com/m"},
 		},
 		{
 			name: "bare url survives",
@@ -169,6 +181,17 @@ func TestRenderReadmeHouseStyle(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
+		// The double-space check belongs on the preprocessed source, where a
+		// removal artifact would live — glamour pads table cells with runs of
+		// spaces of its own, which is layout, not residue. It is also
+		// background-independent, so it runs once rather than per variant.
+		t.Run(tt.name+"/no removal residue", func(t *testing.T) {
+			for _, line := range strings.Split(cleanReadmeMarkdown(cleanTerminalOutput(tt.raw)), "\n") {
+				if strings.Contains(strings.TrimSpace(line), "  ") {
+					t.Errorf("removal left a double space: %q", line)
+				}
+			}
+		})
 		for _, dark := range []bool{true, false} {
 			name := tt.name + "/light"
 			if dark {
@@ -186,18 +209,22 @@ func TestRenderReadmeHouseStyle(t *testing.T) {
 						t.Errorf("unexpected %q\n--- rendered ---\n%s", a, plain)
 					}
 				}
-				// The double-space check belongs on the preprocessed source,
-				// where a removal artifact would live — glamour pads table
-				// cells with runs of spaces of its own, which is layout, not
-				// residue.
-				for _, line := range strings.Split(cleanReadmeMarkdown(cleanTerminalOutput(tt.raw)), "\n") {
-					if strings.Contains(strings.TrimSpace(line), "  ") {
-						t.Errorf("removal left a double space: %q", line)
-					}
+				if tt.sameLine[0] != "" && !sharesLine(plain, tt.sameLine[0], tt.sameLine[1]) {
+					t.Errorf("%q and %q are not on one line\n--- rendered ---\n%s", tt.sameLine[0], tt.sameLine[1], plain)
 				}
 			})
 		}
 	}
+}
+
+// sharesLine reports whether some line of s carries both needles.
+func sharesLine(s, a, b string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, a) && strings.Contains(line, b) {
+			return true
+		}
+	}
+	return false
 }
 
 // A README that is nothing but badges and HTML cleans down to nothing, and an

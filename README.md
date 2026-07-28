@@ -49,8 +49,8 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
   `--help` output and the `man` page by hotkeys; in `--help` / `man` mode `j` / `k`
   walk flags and subcommands with the current entry spotlighted. Every README is
   rendered in one house style: badges, logos, HTML wrappers, unclickable link URLs
-  and emoji are stripped, and the headings follow keepkit's own palette — code
-  samples are left exactly as written
+  and the pictographic emoji a terminal font cannot draw are stripped, and the
+  headings follow keepkit's own palette — code samples are left exactly as written
 - **Clickable card** — the repository and release links on the tool card open in the
   browser by mouse click, or by hotkeys for the repo and changelog pages
 - **Tags and grouping** — one tag per tool; `space` regroups the flat list under tag
@@ -123,9 +123,9 @@ Run `keepkit` — a three-panel interface opens:
   the repo or changelog opened in the browser, and the card data force-refreshed.
 - **`[3] Readme / Help / Man`** — the docs panel: the rendered repository README (the
   default), the tool's `--help` output or its `man` page. A README is cleaned up
-  before rendering — badges, logos, HTML and emoji go, link text stays without its
-  URL, and code blocks are untouched. While an update runs, this panel shows its live
-  log instead.
+  before rendering — badges, logos, HTML and pictographic emoji go, link text stays
+  without its URL, and code blocks are untouched. While an update runs, this panel
+  shows its live log instead.
 
 Focus moves with `←` / `→` or the digits `1` / `2` / `3` (each panel's number is in
 its title). Each panel lists its keys in the help bar; press `?` any time for the
