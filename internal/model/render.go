@@ -975,8 +975,15 @@ func (m Model) buildToolRows() (string, []int, []int) {
 	w := max(m.toolsW-1, 1) // the scrollbar owns the last column
 
 	toolLine := make([]int, len(matches))
-	lineTool := make([]int, 0, len(matches))
-	line := 0
+	lineTool := make([]int, 0, len(matches)+1)
+	// A blank top row — the vertical twin of panelGutter: the list starts one
+	// row in from the frame instead of against the title spliced into it. It is
+	// a real screen line, so it goes into the map as a non-selectable one and
+	// every tool below it shifts by one, which is exactly what the maps exist
+	// for.
+	sb.WriteString("\n")
+	lineTool = append(lineTool, -1)
+	line := 1
 	prevGroup := ""
 
 	for i, sm := range matches {
@@ -1198,11 +1205,13 @@ func (m *Model) syncToolsViewport() {
 		return
 	}
 	line := m.selectedLine()
-	// Scrolling up reveals the group header directly above the selection too:
-	// clamping to the tool's own line alone would park the first group's header
-	// one row above the window, with no keyboard way to bring it back.
+	// Scrolling up reveals whatever non-selectable rows sit directly above the
+	// selection — its group header and the blank row above that, or the blank
+	// row the list opens with. Clamping to the tool's own line alone parked them
+	// above the window with no keyboard way to bring them back, so the first
+	// group rendered as if it had no header at all.
 	top := line
-	if i := line - 1; i >= 0 && i < len(m.lineTool) && m.lineTool[i] == -1 {
+	for i := top - 1; i >= 0 && i < len(m.lineTool) && m.lineTool[i] == -1; i-- {
 		top = i
 	}
 	if top < m.toolsViewport.YOffset {
@@ -1479,6 +1488,10 @@ func (m Model) buildCard() (string, map[int]string) {
 	card, hasCard := m.repoCards[t.Name]
 
 	var sb strings.Builder
+	// The card starts one row in from the frame, like the tool list. buildCard
+	// records its clickable lines while writing, so every index below follows
+	// this row on its own.
+	sb.WriteString("\n")
 
 	// Title: the tool's name is the single largest thing on the screen, so it
 	// takes the brightest role and the only bold in the block. The repo ref
@@ -1554,7 +1567,7 @@ func (m Model) buildCard() (string, map[int]string) {
 		changelogContent = s.Note.Render("loading changelog…") + "\n"
 	}
 	if changelogContent != "" {
-		sb.WriteString("\n\n")
+		sb.WriteString("\n")
 		heading, linked := m.changelogHeading(t, inner, changelogURL != "")
 		// Registered only when the heading actually shows the "release notes ↗"
 		// affordance: a row that looks like plain text must not open a browser.

@@ -259,12 +259,12 @@ func TestMouseBriefLinkClick(t *testing.T) {
 	t.Run("other lines do nothing", func(t *testing.T) {
 		m := newModel(t)
 		_, links := m.buildCard()
-		// Line 1 is the tagline (line 0 is the title, which carries the repo
-		// link), so it is never clickable.
-		if _, ok := links[1]; ok {
-			t.Fatalf("setup: line 1 unexpectedly linked")
+		// Line 0 is the card's blank top row and line 1 the title, which carries
+		// the repo link; line 2 is the tagline, never clickable.
+		if _, ok := links[2]; ok {
+			t.Fatalf("setup: line 2 unexpectedly linked")
 		}
-		updated, cmd := m.Update(leftClick(briefX(m), 1+2))
+		updated, cmd := m.Update(leftClick(briefX(m), 2+2))
 		if cmd != nil {
 			t.Errorf("click on an unlinked line dispatched a command")
 		}

@@ -80,7 +80,7 @@ func TestGroupedOrderingLeadsWithUpdates(t *testing.T) {
 	if got, want := displayedNames(m), []string{"jq", "rg", "fd", "git", "lazygit"}; !sameNames(got, want) {
 		t.Errorf("grouped order = %v, want %v (updates section first)", got, want)
 	}
-	if content := stripANSI(m.renderLeftContent()); !strings.HasPrefix(content, " updates ") {
+	if content := stripANSI(m.renderLeftContent()); !strings.HasPrefix(content, "\n updates ") {
 		t.Errorf("grouped content does not lead with the updates header:\n%s", content)
 	}
 }
@@ -101,28 +101,33 @@ func TestGroupingSuppressedWhileSearching(t *testing.T) {
 	if strings.Contains(stripANSI(content), "─ cli") {
 		t.Errorf("search results carry a group divider header:\n%s", stripANSI(content))
 	}
+	// The blank top row shifts every tool by one, and nothing else does: with
+	// no headers the maps are the identity offset by that single row.
 	for i := range toolLine {
-		if toolLine[i] != i || lineTool[i] != i {
-			t.Fatalf("maps are not the identity while searching: toolLine=%v lineTool=%v", toolLine, lineTool)
+		if toolLine[i] != i+1 || lineTool[i+1] != i {
+			t.Fatalf("maps are not the flat list's while searching: toolLine=%v lineTool=%v", toolLine, lineTool)
 		}
 	}
 }
 
-// TestBuildToolRowsMapsFlat: with grouping off there are no header rows, so
-// both maps are the identity — every downstream translation is a no-op and the
-// pre-grouping behaviour is bit-for-bit unchanged.
+// TestBuildToolRowsMapsFlat: with grouping off the only non-tool row is the
+// blank one at the top, so every tool sits exactly one line below its index and
+// the maps stay each other's inverse.
 func TestBuildToolRowsMapsFlat(t *testing.T) {
 	m := groupTestModel(t)
 	_, toolLine, lineTool := m.buildToolRows()
-	if len(toolLine) != 5 || len(lineTool) != 5 {
-		t.Fatalf("map sizes = %d/%d, want 5/5", len(toolLine), len(lineTool))
+	if len(toolLine) != 5 || len(lineTool) != 6 {
+		t.Fatalf("map sizes = %d/%d, want 5/6 (5 tools under one blank row)", len(toolLine), len(lineTool))
+	}
+	if lineTool[0] != -1 {
+		t.Errorf("lineTool[0] = %d, want -1 for the blank top row", lineTool[0])
 	}
 	for i := range toolLine {
-		if toolLine[i] != i {
-			t.Errorf("toolLine[%d] = %d, want %d", i, toolLine[i], i)
+		if toolLine[i] != i+1 {
+			t.Errorf("toolLine[%d] = %d, want %d", i, toolLine[i], i+1)
 		}
-		if lineTool[i] != i {
-			t.Errorf("lineTool[%d] = %d, want %d", i, lineTool[i], i)
+		if lineTool[i+1] != i {
+			t.Errorf("lineTool[%d] = %d, want %d", i+1, lineTool[i+1], i)
 		}
 	}
 }
@@ -136,14 +141,15 @@ func TestBuildToolRowsMapsGrouped(t *testing.T) {
 	content, toolLine, lineTool := m.buildToolRows()
 	lines := strings.Split(strings.TrimRight(stripANSI(content), "\n"), "\n")
 
-	// cli header, rg, fd, blank, scm header, git, lazygit, blank, untagged
-	// header, jq — every section but the first opens with a blank row, and
-	// both the blank and the header are non-selectable.
-	wantTool := []int{1, 2, 5, 6, 9}
+	// blank, cli header, rg, fd, blank, scm header, git, lazygit, blank,
+	// untagged header, jq — the list opens with a blank row and every section
+	// but the first is preceded by one; blanks and headers alike are
+	// non-selectable.
+	wantTool := []int{2, 3, 6, 7, 10}
 	if !sameInts(toolLine, wantTool) {
 		t.Fatalf("toolLine = %v, want %v", toolLine, wantTool)
 	}
-	wantLine := []int{-1, 0, 1, -1, -1, 2, 3, -1, -1, 4}
+	wantLine := []int{-1, -1, 0, 1, -1, -1, 2, 3, -1, -1, 4}
 	if !sameInts(lineTool, wantLine) {
 		t.Fatalf("lineTool = %v, want %v", lineTool, wantLine)
 	}
@@ -153,7 +159,7 @@ func TestBuildToolRowsMapsGrouped(t *testing.T) {
 
 	// Divider headers: "<label> ────…". Match by the label and its rule rather
 	// than the full line, whose dash count depends on the panel width.
-	wantHeaders := map[int]string{0: "cli", 4: "scm", 8: "untagged"}
+	wantHeaders := map[int]string{1: "cli", 5: "scm", 9: "untagged"}
 	for i, line := range lines {
 		if label, isHeader := wantHeaders[i]; isHeader {
 			if lineTool[i] != -1 {
@@ -383,14 +389,14 @@ func TestSyncToolsViewportUsesScreenLine(t *testing.T) {
 	m.groupByTag = true
 	m.toolsViewport.Height = 4 // 8 rendered lines, only 4 visible
 
-	m.metaSelected = 4 // jq: tool index 4, screen line 9
+	m.metaSelected = 4 // jq: tool index 4, screen line 10
 	m.setToolsContent()
 
-	if got, want := m.selectedLine(), 9; got != want {
+	if got, want := m.selectedLine(), 10; got != want {
 		t.Fatalf("selectedLine = %d, want %d", got, want)
 	}
-	if got, want := m.toolsViewport.YOffset, 6; got != want {
-		t.Errorf("YOffset = %d, want %d (screen line 9 bottom-aligned in 4 rows)", got, want)
+	if got, want := m.toolsViewport.YOffset, 7; got != want {
+		t.Errorf("YOffset = %d, want %d (screen line 10 bottom-aligned in 4 rows)", got, want)
 	}
 }
 
@@ -514,16 +520,16 @@ func TestMouseClickGroupedList(t *testing.T) {
 	m.groupByTag = true
 	m.setToolsContent()
 
-	// Screen line 5 is git's row (see TestBuildToolRowsMapsGrouped), +2 for the
+	// Screen line 6 is git's row (see TestBuildToolRowsMapsGrouped), +2 for the
 	// top margin and the panel border.
-	updated, _ := m.Update(leftClick(1, 5+2))
+	updated, _ := m.Update(leftClick(1, 6+2))
 	nm := updated.(Model)
 	if sel, _ := nm.selectedMeta(); sel.Name != "git" {
 		t.Errorf("click on git's row selected %q, want git", sel.Name)
 	}
 
-	// Screen line 4 is the scm divider header.
-	updated, _ = nm.Update(leftClick(1, 4+2))
+	// Screen line 5 is the scm divider header.
+	updated, _ = nm.Update(leftClick(1, 5+2))
 	after := updated.(Model)
 	if sel, _ := after.selectedMeta(); sel.Name != "git" {
 		t.Errorf("click on a header moved the selection to %q, want it left on git", sel.Name)

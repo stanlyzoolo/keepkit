@@ -285,6 +285,16 @@ func TestCleanTerminalOutput(t *testing.T) {
 // forceColorProfile forces truecolor so lipgloss actually emits ANSI escapes
 // (a non-TTY test run strips them and hides regressions), restoring the
 // previous profile on cleanup so the global doesn't leak into later tests.
+// toolRows returns the tool list's rows without the blank one the panel opens
+// with, so a test can index tools from 0 regardless of the list's top padding.
+func toolRows(content string) []string {
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	if len(lines) > 0 && strings.TrimSpace(stripANSI(lines[0])) == "" {
+		return lines[1:]
+	}
+	return lines
+}
+
 func themeSeq(c lipgloss.Color) string {
 	return termenv.TrueColor.Color(string(c)).Sequence(false)
 }
@@ -617,7 +627,7 @@ func TestRenderLeftContentSearchMarker(t *testing.T) {
 	m = updated.(Model)
 	m = typeRunes(t, m, "g") // matches git and ripgrep
 
-	lines := strings.Split(m.renderLeftContent(), "\n")
+	lines := toolRows(m.renderLeftContent())
 	if len(lines) < 2 {
 		t.Fatalf("renderLeftContent = %q, want at least 2 rows", lines)
 	}
@@ -627,7 +637,7 @@ func TestRenderLeftContentSearchMarker(t *testing.T) {
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
-	lines = strings.Split(m.renderLeftContent(), "\n")
+	lines = toolRows(m.renderLeftContent())
 	if strings.Contains(lines[0], "⏺") {
 		t.Errorf("first row = %q, marker should move away after down", lines[0])
 	}
@@ -653,7 +663,7 @@ func TestRenderLeftContentTagMatchSuffix(t *testing.T) {
 	m = updated.(Model)
 	m = typeRunes(t, m, "tui") // gitui matches by name, lazygit only by tag
 
-	lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
+	lines := toolRows(stripANSI(m.renderLeftContent()))
 	if !strings.Contains(lines[1], "lazygit") || !strings.Contains(lines[1], "#tui") {
 		t.Errorf("tag-only row = %q, want lazygit with #tui suffix", lines[1])
 	}
@@ -664,7 +674,7 @@ func TestRenderLeftContentTagMatchSuffix(t *testing.T) {
 	// A name column too narrow for the suffix drops it instead of wrapping
 	// the row.
 	m.toolsW = 8 // maxName = 3
-	lines = strings.Split(stripANSI(m.renderLeftContent()), "\n")
+	lines = toolRows(stripANSI(m.renderLeftContent()))
 	for i, line := range lines {
 		if strings.Contains(line, "#") {
 			t.Errorf("narrow row %d = %q, want tag suffix dropped", i, line)
@@ -682,7 +692,7 @@ func TestRenderLeftContentSearchHighlight(t *testing.T) {
 	m = updated.(Model)
 	m = typeRunes(t, m, "i") // matches git (selected) and ripgrep
 
-	lines := strings.Split(m.renderLeftContent(), "\n")
+	lines := toolRows(m.renderLeftContent())
 	if want := ui.DefaultStyles().AccentBold.Render("i"); !strings.Contains(lines[1], want) {
 		t.Errorf("non-selected match row = %q, want highlighted substring %q", lines[1], want)
 	}
@@ -744,7 +754,7 @@ func TestRenderLeftContentMarkerSurvivesFocus(t *testing.T) {
 
 	for _, f := range []int{focusTools, focusBrief, focusHelp} {
 		m.focus = f
-		lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
+		lines := toolRows(stripANSI(m.renderLeftContent()))
 		if !strings.HasPrefix(lines[1], " ⏺ git") {
 			t.Errorf("focus %v: selected row = %q, want ⏺ marker on git", f, lines[1])
 		}
@@ -770,7 +780,7 @@ func TestRenderLeftContentMarkerColumn(t *testing.T) {
 	m.focus = focusTools
 	m.metaSelected = 0
 
-	lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
+	lines := toolRows(stripANSI(m.renderLeftContent()))
 	if !strings.HasPrefix(lines[0], " ⏺ fzf") {
 		t.Errorf("selected active row = %q, want ⏺ marker", lines[0])
 	}
@@ -786,7 +796,7 @@ func TestRenderLeftContentMarkerColumn(t *testing.T) {
 	// The ⏺ cursor takes priority on the selected row regardless of status, and
 	// the row it left behind falls back to a plain-space marker column.
 	m.metaSelected = 1
-	lines = strings.Split(stripANSI(m.renderLeftContent()), "\n")
+	lines = toolRows(stripANSI(m.renderLeftContent()))
 	if !strings.HasPrefix(lines[1], " ⏺ git") {
 		t.Errorf("selected trying row = %q, want ⏺ cursor", lines[1])
 	}
@@ -812,7 +822,7 @@ func TestRenderLeftContentRowWidth(t *testing.T) {
 	m.metaSelected = 0
 
 	want := max(m.toolsW-1, 1)
-	for i, line := range strings.Split(strings.TrimRight(stripANSI(m.renderLeftContent()), "\n"), "\n") {
+	for i, line := range toolRows(stripANSI(m.renderLeftContent())) {
 		if w := lipgloss.Width(line); w != want {
 			t.Errorf("row %d = %q, visible width = %d, want %d", i, line, w, want)
 		}
@@ -867,7 +877,7 @@ func TestToolsListGrouping(t *testing.T) {
 		t.Errorf("m.meta order = %v, want %v (untouched)", got, want)
 	}
 	// The rendered rows follow the same order.
-	rows := strings.Split(strings.TrimRight(stripANSI(m.renderLeftContent()), "\n"), "\n")
+	rows := toolRows(stripANSI(m.renderLeftContent()))
 	for i, want := range []string{"bb", "dd", "aa", "cc"} {
 		if !strings.Contains(rows[i], want) {
 			t.Errorf("row %d = %q, want %s", i, rows[i], want)
@@ -4333,8 +4343,13 @@ func TestGroupedListHasAirBetweenSections(t *testing.T) {
 	content, _, lineTool := m.buildToolRows()
 	lines := strings.Split(strings.TrimRight(stripANSI(content), "\n"), "\n")
 
+	// The row the list opens with is padding, not a section gap.
+	if strings.TrimSpace(lines[0]) != "" {
+		t.Error("the list does not open with its blank top row")
+	}
 	blanks := 0
-	for i, line := range lines {
+	for i, line := range lines[1:] {
+		i++ // lines[0] is the top padding, counted above
 		if strings.TrimSpace(line) != "" {
 			continue
 		}
@@ -4349,10 +4364,7 @@ func TestGroupedListHasAirBetweenSections(t *testing.T) {
 	// Three groups in the fixture (cli, scm, untagged) → two gaps, and none
 	// above the first section.
 	if blanks != 2 {
-		t.Errorf("%d blank rows, want one above every section but the first", blanks)
-	}
-	if strings.TrimSpace(lines[0]) == "" {
-		t.Error("the list opens with a blank row")
+		t.Errorf("%d blank rows below the top padding, want one above every section but the first", blanks)
 	}
 }
 
@@ -4498,8 +4510,9 @@ func TestCardHeadHasOneTypographicPeak(t *testing.T) {
 	mm.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0", Stars: 219, RepoStatus: "active"}
 	card := mm.renderCard()
 
-	if want := s.EmphasisBold.Render("gh"); !strings.HasPrefix(card, want) {
-		t.Errorf("card does not open with the name at the emphasis peak: %q", firstLine(card))
+	title := strings.SplitN(card, "\n", 3)[1] // [0] is the card's blank top row
+	if want := s.EmphasisBold.Render("gh"); !strings.HasPrefix(title, want) {
+		t.Errorf("card does not open with the name at the emphasis peak: %q", title)
 	}
 	// No metric value may share that role — the strip renders them on the plate,
 	// so compare the foreground sequence rather than a whole rendered string.
