@@ -583,7 +583,7 @@ func TestRateGaugeUnaffectedWithoutSelfCell(t *testing.T) {
 
 	// Narrow enough that the bar no longer fits beside the hints, wide enough
 	// for the numbers.
-	m = selfModel(t, selfBarTools(), 84, selfNone)
+	m = selfModel(t, selfBarTools(), 92, selfNone)
 	m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
 	bar := stripANSI(m.renderStatusBar())
 	if !strings.Contains(bar, "api 18/60") {

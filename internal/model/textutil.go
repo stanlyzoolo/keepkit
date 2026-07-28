@@ -59,8 +59,10 @@ func renderLangBar(s *ui.Styles, langs map[string]int, width, firstLineUsed int)
 	if len(percents) == 0 {
 		return ""
 	}
-	// Language names lowercase in the reading color; percentages dimmed.
-	pctStyle := s.Dim
+	// A language and its share are one fact, so they read at one brightness;
+	// what separates two of them is a middot, the same grouping mark the card's
+	// meta line uses.
+	sep := s.Dim.Render(" · ")
 
 	var lines []string
 	var cur strings.Builder
@@ -70,22 +72,22 @@ func renderLangBar(s *ui.Styles, langs map[string]int, width, firstLineUsed int)
 		pct := fmt.Sprintf("%.0f%%", lp.Pct)
 		tokenW := utf8.RuneCountInString(name) + 1 + utf8.RuneCountInString(pct)
 
-		sep := 0
+		sepW := 0
 		if cur.Len() > 0 {
-			sep = 2
+			sepW = 3
 		}
 		// Wrap to a new line only when the token would overflow the width.
-		if curW+sep+tokenW > width && cur.Len() > 0 {
+		if curW+sepW+tokenW > width && cur.Len() > 0 {
 			lines = append(lines, cur.String())
 			cur.Reset()
 			curW = 0
-			sep = 0
+			sepW = 0
 		}
-		if sep > 0 {
-			cur.WriteString("  ")
+		if sepW > 0 {
+			cur.WriteString(sep)
 		}
-		cur.WriteString(s.Text.Render(name) + " " + pctStyle.Render(pct))
-		curW += sep + tokenW
+		cur.WriteString(s.Text.Render(name + " " + pct))
+		curW += sepW + tokenW
 	}
 	if cur.Len() > 0 {
 		lines = append(lines, cur.String())
@@ -209,14 +211,16 @@ func mdInline(s string) string {
 }
 
 // mdLineKind tags a converted line for the styling the consumer applies to it.
-// Two kinds only: the card's changelog block paints headings one step brighter
-// and everything else muted, so a third tag (code, list, quote) would have no
-// reader — what makes those blocks special lives inside the converter.
+// Three kinds, and each one exists because the card renders it differently:
+// headings one step brighter, fenced code on the card's own plate, everything
+// else muted. A fourth tag (list, quote) still has no reader — what makes those
+// blocks special lives inside the converter, in their indent and markers.
 type mdLineKind int
 
 const (
-	mdBody    mdLineKind = iota // paragraphs, list items, code, quotes
+	mdBody    mdLineKind = iota // paragraphs, list items, quotes
 	mdHeading                   // a #-heading line
+	mdCode                      // a line inside a fenced block, verbatim
 )
 
 // mdLine is one finished, already-wrapped output line. Wrapping happens inside
@@ -299,13 +303,15 @@ func markdownToLines(s string, width int) []mdLine {
 			}
 			switch {
 			case line != "":
-				emit(mdCodeIndent+line, mdBody)
+				emit(mdCodeIndent+line, mdCode)
 			case len(out) > 0:
 				// A blank line inside the block is verbatim too, so a sample
 				// keeps its own spacing instead of going through the collapse
 				// — but not as the very first output line, which would be a
-				// leading blank row no one trims.
-				emit("", mdBody)
+				// leading blank row no one trims. It carries mdCode so the
+				// plate the card paints behind the block is not punched
+				// through by the empty rows inside it.
+				emit("", mdCode)
 			}
 			continue
 		}

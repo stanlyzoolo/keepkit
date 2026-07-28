@@ -410,7 +410,7 @@ func TestRenderChangelogBlockFallback(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := m.renderChangelogBlock(changelogMsg{toolName: "gh", body: tt.body})
-			if want := ui.DefaultStyles().Text.Render("no release notes available.") + "\n"; got != want {
+			if want := changelogIndent + ui.DefaultStyles().Text.Render("no release notes available.") + "\n"; got != want {
 				t.Errorf("renderChangelogBlock(%q) = %q, want the fallback", tt.body, got)
 			}
 		})
@@ -424,7 +424,7 @@ func TestRenderChangelogBlockError(t *testing.T) {
 	m := changelogBlockModel()
 
 	got := m.renderChangelogBlock(changelogMsg{toolName: "gh", err: errors.New("boom"), body: "# ignored"})
-	if want := ui.DefaultStyles().Text.Render("changelog unavailable: boom") + "\n"; got != want {
+	if want := changelogIndent + ui.DefaultStyles().Text.Render("changelog unavailable: boom") + "\n"; got != want {
 		t.Errorf("error branch = %q, want %q", got, want)
 	}
 }
@@ -547,9 +547,16 @@ func TestBriefFooterActions(t *testing.T) {
 	mm := updated.(Model)
 
 	got := stripANSI(mm.renderBrief())
-	for _, want := range []string{"r refresh", "e note", "# tags", "s status", "o repo", "c changelog"} {
+	for _, want := range []string{"r refresh", "s status", "o repo", "c changelog"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("brief panel = %q, missing footer hint %q", got, want)
+		}
+	}
+	// e and # are offered in the meta line, beside the values they edit; a
+	// footer repeating them would spend the row on saying it twice.
+	for _, absent := range []string{"e note", "# tags"} {
+		if strings.Contains(stripANSI(mm.panelFooter(mm.briefW, false, nil, "")), absent) {
+			t.Errorf("brief footer repeats the meta line's %q hint", absent)
 		}
 	}
 	if strings.Contains(got, "enter update") {
@@ -738,7 +745,7 @@ func TestRenderLeftContentMarkerSurvivesFocus(t *testing.T) {
 	for _, f := range []int{focusTools, focusBrief, focusHelp} {
 		m.focus = f
 		lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
-		if !strings.HasPrefix(lines[1], "⏺ git") {
+		if !strings.HasPrefix(lines[1], "⏺  git") {
 			t.Errorf("focus %v: selected row = %q, want ⏺ marker on git", f, lines[1])
 		}
 		if strings.Contains(lines[0], "⏺") {
@@ -764,11 +771,11 @@ func TestRenderLeftContentMarkerColumn(t *testing.T) {
 	m.metaSelected = 0
 
 	lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
-	if !strings.HasPrefix(lines[0], "⏺ fzf") {
+	if !strings.HasPrefix(lines[0], "⏺  fzf") {
 		t.Errorf("selected active row = %q, want ⏺ marker", lines[0])
 	}
 	for i, name := range []string{"git", "ripgrep", "yq"} {
-		if !strings.HasPrefix(lines[i+1], "  "+name) {
+		if !strings.HasPrefix(lines[i+1], "   "+name) {
 			t.Errorf("non-selected row = %q, want plain space in the marker column", lines[i+1])
 		}
 		if strings.Contains(lines[i+1], "⏺") {
@@ -780,10 +787,10 @@ func TestRenderLeftContentMarkerColumn(t *testing.T) {
 	// the row it left behind falls back to a plain-space marker column.
 	m.metaSelected = 1
 	lines = strings.Split(stripANSI(m.renderLeftContent()), "\n")
-	if !strings.HasPrefix(lines[1], "⏺ git") {
+	if !strings.HasPrefix(lines[1], "⏺  git") {
 		t.Errorf("selected trying row = %q, want ⏺ cursor", lines[1])
 	}
-	if !strings.HasPrefix(lines[0], "  fzf") {
+	if !strings.HasPrefix(lines[0], "   fzf") {
 		t.Errorf("active row = %q, want plain space in the marker column", lines[0])
 	}
 }
@@ -1140,10 +1147,8 @@ func TestRenderStatusBarGauge(t *testing.T) {
 		m := Model{width: 120, focus: focusTools}
 		m.rate = version.RateLimit{Known: false, Remaining: 0, Limit: 60}
 		got := m.renderStatusBar()
-		for _, absent := range []string{"api ", "45/60"} {
-			if strings.Contains(got, absent) {
-				t.Errorf("unknown rate status bar = %q, should not contain %q", got, absent)
-			}
+		if strings.Contains(got, "/60") {
+			t.Errorf("unknown rate status bar = %q, should carry no gauge", got)
 		}
 	})
 
@@ -1172,21 +1177,21 @@ func TestRenderStatusBarGauge(t *testing.T) {
 
 	// At rest the gauge is not on screen at all — it is a reminder, and the
 	// room it costs belongs to the hints until the quota is worth acting on.
-	t.Run("a fresh window hides the gauge", func(t *testing.T) {
+	// A fresh window still shows the gauge: it is the only visible sign that
+	// keepkit talks to an API at all, and of the L overlay behind it.
+	t.Run("a fresh window still shows the gauge", func(t *testing.T) {
 		m := Model{width: 135, focus: focusTools,
 			rate: version.RateLimit{Known: true, Remaining: 4900, Limit: 5000}}
-		if got := m.renderStatusBar(); strings.Contains(got, "api ") {
-			t.Errorf("status bar = %q, want no gauge on an untouched quota", got)
+		if got := m.renderStatusBar(); !strings.Contains(got, "100/5000") {
+			t.Errorf("status bar = %q, want the gauge on an untouched quota", got)
 		}
 	})
 
 	t.Run("narrow width hides gauge but keeps hints", func(t *testing.T) {
 		m := Model{width: 75, focus: focusTools, rate: known}
 		got := m.renderStatusBar()
-		for _, absent := range []string{"api ", "45/60"} {
-			if strings.Contains(got, absent) {
-				t.Errorf("narrow status bar = %q, should not contain %q", got, absent)
-			}
+		if strings.Contains(got, "45/60") {
+			t.Errorf("narrow status bar = %q, should carry no gauge", got)
 		}
 		for _, want := range []string{"search", "track", "quit"} {
 			if !strings.Contains(got, want) {
@@ -1214,8 +1219,7 @@ func TestRenderStatusBarGauge(t *testing.T) {
 			{width: 120, mode: modeEditTags, rate: known},
 			{width: 120, mode: modeAPIStatus, rate: known},
 		} {
-			got := m.renderStatusBar()
-			if strings.Contains(got, "api ") || strings.Contains(got, "45/60") {
+			if got := m.renderStatusBar(); strings.Contains(got, "45/60") {
 				t.Errorf("input/modal status bar leaked gauge: %q", got)
 			}
 		}
@@ -1513,10 +1517,10 @@ func TestRenderRateGauge(t *testing.T) {
 	})
 }
 
-// TestGaugeVisible pins when the gauge is on screen at all. The thresholds are
-// read against the limit as well as absolutely: 500 left is a warning out of
-// 5000 and meaningless out of 60, and absolute-only bounds would paint a
-// token-less user's bar permanently — the opposite of a signal.
+// TestGaugeVisible pins when the gauge is on screen at all: whenever there is a
+// known quota. It is also the only visible sign that keepkit has an API surface,
+// so hiding it at rest hid the [L] overlay along with it — the numbers are the
+// affordance.
 func TestGaugeVisible(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1524,10 +1528,9 @@ func TestGaugeVisible(t *testing.T) {
 		want bool
 	}{
 		{"unknown", version.RateLimit{}, false},
-		{"fresh 5000 window", version.RateLimit{Known: true, Limit: 5000, Remaining: 4900}, false},
-		{"past half of 5000", version.RateLimit{Known: true, Limit: 5000, Remaining: 2000}, true},
-		{"under 500 left of 5000", version.RateLimit{Known: true, Limit: 5000, Remaining: 400}, true},
-		{"token-less window is always tight", version.RateLimit{Known: true, Limit: 60, Remaining: 59}, true},
+		{"fresh 5000 window", version.RateLimit{Known: true, Limit: 5000, Remaining: 4900}, true},
+		{"spent window", version.RateLimit{Known: true, Limit: 5000, Remaining: 4}, true},
+		{"token-less window", version.RateLimit{Known: true, Limit: 60, Remaining: 59}, true},
 		{"zero limit", version.RateLimit{Known: true, Limit: 0, Remaining: 0}, false},
 	}
 	for _, tt := range tests {
@@ -4256,5 +4259,100 @@ func TestChangelogRenderCache(t *testing.T) {
 func TestNewSeedsChangelogCache(t *testing.T) {
 	if New(nil).changelogRender == nil {
 		t.Error("New() left changelogRender nil — the memo is never used")
+	}
+}
+
+// TestChangelogBlockIndentAndCodePlate: the release notes are stepped in under
+// their heading (so the block reads as belonging to it rather than as the next
+// section of the card), and a fenced sample lands on the same plate the metrics
+// strip uses — a command in a release note is something to run, not more prose.
+func TestChangelogBlockIndentAndCodePlate(t *testing.T) {
+	forceColorProfile(t)
+	m := changelogBlockModel()
+	got := m.renderChangelogBlock(changelogMsg{
+		body: "## What's Changed\n\nRun this first:\n\n```sh\nkeepkit migrate --all\n```\n",
+	})
+
+	for _, line := range strings.Split(strings.TrimRight(stripANSI(got), "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, changelogIndent) {
+			t.Errorf("line %q is not indented under the heading", line)
+		}
+	}
+
+	// The plate is a background, and it must run to the block's full width:
+	// a background that stopped at the last glyph would be a ragged highlight.
+	bg := strings.Replace(themeSeq(ui.Default.Surface), "38;", "48;", 1)
+	var plated string
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(stripANSI(line), "keepkit migrate --all") {
+			plated = line
+		}
+	}
+	if plated == "" {
+		t.Fatal("the fenced sample did not survive the conversion")
+	}
+	if !strings.Contains(plated, bg) {
+		t.Errorf("code line = %q, want the surface plate", plated)
+	}
+	inner := max(m.briefW-2, 10)
+	if w := lipgloss.Width(plated); w != inner {
+		t.Errorf("code line is %d cells wide, want the block's full %d", w, inner)
+	}
+	// Prose beside it must not be plated, or the whole block would read as code.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(stripANSI(line), "Run this first") && strings.Contains(line, bg) {
+			t.Errorf("prose line %q was plated like code", line)
+		}
+	}
+}
+
+// TestHintLabelStepsBack: a hint is a colored key and a muted word — the key is
+// the only part the eye needs to find, so the word beside it must not compete at
+// reading brightness. One helper, so no surface can drift from the rest.
+func TestHintLabelStepsBack(t *testing.T) {
+	forceColorProfile(t)
+	m := Model{}
+	got := m.hint("enter", "run")
+	if want := ui.DefaultStyles().Accent.Render("enter"); !strings.HasPrefix(got, want) {
+		t.Errorf("hint = %q, want the key in the accent", got)
+	}
+	if want := ui.DefaultStyles().Dim.Render("run"); !strings.HasSuffix(got, want) {
+		t.Errorf("hint = %q, want the label dimmed", got)
+	}
+}
+
+// TestGroupedListHasAirBetweenSections: without a blank row above each section
+// the last tool of one group and the header of the next sit on adjacent lines
+// and the list reads as one dense column. The row is a real screen line, so it
+// has to be non-selectable in the line map like the header itself.
+func TestGroupedListHasAirBetweenSections(t *testing.T) {
+	m := groupTestModel(t)
+	m.groupByTag = true
+	content, _, lineTool := m.buildToolRows()
+	lines := strings.Split(strings.TrimRight(stripANSI(content), "\n"), "\n")
+
+	blanks := 0
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			continue
+		}
+		blanks++
+		if lineTool[i] != -1 {
+			t.Errorf("blank line %d maps to tool %d, want -1", i, lineTool[i])
+		}
+		if i+1 >= len(lines) || lineTool[i+1] != -1 {
+			t.Errorf("blank line %d does not sit above a section header", i)
+		}
+	}
+	// Three groups in the fixture (cli, scm, untagged) → two gaps, and none
+	// above the first section.
+	if blanks != 2 {
+		t.Errorf("%d blank rows, want one above every section but the first", blanks)
+	}
+	if strings.TrimSpace(lines[0]) == "" {
+		t.Error("the list opens with a blank row")
 	}
 }

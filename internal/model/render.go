@@ -166,6 +166,7 @@ func (m Model) globalHints() []string {
 		m.hint("t", "track"),
 		m.hint("u", "untrack"),
 		m.hint("R", "rename"),
+		m.hint("L", "api"),
 		m.hint("?", "keys"),
 		m.hint("q", "quit"),
 	}
@@ -368,11 +369,14 @@ func (m Model) key(k string) string {
 	return m.sty().Accent.Render(k)
 }
 
-// hint is a key with its label: "enter run", accent then text. Every status-bar
-// and footer cell is built from it, so the key/label contrast is defined once.
+// hint is a key with its label: "enter run", accent then dim. Every status-bar,
+// footer and overlay cell is built from it, so the contrast is defined once —
+// and it is deliberately a *two-step* contrast: the key is the only thing on a
+// hint the eye needs to find, so the word beside it steps back rather than
+// competing at reading brightness.
 func (m Model) hint(k, label string) string {
 	s := m.sty()
-	return s.Accent.Render(k) + " " + s.Text.Render(label)
+	return s.Accent.Render(k) + " " + s.Dim.Render(label)
 }
 
 // gaugeCells is the fixed width of the API-usage bar, independent of whether the
@@ -390,32 +394,20 @@ const (
 	gaugeTrackGlyph = "░" // U+2591 light shade
 )
 
-// gaugeShowRemaining / gaugeDangerRemaining are the quota thresholds the gauge
-// appears and turns red at. The gauge is a reminder, not decoration: at rest it
-// is not on screen at all, which is what buys the status bar the room for the
-// updates count.
-//
-// Both are read against the *limit* as well as absolutely, because the two
-// limits differ by two orders of magnitude: 500 left is a warning out of 5000
-// and meaningless out of 60. Absolute-only thresholds would paint a token-less
-// user's bar permanently red — 60 is always under 100 — which is the opposite
-// of a signal. So the danger bound is the tighter of the absolute number and a
-// quarter of the window: <100 with a token, <15 without one.
-const (
-	gaugeShowRemaining   = 500
-	gaugeDangerRemaining = 100
-)
+// gaugeDangerRemaining is where the gauge's fill turns red. It is read against
+// the *limit* as well as absolutely, because the two limits differ by two orders
+// of magnitude: 100 left is an alarm out of 5000 and most of a token-less window
+// out of 60, so an absolute-only bound would paint that user's bar permanently
+// red — the opposite of a signal. The bound is the tighter of the two: <100 with
+// a token, <15 without one.
+const gaugeDangerRemaining = 100
 
-// gaugeVisible reports whether the quota is worth showing: past half the window,
-// or under gaugeShowRemaining requests left. On the token-less 60/hour limit the
-// second clause is effectively always true, and that is correct — 60 requests is
-// three tools' worth of startup, so there the gauge is a permanent fixture until
-// a token lifts the limit.
+// gaugeVisible reports whether there is a quota to show. The gauge is on screen
+// for the whole session once the rate is known: it is also the only place the
+// API surface is visible at all, so hiding it at rest hid the [L] overlay with
+// it — the numbers are the affordance.
 func gaugeVisible(r version.RateLimit) bool {
-	if !r.Known || r.Limit <= 0 {
-		return false
-	}
-	return usedOf(r)*2 > r.Limit || r.Remaining < gaugeShowRemaining
+	return r.Known && r.Limit > 0
 }
 
 // renderRateGauge builds the right-corner API-usage indicator for the current
@@ -600,6 +592,16 @@ func (m Model) renderAPIStatus() string {
 	return s.OverlayBorder.Render(b.String())
 }
 
+// The [?] overlay's spacing. The grid is two columns of a dozen-odd short
+// rows, and at the minimum gaps it read as a wall of text — the room to fix
+// that is horizontal, since the row budget is fixed by the 80x24 background
+// while the width budget has ~15 columns of slack.
+const (
+	hotkeyKeyMinW = 8       // key column floor, before padding to the widest key
+	hotkeyKeyGap  = "   "   // between a key and its description
+	hotkeyColGap  = "     " // between the two columns
+)
+
 // hotkeyRow is one binding line in the [?] overlay: a key cell (bracketed by
 // keyHint) and a 1-4 word description.
 type hotkeyRow struct{ key, desc string }
@@ -641,7 +643,11 @@ func (m Model) renderHotkeys() string {
 	// every key cell is padded to the column's widest key so every description
 	// in the column starts at the same offset.
 	renderColumn := func(groups []hotkeyGroup) string {
-		keyW := 0
+		// The key column is padded to a floor, not just to the widest key: a
+		// column of one- and two-character keys would otherwise put its
+		// descriptions right against them, which is exactly what made the
+		// overlay read as cramped.
+		keyW := hotkeyKeyMinW
 		for _, g := range groups {
 			for _, r := range g.rows {
 				if w := lipgloss.Width(r.key); w > keyW {
@@ -656,7 +662,7 @@ func (m Model) renderHotkeys() string {
 			}
 			lines = append(lines, s.EmphasisBold.Render(g.title))
 			for _, r := range g.rows {
-				lines = append(lines, padTo(s.Accent.Render(r.key), keyW)+"  "+s.Text.Render(r.desc))
+				lines = append(lines, padTo(s.Accent.Render(r.key), keyW)+hotkeyKeyGap+s.Dim.Render(r.desc))
 			}
 		}
 		return strings.Join(lines, "\n")
@@ -720,7 +726,7 @@ func (m Model) renderHotkeys() string {
 	}
 	col2 := renderColumn(groups2)
 
-	grid := lipgloss.JoinHorizontal(lipgloss.Top, col1, "   ", col2)
+	grid := lipgloss.JoinHorizontal(lipgloss.Top, col1, hotkeyColGap, col2)
 
 	// Title row: the overlay's name, the running version beside it (the one
 	// question a keys sheet is also asked), and the close hint pinned right.
@@ -895,6 +901,10 @@ func (m Model) tagHeaderLine(tag string) string {
 	return s.Dim.Render(label) + s.Rule.Render(" "+strings.Repeat("─", rule))
 }
 
+// toolRowIndent is the width of a row's leading gutter: the marker column plus
+// the blank that sets the tool names one column in from their section headers.
+const toolRowIndent = 3
+
 // updatesGroupLabel heads the group of tools with a pending release. It is the
 // tracker's headline — the answer to the question the app exists to answer —
 // so in the grouped view it always comes first, ahead of every tag.
@@ -970,6 +980,16 @@ func (m Model) buildToolRows() (string, []int, []int) {
 		if grouped {
 			key := m.groupKey(mt)
 			if i == 0 || key != prevGroup {
+				// A blank row above every section but the first: without it the
+				// last tool of one group and the header of the next sit on
+				// adjacent lines and the list reads as one dense column. The
+				// row is a real screen line, so it goes into lineTool as a
+				// non-selectable one like the header itself.
+				if i > 0 {
+					sb.WriteString("\n")
+					lineTool = append(lineTool, -1)
+					line++
+				}
 				label := tagOf(mt)
 				if key == updatesGroupLabel {
 					label = updatesGroupLabel
@@ -1029,9 +1049,12 @@ func (m Model) buildToolRows() (string, []int, []int) {
 			mark = paint(s.Dim).Render("⏺")
 		}
 
-		// Name column: whatever the marker and version leave, with at least one
-		// blank cell between name and version so the two never touch.
-		nameBudget := max(w-2-verW-1, 1)
+		// Name column: whatever the marker, the indent and the version leave,
+		// with at least one blank cell between name and version so the two
+		// never touch. The indent is what sets the tools one column in from
+		// their section header, so a group reads as a group rather than as a
+		// label that happens to sit above some rows.
+		nameBudget := max(w-toolRowIndent-verW-1, 1)
 		name := truncateToWidth(flattenLine(mt.Name), nameBudget)
 
 		// Rows that matched only by tag show the tag that earned them the spot,
@@ -1057,8 +1080,8 @@ func (m Model) buildToolRows() (string, []int, []int) {
 
 		// Pad out to the full panel width so a selected row's fill reaches both
 		// edges instead of stopping at the last glyph.
-		gap := max(w-2-lipgloss.Width(name)-lipgloss.Width(tagSuffix)-verW, 1)
-		sb.WriteString(mark + paint(s.Dim).Render(" ") + rendered +
+		gap := max(w-toolRowIndent-lipgloss.Width(name)-lipgloss.Width(tagSuffix)-verW, 1)
+		sb.WriteString(mark + paint(s.Dim).Render(strings.Repeat(" ", toolRowIndent-1)) + rendered +
 			paint(s.Dim).Render(strings.Repeat(" ", gap)) + verStyle.Render(verText) + "\n")
 
 		toolLine[i] = line
@@ -1248,10 +1271,11 @@ func (m Model) renderBrief() string {
 		latest := version.DisplayVersion(m.versions[t.Name].Latest)
 		cells = append(cells, m.hint("enter", "update to "+latest))
 	}
+	// No note/tags cells: both keys are already offered in the meta line above,
+	// beside the values they edit, and a footer repeating them spends the row
+	// on saying the same thing twice.
 	cells = append(cells,
 		m.hint("r", "refresh"),
-		m.hint("e", "note"),
-		m.hint("#", "tags"),
 		m.hint("s", "status"),
 		m.hint("o", "repo"),
 		m.hint("c", "changelog"),
@@ -1490,8 +1514,13 @@ func (m Model) buildCard() (string, map[int]string) {
 		sb.WriteString(s.SignalBold.Render("rate limited — press L") + "\n")
 	}
 
+	// Two blank rows before the strip and one after every other block: the card
+	// is read in blocks, not lines, and at one blank row apiece they ran into
+	// each other. The strip gets the extra one because it is the only block with
+	// a background — a filled plate needs air around it or it reads as a bar
+	// glued to the tagline above it.
 	if strip := m.metricsStrip(t, inner); len(strip) > 0 {
-		sb.WriteString("\n" + strings.Join(strip, "\n") + "\n")
+		sb.WriteString("\n\n" + strings.Join(strip, "\n") + "\n")
 	}
 
 	if meta := m.metaLine(t, inner); meta != "" {
@@ -1515,7 +1544,7 @@ func (m Model) buildCard() (string, map[int]string) {
 		changelogContent = s.Note.Render("loading changelog…") + "\n"
 	}
 	if changelogContent != "" {
-		sb.WriteString("\n")
+		sb.WriteString("\n\n")
 		heading, linked := m.changelogHeading(t, inner, changelogURL != "")
 		// Registered only when the heading actually shows the "release notes ↗"
 		// affordance: a row that looks like plain text must not open a browser.
@@ -1790,7 +1819,7 @@ func (c *changelogRenderCache) lines(body string, width int) []mdLine {
 func (m Model) renderChangelogBlock(msg changelogMsg) string {
 	s := m.sty()
 	if msg.err != nil {
-		return s.Text.Render("changelog unavailable: "+msg.err.Error()) + "\n"
+		return changelogIndent + s.Text.Render("changelog unavailable: "+msg.err.Error()) + "\n"
 	}
 	var sb strings.Builder
 	// The release notes alone: the link to the release page and the version
@@ -1801,25 +1830,41 @@ func (m Model) renderChangelogBlock(msg changelogMsg) string {
 	// keep ANSI out of the rune-based wrap math. An empty result covers both
 	// an empty body and one the converter consumed whole (all comments, all
 	// separators).
-	lines := m.changelogRender.lines(msg.body, max(m.briefW-2, 10))
+	inner := max(m.briefW-2, 10)
+	lines := m.changelogRender.lines(msg.body, max(inner-len(changelogIndent), 10))
 	if len(lines) == 0 {
-		sb.WriteString(s.Text.Render("no release notes available.") + "\n")
-		return sb.String()
+		return changelogIndent + s.Text.Render("no release notes available.") + "\n"
 	}
+	// Code sits on the same plate the metrics strip uses, which is what makes a
+	// command in a release note read as something to run rather than as more
+	// prose. The plate is padded out to the panel so the block reads as a block:
+	// a background that stopped at the last glyph would be a ragged highlight.
+	plate := s.Emphasis.Background(s.Theme.Surface)
+	width := max(inner-len(changelogIndent), 1)
 	for _, line := range lines {
 		switch {
+		case line.kind == mdCode:
+			text := truncateToWidth(line.text, width)
+			sb.WriteString(changelogIndent + plate.Render(text) +
+				s.Surface.Render(strings.Repeat(" ", max(width-lipgloss.Width(text), 0))) + "\n")
 		case line.text == "":
 			// A blank separator carries no text to color; rendering it would
 			// only emit an empty escape pair.
 			sb.WriteString("\n")
 		case line.kind == mdHeading:
-			sb.WriteString(s.EmphasisBold.Render(line.text) + "\n")
+			sb.WriteString(changelogIndent + s.EmphasisBold.Render(line.text) + "\n")
 		default:
-			sb.WriteString(s.Text.Render(line.text) + "\n")
+			sb.WriteString(changelogIndent + s.Text.Render(line.text) + "\n")
 		}
 	}
 	return sb.String()
 }
+
+// changelogIndent steps the release notes in under their heading, so the block
+// reads as belonging to it rather than as the next section of the card. It is
+// plain spaces written outside the styling, so no escape sequence is ever split
+// by it.
+const changelogIndent = "  "
 
 // panelRow converts a click's screen Y into a 0-based row inside a panel's
 // viewport, or -1 when the click is not on the viewport at all. Row 0 is the
