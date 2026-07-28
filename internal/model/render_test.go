@@ -4481,3 +4481,67 @@ func TestMetaLineLanguagesStayOnOneLine(t *testing.T) {
 		}
 	}
 }
+
+// TestCardHeadHasOneTypographicPeak: a terminal has a single font size, so the
+// three sizes the design draws in the card's head are three steps of weight and
+// brightness here — and there is room for exactly one peak. The tool's name
+// takes it; the metric values sit a step below it and a step above their own
+// captions, because spending the brightest role on four measurements leaves the
+// name nothing to be the peak of.
+func TestCardHeadHasOneTypographicPeak(t *testing.T) {
+	forceColorProfile(t)
+	s := ui.DefaultStyles()
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{Installed: "v2.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	mm.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0", Stars: 219, RepoStatus: "active"}
+	card := mm.renderCard()
+
+	if want := s.EmphasisBold.Render("gh"); !strings.HasPrefix(card, want) {
+		t.Errorf("card does not open with the name at the emphasis peak: %q", firstLine(card))
+	}
+	// No metric value may share that role — the strip renders them on the plate,
+	// so compare the foreground sequence rather than a whole rendered string.
+	peak := themeSeq(ui.Default.Emphasis)
+	strip := mm.metricsStrip(mm.tools[0], max(mm.briefW-2, 1))
+	for i, row := range strip {
+		if strings.Contains(row, peak) {
+			t.Errorf("strip row %d (%q) uses the name's emphasis role", i, stripANSI(row))
+		}
+	}
+	// The captions still step below the values, so the strip keeps its own
+	// two-level reading.
+	body := strings.Join(strip, "\n")
+	if !strings.Contains(body, themeSeq(ui.Default.Dim)) || !strings.Contains(body, themeSeq(ui.Default.Text)) {
+		t.Errorf("strip lost the caption/value contrast:\n%s", stripANSI(body))
+	}
+}
+
+// TestCardHeadGapIsOneRow: the block under the tool's name is separated by a
+// single blank row. The strip's own padding row is filled with the plate colour
+// and already reads as air, so a second plain row on top of it reads as a hole.
+func TestCardHeadGapIsOneRow(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{Installed: "v2.0.0", InstalledKnown: true}
+	mm.repoCards["gh"] = version.RepoCard{About: "a tool", Stars: 219}
+
+	lines := strings.Split(stripANSI(mm.renderCard()), "\n")
+	var plain int
+	for _, line := range lines[1:] {
+		if strings.Contains(line, "INSTALLED") {
+			break
+		}
+		if strings.TrimSpace(line) == "" {
+			plain++
+		}
+	}
+	// One plain row plus the plate's padding row — both blank once ANSI is
+	// stripped, which is exactly why this counts them rather than eyeballing.
+	if plain != 2 {
+		t.Errorf("%d blank rows between the tagline and the strip's captions, want 2 (one plain, one plate):\n%s",
+			plain, strings.Join(lines, "\n"))
+	}
+}

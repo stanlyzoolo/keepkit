@@ -1526,13 +1526,11 @@ func (m Model) buildCard() (string, map[int]string) {
 		sb.WriteString(s.SignalBold.Render("rate limited — press L") + "\n")
 	}
 
-	// Two blank rows before the strip and one after every other block: the card
-	// is read in blocks, not lines, and at one blank row apiece they ran into
-	// each other. The strip gets the extra one because it is the only block with
-	// a background — a filled plate needs air around it or it reads as a bar
-	// glued to the tagline above it.
+	// One blank row between blocks. The strip needs no second one: its own
+	// padding row is filled with the plate colour, which already reads as air —
+	// two plain rows on top of it read as a hole.
 	if strip := m.metricsStrip(t, inner); len(strip) > 0 {
-		sb.WriteString("\n\n" + strings.Join(strip, "\n") + "\n")
+		sb.WriteString("\n" + strings.Join(strip, "\n") + "\n")
 	}
 
 	if meta := m.metaLine(t, inner); meta != "" {
@@ -1588,6 +1586,14 @@ type metricCell struct {
 
 // metricsStrip is the card's headline block: installed / latest / maintenance /
 // stars as a filled panel, captions above values, columns separated by rules.
+//
+// The values read at Text, one step below the tool's name above them and one
+// above their own captions. A terminal has a single font size — the grid is the
+// terminal's, not the app's — so the three sizes the design draws here are
+// three steps of weight and brightness instead, and spending the brightest one
+// on four measurements would leave the name nothing to be the peak of. The two
+// exceptions carry meaning rather than rank: a pending release is one of the
+// screen's three "act on this" points, and a broken install is its one alarm.
 // It replaces six "label: value" lines whose labels ran down the left edge and
 // pushed every value into a column of its own — here the values sit side by side
 // and the block reads as one instrument panel.
@@ -1613,7 +1619,7 @@ func (m Model) metricsStrip(t loader.Tool, inner int) []string {
 	// values in the strip too wide for a baseline-width column.
 	switch {
 	case vinfo.Installed != "":
-		cells = append(cells, metricCell{"INSTALLED", version.DisplayVersion(vinfo.Installed), s.Emphasis, ""})
+		cells = append(cells, metricCell{"INSTALLED", version.DisplayVersion(vinfo.Installed), s.Text, ""})
 	case vinfo.InstalledKnown && vinfo.InstalledPresent:
 		cells = append(cells, metricCell{"INSTALLED", "✓ present", s.Ok, ""})
 	case vinfo.InstalledKnown:
@@ -1627,7 +1633,7 @@ func (m Model) metricsStrip(t loader.Tool, inner int) []string {
 		if len(date) > 10 {
 			date = date[:10]
 		}
-		value, style := version.DisplayVersion(card.Latest), s.Emphasis
+		value, style := version.DisplayVersion(card.Latest), s.Text
 		if m.hasUpdate(t.Name) {
 			// The one place on the card that means "act on this", and the whole
 			// reason the tool is in the tracker.
@@ -1644,7 +1650,7 @@ func (m Model) metricsStrip(t loader.Tool, inner int) []string {
 		cells = append(cells, metricCell{"MAINTENANCE", value, style, ""})
 	}
 	if hasCard && card.Stars > 0 {
-		cells = append(cells, metricCell{"STARS", formatStars(card.Stars), s.Emphasis, ""})
+		cells = append(cells, metricCell{"STARS", formatStars(card.Stars), s.Text, ""})
 	}
 	// Below one column's worth of room the grid cannot say anything a caption
 	// would not eat whole, so the strip stands down rather than printing
