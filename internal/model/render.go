@@ -1236,9 +1236,21 @@ func (m Model) buildCard() (string, map[int]string) {
 	if hasInfo {
 		sb.WriteString(m.sectionDivider("info"))
 		if t.GitHub != "" {
-			// Clickable: resolves exactly like the [o] key does.
+			// The value shows the bare owner/repo: the host is implied, and its
+			// 11 cells are worth more than the label column costs — at the
+			// 80-column baseline the panel is 30 wide, where the full ref was
+			// cut mid-name. NormalizeRepo answering "" (an unsupported or
+			// spoofed host, e.g. "github.com.evil.com/x/y") falls back to the
+			// raw value on purpose: shortening there would hide the very host
+			// that makes the link not what it looks like.
+			repoText := t.GitHub
+			if short := loader.NormalizeRepo(t.GitHub); short != "" {
+				repoText = short
+			}
+			// Clickable: resolves exactly like the [o] key does — the full
+			// t.GitHub, never the shortened display text.
 			links[strings.Count(sb.String(), "\n")] = "https://" + t.GitHub
-			sb.WriteString(ui.GithubStyle.Render(cardLabel("repo:")+t.GitHub) + "\n")
+			sb.WriteString(ui.GithubStyle.Render(cardLabel("repo:")+repoText) + "\n")
 			if !hasCard && m.repoStatus[t.Name] == "rate-limited" {
 				sb.WriteString(ui.WarnStyle.Render("rate limited — press [L]") + "\n")
 			}

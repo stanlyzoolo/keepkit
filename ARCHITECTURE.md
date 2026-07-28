@@ -176,7 +176,7 @@ Key invariants:
   wrap to `inner - cardLabelWidth` and hang under the column via `hangIndent`.
 - **Card links are indexed, not parsed.** `buildCard()` returns the card text plus a
   `line → URL` map recorded while writing (line heights vary with wrapping), so a
-  click on the `repo:` line or the changelog release URL opens the browser. `handleMouse`
+  click on the `repo:` line (shown as the bare `owner/repo`, linked as the full ref) or the changelog release URL opens the browser. `handleMouse`
   rebuilds the map per click, which is why it can never describe stale content.
 - **A click's X picks the panel, `panelRow` decides whether it is on one at all.**
   The outer margin, the borders and the status bars share the panels' columns; with a

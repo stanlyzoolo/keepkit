@@ -2725,6 +2725,13 @@ func TestCardValuesShareOneColumn(t *testing.T) {
 // wrapped to the full inner width used to run cardLabelWidth cells past the
 // panel edge, where the viewport (which truncates, it does not soft-wrap) cut
 // the first line, and its continuations fell back to column 0.
+//
+// The fixture is ASCII on purpose. The width check below measures display
+// cells, but wrapText counts runes, so a note of East-Asian-wide characters
+// still overflows the panel — a pre-existing wrapText limitation (the one
+// tagHeaderLine's truncateToWidth exists to avoid on the list side), not
+// something the value column introduced. A CJK row here would pin the bug
+// rather than the fix.
 func TestCardNoteWrapsUnderItsLabel(t *testing.T) {
 	m := New([]loader.ToolMeta{{
 		Name:   "gh",
