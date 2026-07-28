@@ -194,6 +194,37 @@ func TestMarkdownToLines(t *testing.T) {
 			[]string{"B|text", "B|", "B|more"},
 		},
 		{
+			// A fence nested under a list item sits past CommonMark's 3-space
+			// limit ("1. " content aligns at column 4). Enforcing the limit
+			// leaked the language tag as a body line reading "go" and dropped
+			// the sample's verbatim treatment.
+			"fence indented under a list item still opens",
+			"1. run this:\n\n    ```go\n    x := 1\n    ```\n2. done",
+			80,
+			[]string{"B|1. run this:", "B|", "B|      x := 1", "B|2. done"},
+		},
+		{
+			"setext underline does not survive as a row of equals",
+			"Highlights\n==========\nbody",
+			80,
+			[]string{"B|Highlights", "B|", "B|body"},
+		},
+		{
+			// A heading whose only content is an image converts to nothing; the
+			// blank must come from the collapse, never as an empty line still
+			// tagged mdHeading.
+			"heading that collapses to nothing yields a body blank",
+			"a\n## ![](https://img/x.svg)\n\nb",
+			80,
+			[]string{"B|a", "B|", "B|b"},
+		},
+		{
+			"a body that is only an empty heading converts to nothing",
+			"## ![](https://img/x.svg)",
+			80,
+			nil,
+		},
+		{
 			"unclosed fence runs to the end",
 			"text\n~~~\ncode line",
 			80,

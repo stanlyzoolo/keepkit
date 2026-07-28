@@ -217,16 +217,27 @@ type mdLine struct {
 	kind mdLineKind
 }
 
-// Block-level markdown patterns. Each allows CommonMark's up-to-3-space
-// indent; the list patterns require whitespace after the marker, so a leading
-// "#123" stays an issue reference and "**Breaking**" stays a paragraph.
+// Block-level markdown patterns. The list and heading patterns require
+// whitespace after the marker, so a leading "#123" stays an issue reference
+// and "**Breaking**" stays a paragraph.
 var (
-	mdFenceRe    = regexp.MustCompile("^ {0,3}(?:```|~~~)")
-	mdHeadingRe  = regexp.MustCompile(`^ {0,3}#{1,6}[ \t]+(.*)$`)
-	mdThematicRe = regexp.MustCompile(`^ {0,3}(?:-[ \t]*){3,}$|^ {0,3}(?:\*[ \t]*){3,}$|^ {0,3}(?:_[ \t]*){3,}$`)
-	mdBulletRe   = regexp.MustCompile(`^([ \t]*)[-*+](?:[ \t]+(.*))?$`)
-	mdOrderedRe  = regexp.MustCompile(`^([ \t]*)(\d{1,9})[.)](?:[ \t]+(.*))?$`)
-	mdQuoteRe    = regexp.MustCompile(`^ {0,3}>[ \t]?`)
+	// The fence deliberately accepts ANY indent, unlike CommonMark's 3-space
+	// limit: 4+ spaces there means an indented code block, which this
+	// converter does not implement, so the strict form only mis-read a fence
+	// nested under a list item ("1. " content aligns at column 4) — the
+	// language tag leaked out as a body line reading "go" and the sample lost
+	// its verbatim treatment.
+	mdFenceRe   = regexp.MustCompile("^[ \t]*(?:```|~~~)")
+	mdHeadingRe = regexp.MustCompile(`^ {0,3}#{1,6}[ \t]+(.*)$`)
+	// A rule line: a thematic break (---, ***, ___) or a setext underline
+	// (===). Both are dropped to a blank. Full setext support — retagging the
+	// paragraph above as a heading — is deliberately out of scope; the text
+	// and the layout stay right, only the emphasis is lost, whereas leaving
+	// the run in place put a literal row of '=' in the card.
+	mdRuleRe    = regexp.MustCompile(`^ {0,3}(?:-[ \t]*){3,}$|^ {0,3}(?:\*[ \t]*){3,}$|^ {0,3}(?:_[ \t]*){3,}$|^ {0,3}={3,}[ \t]*$`)
+	mdBulletRe  = regexp.MustCompile(`^([ \t]*)[-*+](?:[ \t]+(.*))?$`)
+	mdOrderedRe = regexp.MustCompile(`^([ \t]*)(\d{1,9})[.)](?:[ \t]+(.*))?$`)
+	mdQuoteRe   = regexp.MustCompile(`^ {0,3}>[ \t]?`)
 )
 
 const (
@@ -308,12 +319,12 @@ func markdownToLines(s string, width int) []mdLine {
 		}
 
 		if m := mdHeadingRe.FindStringSubmatch(line); m != nil {
-			mdEmitWrapped(emit, mdInline(m[1]), "", "", width, mdHeading)
+			mdEmitInline(emit, emitBlank, m[1], width, mdHeading)
 			continue
 		}
 		// Checked before the list patterns: "---" is the stock separator above
 		// "**Full Changelog**: …" and must never read as a bullet.
-		if mdThematicRe.MatchString(line) {
+		if mdRuleRe.MatchString(line) {
 			emitBlank()
 			continue
 		}
@@ -326,18 +337,28 @@ func markdownToLines(s string, width int) []mdLine {
 			continue
 		}
 
-		text := mdInline(strings.TrimSpace(line))
-		if strings.TrimSpace(text) == "" {
-			emitBlank()
-			continue
-		}
-		mdEmitWrapped(emit, text, "", "", width, mdBody)
+		mdEmitInline(emit, emitBlank, line, width, mdBody)
 	}
 
 	for len(out) > 0 && out[len(out)-1].text == "" {
 		out = out[:len(out)-1]
 	}
 	return out
+}
+
+// mdEmitInline runs the inline pass over one heading or paragraph line and
+// emits it wrapped — or a blank when the markup collapsed to nothing, which a
+// badge-only line, a bare <div> and a heading whose only content was an image
+// all do. Both callers share it so the blank can only ever arrive through
+// emitBlank: an empty line tagged mdHeading would sit outside the collapse and
+// hand the next consumer of kind a line that is not a heading.
+func mdEmitInline(emit func(string, mdLineKind), emitBlank func(), raw string, width int, kind mdLineKind) {
+	text := mdInline(strings.TrimSpace(raw))
+	if strings.TrimSpace(text) == "" {
+		emitBlank()
+		return
+	}
+	mdEmitWrapped(emit, text, "", "", width, kind)
 }
 
 // mdEmitListItem writes one list item: the marker normalized (bullets to •,
