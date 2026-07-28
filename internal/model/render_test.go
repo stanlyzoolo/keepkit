@@ -702,9 +702,9 @@ func TestRenderLeftContentSearchHighlight(t *testing.T) {
 }
 
 // TestHighlightNameMatch pins the helper: case-insensitive match, untouched
-// non-match, and the two-style contract the painted selected row needs (hit and
-// rest are supplied by the caller, so a highlight inside a filled row keeps the
-// row's background instead of punching a hole in it).
+// non-match, and the two-style contract — hit and rest both come from the
+// caller, so the unmatched halves of a name are styled rather than left bare
+// beside a styled hit.
 func TestHighlightNameMatch(t *testing.T) {
 	forceColorProfile(t)
 	s := ui.DefaultStyles()
@@ -733,13 +733,10 @@ func TestHighlightNameMatch(t *testing.T) {
 	if got := highlightNameMatch(s, "Ⱥx", "ⱥ", hit, rest); stripANSI(got) != "Ⱥx" || !strings.Contains(got, "Ⱥ") {
 		t.Errorf("highlightNameMatch(Ⱥx, ⱥ) = %q, want case-insensitive match on the original rune", got)
 	}
-	// The row's background rides on both styles, so a highlight inside a
-	// selected row cannot leave an unpainted gap.
-	painted := highlightNameMatch(s, "ripgrep", "ip",
-		hit.Background(s.Theme.Surface), rest.Background(s.Theme.Surface))
-	bg := themeSeq(s.Theme.Surface)
-	if strings.Count(painted, strings.Replace(bg, "38;", "48;", 1)) < 3 {
-		t.Errorf("painted highlight = %q, want every segment carrying the row background", painted)
+	// Both halves carry the caller's styles — the unmatched text is never
+	// emitted bare beside a styled hit.
+	if got := highlightNameMatch(s, "ripgrep", "ip", hit, rest); strings.Count(got, "\x1b[0m") != 3 {
+		t.Errorf("highlight = %q, want all three segments styled", got)
 	}
 }
 
@@ -4556,5 +4553,76 @@ func TestCardHeadGapIsOneRow(t *testing.T) {
 	if plain != 2 {
 		t.Errorf("%d blank rows between the tagline and the strip's captions, want 2 (one plain, one plate):\n%s",
 			plain, strings.Join(lines, "\n"))
+	}
+}
+
+// TestDisplayVersion pins the [?] overlay's version label. A release passes
+// through; a working copy is stamped by Go with a 44-character pseudo-version
+// whose leading number is a release that does not exist yet, and both facts a
+// reader wants — the last release and the commit — are recovered from it.
+// The + and the commit are what keep it from reading as the release itself.
+func TestDisplayVersion(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"release", "v0.1.0", "v0.1.0"},
+		{"release with metadata", "v0.1.0+dirty", "v0.1.0+dirty"},
+		{"no version at all", "dev", "dev"},
+		{"unset", "", ""},
+		{
+			"commit after a release",
+			"v0.1.1-0.20260728221642-0b86a47f4f05", "v0.1.0+0b86a47",
+		},
+		{
+			// The case a developer actually looks at: their own working copy.
+			"commit after a release, uncommitted changes",
+			"v0.1.1-0.20260728221642-0b86a47f4f05+dirty", "v0.1.0+0b86a47-dirty",
+		},
+		{
+			"commit after a pre-release",
+			"v0.2.0-rc.1.0.20260728221642-0b86a47f4f05", "v0.2.0-rc.1+0b86a47",
+		},
+		{
+			// No tag in the repository at all: the separator before the
+			// timestamp is a dash, and reading the base's own tail instead
+			// would take the "0" of v0.0.0 for the pre-release marker.
+			"no tag behind the commit",
+			"v0.0.0-20260728221642-0b86a47f4f05", "dev+0b86a47",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := displayVersion(tt.in); got != tt.want {
+				t.Errorf("displayVersion(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHotkeysOverlayNamesTheBuild: the overlay is where "what am I running" is
+// asked, so it carries the version — short enough to sit beside the title, and
+// never claiming to be a release the build is only descended from. The raw
+// value stays in m.appVersion, because the self-update gate reads it and has to
+// keep seeing a working copy.
+func TestHotkeysOverlayNamesTheBuild(t *testing.T) {
+	m := hotkeysViewModel(selfNone)
+	m.appVersion = "v0.1.1-0.20260728221642-0b86a47f4f05"
+	title := stripANSI(strings.SplitN(m.renderHotkeys(), "\n", 3)[1])
+
+	if !strings.Contains(title, "keepkit v0.1.0+0b86a47") {
+		t.Errorf("overlay title = %q, want the short build name", title)
+	}
+	if strings.Contains(title, "20260728221642") {
+		t.Errorf("overlay title = %q, want the pseudo-version's timestamp dropped", title)
+	}
+	if m.isDevBuild() != true {
+		t.Error("the raw appVersion stopped reading as a working copy")
+	}
+
+	// No version injected at all: no label rather than an empty one.
+	bare := hotkeysViewModel(selfNone)
+	bare.appVersion = ""
+	if got := stripANSI(strings.SplitN(bare.renderHotkeys(), "\n", 3)[1]); strings.Contains(got, "keepkit") {
+		t.Errorf("overlay title = %q, want no build name when none was injected", got)
 	}
 }

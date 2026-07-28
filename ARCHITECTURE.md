@@ -217,8 +217,7 @@ Key invariants:
   (the card's actions, `[3]`'s paging and entry cursor, `[1]`'s filter and grouping)
   sits in that panel's own footer, next to the thing it acts on. All three panels
   reserve the same `panelFooterRows` and keep the same `panelGutter` — one blank
-  column between the frame and the panel's own chrome, which the selected list
-  row's fill deliberately breaks out of; `calcListHeight()` is the single definition both the `WindowSizeMsg` handler
+  column between the frame and the panel's own chrome; `calcListHeight()` is the single definition both the `WindowSizeMsg` handler
   and the renderers use, so a drift there cannot push the status bar off screen.
 - **A click's X picks the panel, `panelRow` decides whether it is on one at all.**
   The outer margin, the borders and the status bars share the panels' columns; with a

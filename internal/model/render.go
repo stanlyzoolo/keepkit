@@ -731,8 +731,8 @@ func (m Model) renderHotkeys() string {
 	// Title row: the overlay's name, the running version beside it (the one
 	// question a keys sheet is also asked), and the close hint pinned right.
 	title := s.EmphasisBold.Render("keys")
-	if m.appVersion != "" {
-		title += " " + s.Dim.Render(selfToolName+" "+m.appVersion)
+	if v := displayVersion(m.appVersion); v != "" {
+		title += " " + s.Dim.Render(selfToolName+" "+v)
 	}
 	closeHint := m.hint("esc", "close")
 	titleRow := title + " " + closeHint
@@ -1019,16 +1019,6 @@ func (m Model) buildToolRows() (string, []int, []int) {
 		}
 
 		selected := i == m.metaSelected
-		// The selected row is a filled block spanning the whole panel, so every
-		// segment of it carries the background itself: a lipgloss style applied
-		// around already-styled text cannot repaint what is inside it — the
-		// inner reset sequences would punch holes in the fill.
-		paint := func(st lipgloss.Style) lipgloss.Style {
-			if selected {
-				return st.Background(s.Theme.Surface)
-			}
-			return st
-		}
 
 		// Version column: what is installed, right-aligned. A tool with a
 		// pending release trades the dim for the signal color and gains the ↑
@@ -1038,15 +1028,15 @@ func (m Model) buildToolRows() (string, []int, []int) {
 		// alone decides it — unlike isSelfUpdate, which additionally asks
 		// whether the self-update *feature* is live, because this marker is
 		// identification, not an offer to act on anything.
-		verText, verStyle := m.versions[mt.Name].Installed, paint(s.Dim)
+		verText, verStyle := m.versions[mt.Name].Installed, s.Dim
 		switch {
 		case verText == "":
 		case m.hasUpdate(mt.Name):
 			verText += " ↑"
-			verStyle = paint(s.Signal)
+			verStyle = s.Signal
 		case mt.Name == selfToolName:
 			verText += " •"
-			verStyle = paint(s.Ok)
+			verStyle = s.Ok
 		}
 		verW := lipgloss.Width(verText)
 
@@ -1056,14 +1046,19 @@ func (m Model) buildToolRows() (string, []int, []int) {
 		// plain space (no status edge — tool status lives in the brief card).
 		// The marker stays visible in modeSearch too: the cursor there is
 		// user-controlled (arrows move the highlight through the matches).
-		mark := paint(s.Dim).Render(" ")
-		nameStyle := paint(s.Text)
+		//
+		// The marker and the name's weight are the whole selection: the row
+		// carried a Surface fill for a while and it turned every cursor move
+		// into a block sliding down the panel, which is far more motion than
+		// "this one is selected" is worth in a list that is scanned.
+		mark := " "
+		nameStyle := s.Text
 		switch {
 		case selected && m.focus == focusTools:
-			mark = paint(s.Accent).Render("⏺")
-			nameStyle = paint(s.AccentBold)
+			mark = s.Accent.Render("⏺")
+			nameStyle = s.AccentBold
 		case selected:
-			mark = paint(s.Dim).Render("⏺")
+			mark = s.Dim.Render("⏺")
 		}
 
 		// Name column: whatever the marker, the indents and the version leave,
@@ -1087,21 +1082,21 @@ func (m Model) buildToolRows() (string, []int, []int) {
 		// focused selected row, whose whole name already carries the same
 		// accent-bold style (nesting the ANSI would only corrupt it).
 		if query != "" && (!selected || m.focus != focusTools) {
-			rendered = highlightNameMatch(s, name, query, paint(s.AccentBold), nameStyle)
+			rendered = highlightNameMatch(s, name, query, s.AccentBold, nameStyle)
 		}
 		if tagSuffix != "" {
-			rendered += paint(s.Dim).Render(tagSuffix)
+			rendered += s.Dim.Render(tagSuffix)
 		}
 
 		// Pad out to the full panel width so a selected row's fill reaches both
 		// edges instead of stopping at the last glyph.
-		// The row's own gutters are *painted*: the selected row's fill breaks out
-		// of them to span the panel edge to edge, which is what makes it read as
-		// a filled row rather than as a highlighted word.
-		gutter := paint(s.Dim).Render(strings.Repeat(" ", panelGutter))
+		// Plain spaces, not styled ones: the row carries no background, so the
+		// gaps have nothing to render and an escape pair around a space is only
+		// bytes the terminal has to parse.
+		gutter := strings.Repeat(" ", panelGutter)
 		gap := max(w-toolRowIndent-panelGutter-lipgloss.Width(name)-lipgloss.Width(tagSuffix)-verW, 1)
-		sb.WriteString(gutter + mark + paint(s.Dim).Render(strings.Repeat(" ", toolRowIndent-panelGutter-1)) +
-			rendered + paint(s.Dim).Render(strings.Repeat(" ", gap)) + verStyle.Render(verText) + gutter + "\n")
+		sb.WriteString(gutter + mark + strings.Repeat(" ", toolRowIndent-panelGutter-1) +
+			rendered + strings.Repeat(" ", gap) + verStyle.Render(verText) + gutter + "\n")
 
 		toolLine[i] = line
 		lineTool = append(lineTool, i)

@@ -49,9 +49,10 @@ type Theme struct {
 	// Border draws panel frames, dividers and the vertical rules between metric
 	// columns — structure the eye should follow without reading.
 	Border lipgloss.Color
-	// Surface is the only background role: the selected row, the metrics strip,
-	// readme code plates. It must sit close enough to the terminal background
-	// that a filled row reads as a raised block rather than a painted bar.
+	// Surface is the only background role: the card's metrics strip, the code
+	// lines in its changelog, readme code plates. It must sit close enough to
+	// the terminal background that a filled block reads as raised rather than
+	// as a painted bar.
 	Surface lipgloss.Color
 
 	// SignalDim is the API gauge's empty track — the one place a *shade* of a

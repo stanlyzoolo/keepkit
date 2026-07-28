@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -540,6 +541,83 @@ func isDevVersion(v string) bool {
 		return true
 	}
 	return pseudoVersionRe.MatchString(v)
+}
+
+// displayVersion is the running build's version as a human reads it, for the
+// [?] overlay's title. A release build already reads well and passes through
+// untouched; a working copy does not.
+//
+// Go stamps an untagged commit with a pseudo-version — v0.1.1-0.20260728221642-
+// 0b86a47f4f05 — which is 44 characters of timestamp in a keys sheet, and its
+// leading number is a release that does not exist yet. The two facts a reader
+// actually wants are behind it: the last release, and which commit this is. Go's
+// own rule maps one onto the other, so the base is recovered rather than shown
+// as stamped:
+//
+//	vX.Y.(Z+1)-0.<ts>-<hash>     an untagged commit after the release vX.Y.Z
+//	vX.Y.Z-pre.0.<ts>-<hash>     … after the pre-release vX.Y.Z-pre
+//	vX.0.0-<ts>-<hash>           … in a repository with no tag at all
+//
+// The result carries a + and the commit, so it can never be mistaken for the
+// release itself — which is also why the *raw* value stays in m.appVersion: the
+// self-update gate reads it, and it has to keep seeing a working copy.
+func displayVersion(v string) string {
+	// Build metadata rides on the end (+dirty for uncommitted changes) and the
+	// pseudo-version pattern is anchored, so it is split off first — otherwise
+	// the one build most likely to be read, a developer's own working copy,
+	// is the one that keeps all 44 characters.
+	v, meta, dirty := strings.Cut(v, "+")
+	loc := pseudoVersionRe.FindStringIndex(v)
+	if loc == nil {
+		if dirty {
+			return v + "+" + meta
+		}
+		return v
+	}
+	base, hash := v[:loc[0]], v[len(v)-12:]
+	if len(hash) > 7 {
+		hash = hash[:7]
+	}
+	// The separator the regex matched is what tells the tagless form apart: Go
+	// writes vX.0.0-<ts> with a dash and extends an existing pre-release with a
+	// dot. Reading the base's own tail instead would take the "0" of v0.0.0 for
+	// the pre-release marker and answer "v0.0".
+	switch sep := v[loc[0]]; {
+	case sep == '-':
+		base = "dev" // vX.0.0-<ts>-<hash>: no tag to be after
+	case strings.HasSuffix(base, "-0"):
+		// A release base, bumped a patch by Go: undo the bump to name it.
+		base = previousPatch(strings.TrimSuffix(base, "-0"))
+	case strings.HasSuffix(base, ".0"):
+		// A pre-release base, extended by Go: the tag is what is left.
+		base = strings.TrimSuffix(base, ".0")
+	default:
+		base = ""
+	}
+	if base == "" {
+		base = "dev"
+	}
+	out := base + "+" + hash
+	if dirty {
+		out += "-" + meta
+	}
+	return out
+}
+
+// previousPatch turns vX.Y.Z into vX.Y.(Z-1) — the inverse of the patch bump Go
+// applies when it builds a pseudo-version for a commit after a release. It
+// answers "" for anything it cannot invert (a non-numeric or zero patch), which
+// the caller reads as "no tag behind this build".
+func previousPatch(v string) string {
+	dot := strings.LastIndex(v, ".")
+	if dot < 0 {
+		return ""
+	}
+	patch, err := strconv.Atoi(v[dot+1:])
+	if err != nil || patch <= 0 {
+		return ""
+	}
+	return v[:dot+1] + strconv.Itoa(patch-1)
 }
 
 // isSelfUpdate reports whether an update of the named tool is keepkit's own
@@ -1151,7 +1229,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.toolsW, m.briefW, m.helpW = m.calcPanelWidths()
 		vpH := m.calcListHeight()
-		
+
 		if !m.ready {
 			// Viewports are 1 col narrower than their panel to leave a gutter
 			// for the scrollbar rendered by withScrollbar.
@@ -2235,3 +2313,9 @@ const (
 	rateWarn
 	rateExhausted
 )
+
+// isDevBuild reports whether the running binary is a working copy rather than a
+// release — the same question selfCheckEnabled asks, exported to the test that
+// pins displayVersion's contract: shortening the label must not shorten what the
+// self-update gate sees.
+func (m Model) isDevBuild() bool { return isDevVersion(m.appVersion) }
