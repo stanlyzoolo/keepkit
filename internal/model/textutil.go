@@ -146,7 +146,10 @@ func wrapLine(line string, width int) []string {
 }
 
 // Inline markdown patterns, compiled once — mdInline runs per source line of
-// every release body the card renders.
+// every release body the card renders, and the README preprocessor
+// (readme_clean.go) reuses the image and link patterns: "an inline markdown
+// image" and "an inline markdown link" are one grammar fact, whatever the
+// consumer then does with the match.
 //
 // The link patterns keep their text class free of the closing delimiter
 // ([^\]]* / [^)]*), which is what makes them non-greedy without the RE2 cost
