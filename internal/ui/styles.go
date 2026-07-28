@@ -131,9 +131,12 @@ var (
 			Foreground(ColorMuted).
 			Italic(true)
 
+	// MetaDetailLabelStyle colors the card's [notes] labels and nothing more:
+	// the column they align to is model.cardLabelWidth, shared with the [info]
+	// labels, which cannot use a style (label and value are one Render call
+	// there). A Width here would be a second, silently drifting definition.
 	MetaDetailLabelStyle = lipgloss.NewStyle().
-				Foreground(ColorMuted).
-				Width(8)
+				Foreground(ColorMuted)
 
 	RepoStatusStyle = lipgloss.NewStyle().
 			Foreground(ColorMuted).

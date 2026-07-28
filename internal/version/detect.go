@@ -190,6 +190,29 @@ func IsNewer(installed, latest string) bool {
 	return semver.Compare(b, a) > 0
 }
 
+// DisplayVersion is the card's spelling of a version string: a bare version
+// number gains the "v" its GitHub tag almost certainly carries, so the
+// installed: and latest: lines read as a pair instead of sitting one letter
+// apart — a tool's --version prints "1.10.2" where its release is tagged
+// "v1.10.2", and the same binary looked like two different things.
+//
+// canonSemver decides *whether* the string is a version number at all, so
+// anything it rejects ("nightly", "cli-2.0", a hash) is passed through
+// untouched. Its output is deliberately not what gets displayed: it drops
+// zero-padding (2024.01.15 → v2024.1.15), a 4th segment and build metadata,
+// and the card must show the version the tool actually reported — the "v" is
+// the only edit this function is allowed to make.
+func DisplayVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || canonSemver(v) == "" {
+		return v
+	}
+	if v[0] == 'v' || v[0] == 'V' {
+		return v
+	}
+	return "v" + v
+}
+
 // canonSemver normalizes a detected version or GitHub tag into a form
 // semver.Compare accepts, or "" when it cannot. Beyond the "v" prefix it
 // handles two shapes strict semver rejects but real tools emit: zero-padded

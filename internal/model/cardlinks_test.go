@@ -13,6 +13,7 @@ import (
 
 const (
 	linkRepo   = "github.com/cli/cli"
+	linkShort  = "cli/cli"
 	linkRelURL = "https://github.com/cli/cli/releases/tag/v2.0.0"
 )
 
@@ -48,7 +49,7 @@ func TestBuildCardLinks(t *testing.T) {
 		{
 			name:  "repo line only while the changelog loads",
 			setup: func(m *Model) { m.changelogLoadingFor = "gh" },
-			want:  map[string]string{"https://" + linkRepo: "repo: " + linkRepo},
+			want:  map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkShort},
 		},
 		{
 			name: "changelog url linked alongside the repo",
@@ -56,7 +57,7 @@ func TestBuildCardLinks(t *testing.T) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, body: "release notes"}
 			},
 			want: map[string]string{
-				"https://" + linkRepo: "repo: " + linkRepo,
+				"https://" + linkRepo: cardLabel("repo:") + linkShort,
 				linkRelURL:            linkRelURL,
 			},
 		},
@@ -65,14 +66,14 @@ func TestBuildCardLinks(t *testing.T) {
 			setup: func(m *Model) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, err: errors.New("boom")}
 			},
-			want: map[string]string{"https://" + linkRepo: "repo: " + linkRepo},
+			want: map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkShort},
 		},
 		{
 			name: "release without an html url",
 			setup: func(m *Model) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", body: "release notes"}
 			},
-			want: map[string]string{"https://" + linkRepo: "repo: " + linkRepo},
+			want: map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkShort},
 		},
 		{
 			name: "update marker and wrapped about shift both lines",
@@ -85,7 +86,7 @@ func TestBuildCardLinks(t *testing.T) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, body: "release notes"}
 			},
 			want: map[string]string{
-				"https://" + linkRepo: "repo: " + linkRepo,
+				"https://" + linkRepo: cardLabel("repo:") + linkShort,
 				linkRelURL:            linkRelURL,
 			},
 		},
@@ -132,6 +133,42 @@ func TestBuildCardLinks(t *testing.T) {
 				if url == wurl && wline <= line {
 					t.Errorf("%q at line %d wrapped and at line %d unwrapped, want it pushed down", url, wline, line)
 				}
+			}
+		}
+	})
+
+	// The repo line shows the bare owner/repo but links the full ref, so the
+	// two must not be assumed equal — and a ref NormalizeRepo rejects (an
+	// unsupported or spoofed host) must render in full, or the display would
+	// hide the host that makes the link not what it looks like.
+	t.Run("shortened display, full link", func(t *testing.T) {
+		m := linkedCardModel(t, linkRepo)
+		content, links := m.buildCard()
+		for line, url := range links {
+			if url != "https://"+linkRepo {
+				continue
+			}
+			got := cardLine(content, line)
+			if !strings.Contains(got, cardLabel("repo:")+linkShort) {
+				t.Errorf("repo line = %q, want the bare %q", got, linkShort)
+			}
+			if strings.Contains(got, "github.com") {
+				t.Errorf("repo line = %q, want the host dropped from the display", got)
+			}
+		}
+
+		spoofed := "github.com.evil.com/cli/cli"
+		m = linkedCardModel(t, spoofed)
+		content, links = m.buildCard()
+		if len(links) != 1 {
+			t.Fatalf("links = %v, want the repo line linked", links)
+		}
+		for line, url := range links {
+			if url != "https://"+spoofed {
+				t.Errorf("link = %q, want the raw ref %q", url, "https://"+spoofed)
+			}
+			if got := cardLine(content, line); !strings.Contains(got, spoofed) {
+				t.Errorf("repo line = %q, want the unshortenable ref shown in full", got)
 			}
 		}
 	})

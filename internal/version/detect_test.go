@@ -52,6 +52,39 @@ func TestIsNewer(t *testing.T) {
 	}
 }
 
+// TestDisplayVersion pins the one edit the card's version spelling is allowed
+// to make: a "v" in front of a bare version number, and nothing else. The
+// value itself must survive verbatim — canonSemver, which decides whether the
+// string is a version at all, rewrites zero-padding, a 4th segment and build
+// metadata, and displaying that would show a version no tool ever reported.
+func TestDisplayVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare semver gains the v", "1.10.2", "v1.10.2"},
+		{"v-prefixed left alone", "v1.10.2", "v1.10.2"},
+		{"uppercase V left alone", "V1.10.2", "V1.10.2"},
+		{"two segments", "1.2", "v1.2"},
+		{"pre-release", "1.2.3-rc1", "v1.2.3-rc1"},
+		{"build metadata kept, not dropped", "1.2.3+build7", "v1.2.3+build7"},
+		{"CalVer keeps its zero-padding", "2024.01.15", "v2024.01.15"},
+		{"4th segment kept, not truncated", "1.2.3.4", "v1.2.3.4"},
+		{"surrounding space trimmed", "  1.2.3  ", "v1.2.3"},
+		{"not a version number", "nightly", "nightly"},
+		{"prefixed tag left alone", "cli-2.0.0", "cli-2.0.0"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DisplayVersion(tt.in); got != tt.want {
+				t.Errorf("DisplayVersion(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // writeFakeTool creates an executable shell script named `name` in dir.
 func writeFakeTool(t *testing.T, dir, name, script string) {
 	t.Helper()
