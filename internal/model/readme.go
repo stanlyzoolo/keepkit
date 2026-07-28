@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -13,47 +12,49 @@ import (
 // instead of a per-character column.
 const readmeMinWrap = 20
 
-// testReadmeStyle overrides the resolved glamour style name in tests (the
-// testConfigDir/testCacheDir seam idiom). An unknown name makes
-// glamour.NewTermRenderer fail, which is how the fallback path is exercised.
+// testReadmeStyle routes the renderer through a named standard style instead of
+// keepkitStyle (the testConfigDir/testCacheDir seam idiom). An unknown name
+// makes glamour.NewTermRenderer fail, which is how the fallback path is
+// exercised.
 var testReadmeStyle string
 
-// readmeStyleName resolves the fixed glamour style. Deliberately NOT
-// glamour.WithAutoStyle(): auto-style probes the live terminal with a termenv
-// OSC background query that reads stdin, which races Bubble Tea's input reader
-// and breaks the project's terminal-sandboxing policy. The caller resolves
-// dark/light once at model construction (lipgloss caches HasDarkBackground)
-// and passes the answer down.
-func readmeStyleName(dark bool) string {
-	if testReadmeStyle != "" {
-		return testReadmeStyle
-	}
-	if dark {
-		return styles.DarkStyle
-	}
-	return styles.LightStyle
-}
-
-// renderReadme turns raw README markdown into the ANSI text panel [3] shows.
-// The input is sanitized with cleanTerminalOutput first — a README is remote
-// content that lands in a viewport verbatim, so it gets the same treatment as
-// a probe capture. Any glamour failure falls back to the sanitized plain text:
-// an unstyled README beats an empty panel.
+// renderReadme turns raw README markdown into the ANSI text panel [3] shows,
+// in two layers. First the text is sanitized with cleanTerminalOutput — a
+// README is remote content that lands in a viewport verbatim, so it gets the
+// same treatment as a probe capture — and then preprocessed by
+// cleanReadmeMarkdown, which strips the badges, hrefs, HTML and emoji a TTY
+// cannot show or does not need. What survives is rendered with keepkitStyle,
+// the palette-matched theme.
+//
+// The style is resolved from the dark/light answer the caller already has, and
+// deliberately NOT by glamour.WithAutoStyle(): auto-style probes the live
+// terminal with a termenv OSC background query that reads stdin, which races
+// Bubble Tea's input reader and breaks the project's terminal-sandboxing
+// policy. Any glamour failure falls back to the preprocessed plain text: an
+// unstyled README beats an empty panel.
 func renderReadme(raw string, width int, dark bool) string {
-	clean := cleanTerminalOutput(raw)
+	clean := cleanReadmeMarkdown(cleanTerminalOutput(raw))
 	if strings.TrimSpace(clean) == "" {
 		return ""
 	}
 	if width < readmeMinWrap {
 		width = readmeMinWrap
 	}
+	style := glamour.WithStyles(keepkitStyle(dark))
+	if testReadmeStyle != "" {
+		style = glamour.WithStandardStyle(testReadmeStyle)
+	}
 	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(readmeStyleName(dark)),
+		style,
 		glamour.WithWordWrap(width),
 		// glamour defaults to TrueColor regardless of the environment; follow
 		// lipgloss instead so a degraded profile (NO_COLOR, dumb term) yields
 		// plain text like every other panel.
 		glamour.WithColorProfile(lipgloss.ColorProfile()),
+		// A table link renders in its cell rather than as a numbered footnote
+		// under the table. The preprocessor already unwrapped the inline form;
+		// this covers an autolink that survived into a cell.
+		glamour.WithInlineTableLinks(true),
 	)
 	if err != nil {
 		return clean

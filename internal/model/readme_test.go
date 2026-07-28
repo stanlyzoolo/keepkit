@@ -74,25 +74,31 @@ func TestRenderReadmeStripsControlChars(t *testing.T) {
 }
 
 // An unrenderable style makes glamour.NewTermRenderer fail; the panel must get
-// the sanitized plain text rather than nothing.
+// the preprocessed plain text rather than nothing.
 func TestRenderReadmeFallsBackToPlainText(t *testing.T) {
-	testReadmeStyle = "no-such-style"
-	t.Cleanup(func() { testReadmeStyle = "" })
-
-	raw := "# Title\n\nbody\x07 text\n"
-	got := renderReadme(raw, 60, true)
-	want := cleanTerminalOutput(raw)
-	if got != want {
-		t.Errorf("fallback = %q, want the sanitized input %q", got, want)
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"sanitizer only", "# Title\n\nbody\x07 text\n"},
+		// The fallback must carry the preprocessing too, or a failed render
+		// would be the one path that still shows badge and href noise.
+		{"preprocessed", "# Title\n\n![Build](https://b.svg)\n\nSee the [docs](https://example.com) 🚀\n"},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testReadmeStyle = "no-such-style"
+			t.Cleanup(func() { testReadmeStyle = "" })
 
-func TestRenderReadmeStyleFollowsBackground(t *testing.T) {
-	if got := readmeStyleName(true); got != "dark" {
-		t.Errorf("readmeStyleName(true) = %q, want %q", got, "dark")
-	}
-	if got := readmeStyleName(false); got != "light" {
-		t.Errorf("readmeStyleName(false) = %q, want %q", got, "light")
+			got := renderReadme(tt.raw, 60, true)
+			want := cleanReadmeMarkdown(cleanTerminalOutput(tt.raw))
+			if got != want {
+				t.Errorf("fallback = %q, want the preprocessed input %q", got, want)
+			}
+			if got == tt.raw {
+				t.Errorf("fallback returned the raw input unchanged: %q", got)
+			}
+		})
 	}
 }
 
@@ -144,7 +150,7 @@ func TestReadmeRenderCacheInvalidation(t *testing.T) {
 			if got == first {
 				t.Fatalf("%s: cache was reused, want a re-render", tt.name)
 			}
-			if want := cleanTerminalOutput(tt.raw); got != want {
+			if want := cleanReadmeMarkdown(cleanTerminalOutput(tt.raw)); got != want {
 				t.Errorf("%s: re-render = %q, want the fallback %q", tt.name, got, want)
 			}
 		})

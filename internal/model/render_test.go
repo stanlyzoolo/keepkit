@@ -3720,13 +3720,15 @@ func TestReadmePlaceholders(t *testing.T) {
 		}
 	})
 	t.Run("content that renders to nothing", func(t *testing.T) {
-		// glamour renders a README carrying no visible markdown to an empty
-		// string; returning that as real content would paint a blank panel with
-		// no way out, so it must fall through to a placeholder.
+		// A README that is nothing but badges and HTML cleans down to nothing
+		// (cleanReadmeMarkdown removes every one of these), and returning an
+		// empty render as real content would paint a blank panel with no way
+		// out — so it must fall through to a placeholder.
 		m := readmePanelModel(t, repo)
-		m = mustModel(m.Update(readmeMsg{toolName: "rg", content: "<!-- badges only -->\n"}))
+		const badgesOnly = "<!-- badges only -->\n\n<p align=\"center\">\n  <img src=\"logo.png\">\n</p>\n\n[![Build](https://b.svg)](https://ci.example.com)\n"
+		m = mustModel(m.Update(readmeMsg{toolName: "rg", content: badgesOnly}))
 		if m.helpBase != "" {
-			t.Skipf("glamour rendered %q to non-empty output; the empty-render path needs another fixture", "<!-- -->")
+			t.Fatalf("badge-only README rendered to %q, want the empty-render path", m.helpBase)
 		}
 		got := stripANSI(m.renderHelpContent())
 		if strings.TrimSpace(got) == "" {
