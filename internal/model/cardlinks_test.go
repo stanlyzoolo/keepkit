@@ -48,7 +48,7 @@ func TestBuildCardLinks(t *testing.T) {
 		{
 			name:  "repo line only while the changelog loads",
 			setup: func(m *Model) { m.changelogLoadingFor = "gh" },
-			want:  map[string]string{"https://" + linkRepo: "repo: " + linkRepo},
+			want:  map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkRepo},
 		},
 		{
 			name: "changelog url linked alongside the repo",
@@ -56,7 +56,7 @@ func TestBuildCardLinks(t *testing.T) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, body: "release notes"}
 			},
 			want: map[string]string{
-				"https://" + linkRepo: "repo: " + linkRepo,
+				"https://" + linkRepo: cardLabel("repo:") + linkRepo,
 				linkRelURL:            linkRelURL,
 			},
 		},
@@ -65,14 +65,14 @@ func TestBuildCardLinks(t *testing.T) {
 			setup: func(m *Model) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, err: errors.New("boom")}
 			},
-			want: map[string]string{"https://" + linkRepo: "repo: " + linkRepo},
+			want: map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkRepo},
 		},
 		{
 			name: "release without an html url",
 			setup: func(m *Model) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", body: "release notes"}
 			},
-			want: map[string]string{"https://" + linkRepo: "repo: " + linkRepo},
+			want: map[string]string{"https://" + linkRepo: cardLabel("repo:") + linkRepo},
 		},
 		{
 			name: "update marker and wrapped about shift both lines",
@@ -85,7 +85,7 @@ func TestBuildCardLinks(t *testing.T) {
 				m.changelogData["gh"] = changelogMsg{toolName: "gh", htmlUrl: linkRelURL, body: "release notes"}
 			},
 			want: map[string]string{
-				"https://" + linkRepo: "repo: " + linkRepo,
+				"https://" + linkRepo: cardLabel("repo:") + linkRepo,
 				linkRelURL:            linkRelURL,
 			},
 		},

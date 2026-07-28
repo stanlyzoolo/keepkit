@@ -1138,6 +1138,32 @@ func scrollColumn(vp viewport.Model, focused bool) string {
 	return strings.Join(rows, "\n")
 }
 
+// cardLabelWidth is the card's value column: every "label: value" line in the
+// card — [info] and [notes] alike — pads its label to it, so the values line
+// up in one column instead of each label pushing its own value to a different
+// indent. It is the widest label buildCard can print ("maintenance:", 12) plus
+// the separating space, so no line ever needs more room than the column gives.
+// A label longer than this would still render (cardLabel never truncates), it
+// would just push its own value one column past the rest.
+const cardLabelWidth = len("maintenance:") + 1
+
+// cardLabel pads a card label to cardLabelWidth, separator included — it is
+// the single definition of the value column, so a label added to either
+// section lands in it for free (ui.MetaDetailLabelStyle deliberately carries
+// no Width of its own anymore, or the two would drift).
+func cardLabel(label string) string {
+	return label + strings.Repeat(" ", max(cardLabelWidth-utf8.RuneCountInString(label), 1))
+}
+
+// hangIndent pushes every line after the first to the value column, so a
+// wrapped note or tag reads as one block under its label instead of falling
+// back to column 0. Applied to already-styled text: each rendered line carries
+// its own escape sequences, so inserting plain spaces between them is safe and
+// keeps the indent itself unstyled.
+func hangIndent(s string) string {
+	return strings.ReplaceAll(s, "\n", "\n"+strings.Repeat(" ", cardLabelWidth))
+}
+
 // renderCard is the card text alone — the shape ~30 SetContent call sites want.
 // The clickable-link index is built by buildCard and only handleMouse needs it.
 func (m Model) renderCard() string {
@@ -1212,13 +1238,13 @@ func (m Model) buildCard() (string, map[int]string) {
 		if t.GitHub != "" {
 			// Clickable: resolves exactly like the [o] key does.
 			links[strings.Count(sb.String(), "\n")] = "https://" + t.GitHub
-			sb.WriteString(ui.GithubStyle.Render("repo: "+t.GitHub) + "\n")
+			sb.WriteString(ui.GithubStyle.Render(cardLabel("repo:")+t.GitHub) + "\n")
 			if !hasCard && m.repoStatus[t.Name] == "rate-limited" {
 				sb.WriteString(ui.WarnStyle.Render("rate limited — press [L]") + "\n")
 			}
 		}
 		if hasCard && card.Stars > 0 {
-			sb.WriteString(ui.InfoStyle.Render(fmt.Sprintf("stars: %s", formatStars(card.Stars))) + "\n")
+			sb.WriteString(ui.InfoStyle.Render(cardLabel("stars:")+formatStars(card.Stars)) + "\n")
 		}
 		// The version-less states resolve only once the local probe reported
 		// back (InstalledKnown) — before that an empty Installed just means the
@@ -1232,17 +1258,17 @@ func (m Model) buildCard() (string, map[int]string) {
 		// glyph is invisible in most editors and diffs and gets silently lost.
 		switch {
 		case installed != "":
-			sb.WriteString(ui.InfoStyle.Render("installed: \uf412 "+installed) + "\n")
+			sb.WriteString(ui.InfoStyle.Render(cardLabel("installed:")+"\uf412 "+version.DisplayVersion(installed)) + "\n")
 		case vinfo.InstalledKnown && vinfo.InstalledPresent:
-			sb.WriteString(ui.InfoStyle.Render("installed: ") +
+			sb.WriteString(ui.InfoStyle.Render(cardLabel("installed:")) +
 				ui.OkStyle.Render("✓") +
 				ui.InfoStyle.Render(" no version") + "\n")
 		case vinfo.InstalledKnown:
-			sb.WriteString(ui.InfoStyle.Render("installed: ") +
+			sb.WriteString(ui.InfoStyle.Render(cardLabel("installed:")) +
 				ui.DangerStyle.Render("✕") +
 				ui.InfoStyle.Render(" not installed") + "\n")
 		default:
-			sb.WriteString(ui.InfoStyle.Render("installed: detecting…") + "\n")
+			sb.WriteString(ui.InfoStyle.Render(cardLabel("installed:")+"detecting…") + "\n")
 		}
 		if hasCard {
 			if card.Latest != "" {
@@ -1255,20 +1281,20 @@ func (m Model) buildCard() (string, map[int]string) {
 					suffix = " (" + date + ")"
 				}
 				if m.hasUpdate(t.Name) {
-					sb.WriteString(ui.InfoStyle.Render("latest: ") +
-						ui.UpdateAvailableStyle.Render(" "+card.Latest+" ↑") +
+					sb.WriteString(ui.InfoStyle.Render(cardLabel("latest:")) +
+						ui.UpdateAvailableStyle.Render("\uf412 "+version.DisplayVersion(card.Latest)+" ↑") +
 						ui.InfoStyle.Render(suffix) + "\n")
 				} else {
-					sb.WriteString(ui.InfoStyle.Render("latest:  "+card.Latest+suffix) + "\n")
+					sb.WriteString(ui.InfoStyle.Render(cardLabel("latest:")+"\uf412 "+version.DisplayVersion(card.Latest)+suffix) + "\n")
 				}
 			}
 			if len(card.Languages) > 0 {
-				label := "languages: "
+				label := cardLabel("languages:")
 				bar := renderLangBar(card.Languages, inner, utf8.RuneCountInString(label))
 				sb.WriteString(ui.InfoStyle.Render(label) + bar + "\n")
 			}
 			if card.RepoStatus != "" {
-				sb.WriteString(ui.InfoStyle.Render("maintenance:") + " " + renderRepoStatus(card.RepoStatus) + "\n")
+				sb.WriteString(ui.InfoStyle.Render(cardLabel("maintenance:")) + renderRepoStatus(card.RepoStatus) + "\n")
 			}
 		}
 	}
@@ -1278,28 +1304,37 @@ func (m Model) buildCard() (string, map[int]string) {
 		sb.WriteString(m.sectionDivider("notes"))
 		sym := loader.StatusSymbol[mt.Status]
 		symStyled := ui.StatusStyle(mt.Status).Render(sym + " " + string(mt.Status))
-		sb.WriteString(ui.MetaDetailLabelStyle.Render("status:") + " " + symStyled + "\n")
+		sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("status:")) + symStyled + "\n")
+
+		// Wrapped values are cut to what is left of the panel once the label
+		// column is spent — wrapping to the full inner width let the first line
+		// run cardLabelWidth cells past the panel edge, where the viewport
+		// truncates it (it does not soft-wrap) — and their continuation lines
+		// hang under the value column instead of falling back to column 0.
+		valueW := max(inner-cardLabelWidth, 10)
 
 		if m.mode == modeEditNote {
-			sb.WriteString(ui.MetaDetailLabelStyle.Render("note:") + " " + m.noteInput.View() + "\n")
+			sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("note:")) + m.noteInput.View() + "\n")
 		} else {
 			noteText := mt.Note
 			if noteText == "" {
 				noteText = "— (press e to edit)"
 			}
-			wrapped := wrapText(noteText, inner)
-			sb.WriteString(ui.MetaDetailLabelStyle.Render("note:") + " " + ui.MetaNoteStyle.Render(wrapped) + "\n")
+			wrapped := wrapText(noteText, valueW)
+			sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("note:")) +
+				hangIndent(ui.MetaNoteStyle.Render(wrapped)) + "\n")
 		}
 
 		if m.mode == modeEditTags {
-			sb.WriteString(ui.MetaDetailLabelStyle.Render("tags:") + " " + m.tagsInput.View() + "\n")
+			sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("tags:")) + m.tagsInput.View() + "\n")
 		} else {
 			tagsText := tagOf(mt)
 			if tagsText == "" {
 				tagsText = "— (press t to edit)"
 			}
-			wrapped := wrapText(tagsText, inner)
-			sb.WriteString(ui.MetaDetailLabelStyle.Render("tags:") + " " + ui.MetaTagStyle.Render(wrapped) + "\n")
+			wrapped := wrapText(tagsText, valueW)
+			sb.WriteString(ui.MetaDetailLabelStyle.Render(cardLabel("tags:")) +
+				hangIndent(ui.MetaTagStyle.Render(wrapped)) + "\n")
 		}
 	}
 

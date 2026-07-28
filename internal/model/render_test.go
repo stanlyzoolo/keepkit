@@ -1848,8 +1848,8 @@ func TestInstalledMsgCarriesPresence(t *testing.T) {
 		want    string
 		notWant string
 	}{
-		{"installed but version-less", true, "installed: ✓ no version", "not installed"},
-		{"absent", false, "installed: ✕ not installed", "no version"},
+		{"installed but version-less", true, cardLabel("installed:") + "✓ no version", "not installed"},
+		{"absent", false, cardLabel("installed:") + "✕ not installed", "no version"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2668,6 +2668,95 @@ func TestRenderCardSpinner(t *testing.T) {
 	}
 }
 
+// TestCardValuesShareOneColumn pins the card's single value column: every
+// "label: value" line the card can print — [info] and [notes] alike — starts
+// its value at cardLabelWidth. A line added with a hand-written label instead
+// of cardLabel fails here rather than shipping a card whose values step in and
+// out by a few cells each. The fixture fills every gated line, and the
+// completeness check below is what keeps it filling them.
+func TestCardValuesShareOneColumn(t *testing.T) {
+	m := New([]loader.ToolMeta{{
+		Name:   "gh",
+		GitHub: "cli/cli",
+		Status: loader.StatusActive,
+		Note:   strings.Repeat("a wordy note ", 8),
+		Tags:   []string{"git"},
+	}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{
+		Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true, InstalledPresent: true,
+	}
+	mm.repoCards["gh"] = version.RepoCard{
+		Stars:       42123,
+		Latest:      "v2.0.0",
+		PublishedAt: "2026-01-02T15:04:05Z",
+		Languages:   map[string]int{"Go": 900, "Shell": 100},
+		RepoStatus:  "active",
+	}
+
+	// A label line is "<label>:" + padding + a value; wrapped continuations
+	// start with the padding itself and are skipped by the leading class.
+	labelLine := regexp.MustCompile(`^([a-z]+:)( +)(\S.*)$`)
+	seen := map[string]bool{}
+	for _, line := range strings.Split(stripANSI(mm.renderCard()), "\n") {
+		parts := labelLine.FindStringSubmatch(line)
+		if parts == nil {
+			continue
+		}
+		seen[parts[1]] = true
+		col := utf8.RuneCountInString(parts[1]) + utf8.RuneCountInString(parts[2])
+		if col != cardLabelWidth {
+			t.Errorf("%q starts its value at column %d, want %d", line, col, cardLabelWidth)
+		}
+	}
+
+	for _, label := range []string{
+		"repo:", "stars:", "installed:", "latest:", "languages:", "maintenance:",
+		"status:", "note:", "tags:",
+	} {
+		if !seen[label] {
+			t.Errorf("card has no %q line — the fixture stopped covering every labelled line", label)
+		}
+	}
+}
+
+// TestCardNoteWrapsUnderItsLabel covers the other half of the column: a value
+// wrapped to the full inner width used to run cardLabelWidth cells past the
+// panel edge, where the viewport (which truncates, it does not soft-wrap) cut
+// the first line, and its continuations fell back to column 0.
+func TestCardNoteWrapsUnderItsLabel(t *testing.T) {
+	m := New([]loader.ToolMeta{{
+		Name:   "gh",
+		Status: loader.StatusActive,
+		Note:   strings.Repeat("a wordy note ", 12),
+	}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	mm := updated.(Model)
+
+	inner := max(mm.briefW-2, 1)
+	indent := strings.Repeat(" ", cardLabelWidth)
+	var noteLines []string
+	for _, line := range strings.Split(stripANSI(mm.renderCard()), "\n") {
+		if strings.HasPrefix(line, "note:") || (len(noteLines) > 0 && strings.HasPrefix(line, indent)) {
+			noteLines = append(noteLines, line)
+			continue
+		}
+		if len(noteLines) > 0 {
+			break
+		}
+	}
+
+	if len(noteLines) < 2 {
+		t.Fatalf("note rendered on %d line(s), want a wrapped block; card:\n%s", len(noteLines), stripANSI(mm.renderCard()))
+	}
+	for _, line := range noteLines {
+		if w := lipgloss.Width(strings.TrimRight(line, " ")); w > inner {
+			t.Errorf("note line %q is %d cells wide, past the %d-cell panel", line, w, inner)
+		}
+	}
+}
+
 // TestRenderCardInstalledLatest covers the [info] version lines: installed:
 // renders whenever the section is open (muted "detecting…" while the local
 // probe is in flight, "✓ no version" / "✕ not installed" once it reported
@@ -2688,14 +2777,53 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m.versions["gh"] = VersionInfo{Installed: "v2.0.0", Latest: "v2.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "installed: \uf412 v2.0.0") {
+		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v2.0.0") {
 			t.Errorf("card missing installed line; got:\n%s", card)
 		}
-		if !strings.Contains(card, "latest:  v2.0.0") {
+		if !strings.Contains(card, cardLabel("latest:")+"\uf412 v2.0.0") {
 			t.Errorf("card missing latest line; got:\n%s", card)
 		}
 		if strings.Contains(card, "↑") {
 			t.Errorf("up-to-date card shows update arrow; got:\n%s", card)
+		}
+	})
+
+	// A tool's --version prints a bare number where its release is tagged with
+	// a "v" — both lines go through version.DisplayVersion so the same binary
+	// does not read as two different things. Covers all three write sites: the
+	// installed line, the plain latest line and the highlighted one.
+	t.Run("bare version numbers gain the v on both lines", func(t *testing.T) {
+		m := newCardModel("cli/cli")
+		m.versions["gh"] = VersionInfo{Installed: "1.10.2", Latest: "1.10.2", InstalledKnown: true}
+		m.repoCards["gh"] = version.RepoCard{Latest: "1.10.2"}
+		card := stripANSI(m.renderCard())
+		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.10.2") {
+			t.Errorf("installed line kept the bare version; got:\n%s", card)
+		}
+		if !strings.Contains(card, cardLabel("latest:")+"\uf412 v1.10.2") {
+			t.Errorf("latest line kept the bare version; got:\n%s", card)
+		}
+
+		up := newCardModel("cli/cli")
+		up.versions["gh"] = VersionInfo{Installed: "1.9.0", Latest: "1.10.2", InstalledKnown: true}
+		up.repoCards["gh"] = version.RepoCard{Latest: "1.10.2"}
+		card = stripANSI(up.renderCard())
+		if !strings.Contains(card, cardLabel("latest:")+"\uf412 v1.10.2 ↑") {
+			t.Errorf("highlighted latest kept the bare version; got:\n%s", card)
+		}
+		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.9.0") {
+			t.Errorf("installed line kept the bare version; got:\n%s", card)
+		}
+	})
+
+	// A version string that is not a version number is not touched: the card
+	// shows what the tool reported, "v"-less.
+	t.Run("non-semver version left as detected", func(t *testing.T) {
+		m := newCardModel("cli/cli")
+		m.versions["gh"] = VersionInfo{Installed: "nightly", InstalledKnown: true}
+		card := stripANSI(m.renderCard())
+		if !strings.Contains(card, cardLabel("installed:")+"\uf412 nightly") {
+			t.Errorf("installed line rewrote a non-version string; got:\n%s", card)
 		}
 	})
 
@@ -2704,10 +2832,10 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m.versions["gh"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0", PublishedAt: "2026-01-02T15:04:05Z"}
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "latest:  v2.0.0 ↑ (2026-01-02)") {
+		if !strings.Contains(card, cardLabel("latest:")+"\uf412 v2.0.0 ↑ (2026-01-02)") {
 			t.Errorf("card missing highlighted latest with arrow; got:\n%s", card)
 		}
-		if !strings.Contains(card, "installed: \uf412 v1.0.0") {
+		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.0.0") {
 			t.Errorf("card missing installed line; got:\n%s", card)
 		}
 	})
@@ -2717,7 +2845,7 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "installed: ✕ not installed") {
+		if !strings.Contains(card, cardLabel("installed:")+"✕ not installed") {
 			t.Errorf("card missing installed fallback with ✕ marker; got:\n%s", card)
 		}
 	})
@@ -2729,7 +2857,7 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0", InstalledKnown: true, InstalledPresent: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "installed: ✓ no version") {
+		if !strings.Contains(card, cardLabel("installed:")+"✓ no version") {
 			t.Errorf("card missing present-but-version-less line; got:\n%s", card)
 		}
 		if strings.Contains(card, "not installed") {
@@ -2742,7 +2870,7 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0"}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "installed: detecting…") {
+		if !strings.Contains(card, cardLabel("installed:")+"detecting…") {
 			t.Errorf("card missing pending installed line; got:\n%s", card)
 		}
 		if strings.Contains(card, "not installed") || strings.Contains(card, "✕") {
@@ -2753,7 +2881,7 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 	t.Run("no version data at all: detecting, no latest", func(t *testing.T) {
 		m := newCardModel("cli/cli")
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "installed: detecting…") {
+		if !strings.Contains(card, cardLabel("installed:")+"detecting…") {
 			t.Errorf("card missing pending installed line; got:\n%s", card)
 		}
 		if strings.Contains(card, "latest:") {
@@ -2770,7 +2898,7 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m.versions["gh"] = VersionInfo{Installed: "v1.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Stars: 42}
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "installed: \uf412 v1.0.0") {
+		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.0.0") {
 			t.Errorf("card missing installed line; got:\n%s", card)
 		}
 		if strings.Contains(card, "latest:") {
@@ -2785,7 +2913,7 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m := newCardModel("")
 		m.versions["gh"] = VersionInfo{Installed: "v1.0.0", InstalledKnown: true}
 		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "[info]") || !strings.Contains(card, "installed: \uf412 v1.0.0") {
+		if !strings.Contains(card, "[info]") || !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.0.0") {
 			t.Errorf("card missing [info]/installed for GitHub-less tool; got:\n%s", card)
 		}
 	})

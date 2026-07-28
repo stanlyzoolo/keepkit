@@ -55,7 +55,7 @@ graph TD
 | `internal/proc` | `DetachTTY` — run probes without a controlling terminal; `KillGroup` — process-group SIGKILL (plain `Kill` on Windows) |
 | `internal/ui` | Lip Gloss styles, `PlaceOverlay`, `StripANSI` |
 | `internal/updater` | Detect the package manager that owns an installed binary and produce an update `Plan{Manager, Argv, Display}` |
-| `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`); keepkit's own release check (`SelfRepo`, `SelfLatest`) |
+| `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`) and the card's version spelling (`DisplayVersion`); keepkit's own release check (`SelfRepo`, `SelfLatest`) |
 
 `configdir`, `launcher`, `logx`, `proc`, `ui`, `updater` and `version` sit at the bottom of the import graph:
 they know nothing about the TUI (`ui`, `updater` and `version` reach only into
@@ -169,6 +169,11 @@ Key invariants:
   name before the change and remap the index afterwards (`indexOfMeta`).
 - **Search is a transaction.** `/` remembers `searchPrevName`; `enter` commits the
   selection (focus moves to the card), `esc` rolls the cursor back to the previous tool.
+- **The card has one value column.** Every `label: value` line in `[info]` and `[notes]`
+  pads its label through `cardLabel` to `cardLabelWidth` (the widest label the card can
+  print), the single definition of that column — `ui.MetaDetailLabelStyle` carries no
+  `Width`, or the two sections would drift apart again. Wrapped values (`note`, `tags`)
+  wrap to `inner - cardLabelWidth` and hang under the column via `hangIndent`.
 - **Card links are indexed, not parsed.** `buildCard()` returns the card text plus a
   `line → URL` map recorded while writing (line heights vary with wrapping), so a
   click on the `repo:` line or the changelog release URL opens the browser. `handleMouse`
