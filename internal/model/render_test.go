@@ -555,7 +555,7 @@ func TestBriefFooterActions(t *testing.T) {
 	// e and # are offered in the meta line, beside the values they edit; a
 	// footer repeating them would spend the row on saying it twice.
 	for _, absent := range []string{"e note", "# tags"} {
-		if strings.Contains(stripANSI(mm.panelFooter(mm.briefW, false, nil, "")), absent) {
+		if strings.Contains(stripANSI(mm.panelFooter(mm.briefW, nil, "")), absent) {
 			t.Errorf("brief footer repeats the meta line's %q hint", absent)
 		}
 	}
@@ -745,7 +745,7 @@ func TestRenderLeftContentMarkerSurvivesFocus(t *testing.T) {
 	for _, f := range []int{focusTools, focusBrief, focusHelp} {
 		m.focus = f
 		lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
-		if !strings.HasPrefix(lines[1], "⏺  git") {
+		if !strings.HasPrefix(lines[1], " ⏺ git") {
 			t.Errorf("focus %v: selected row = %q, want ⏺ marker on git", f, lines[1])
 		}
 		if strings.Contains(lines[0], "⏺") {
@@ -771,7 +771,7 @@ func TestRenderLeftContentMarkerColumn(t *testing.T) {
 	m.metaSelected = 0
 
 	lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
-	if !strings.HasPrefix(lines[0], "⏺  fzf") {
+	if !strings.HasPrefix(lines[0], " ⏺ fzf") {
 		t.Errorf("selected active row = %q, want ⏺ marker", lines[0])
 	}
 	for i, name := range []string{"git", "ripgrep", "yq"} {
@@ -787,7 +787,7 @@ func TestRenderLeftContentMarkerColumn(t *testing.T) {
 	// the row it left behind falls back to a plain-space marker column.
 	m.metaSelected = 1
 	lines = strings.Split(stripANSI(m.renderLeftContent()), "\n")
-	if !strings.HasPrefix(lines[1], "⏺  git") {
+	if !strings.HasPrefix(lines[1], " ⏺ git") {
 		t.Errorf("selected trying row = %q, want ⏺ cursor", lines[1])
 	}
 	if !strings.HasPrefix(lines[0], "   fzf") {

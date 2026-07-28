@@ -80,7 +80,7 @@ func TestGroupedOrderingLeadsWithUpdates(t *testing.T) {
 	if got, want := displayedNames(m), []string{"jq", "rg", "fd", "git", "lazygit"}; !sameNames(got, want) {
 		t.Errorf("grouped order = %v, want %v (updates section first)", got, want)
 	}
-	if content := stripANSI(m.renderLeftContent()); !strings.HasPrefix(content, "updates ") {
+	if content := stripANSI(m.renderLeftContent()); !strings.HasPrefix(content, " updates ") {
 		t.Errorf("grouped content does not lead with the updates header:\n%s", content)
 	}
 }
@@ -159,7 +159,7 @@ func TestBuildToolRowsMapsGrouped(t *testing.T) {
 			if lineTool[i] != -1 {
 				t.Errorf("line %d (%q) maps to tool %d, want -1", i, line, lineTool[i])
 			}
-			if !strings.HasPrefix(line, label+" ─") {
+			if !strings.HasPrefix(line, " "+label+" ─") {
 				t.Errorf("line %d = %q, want the %q divider header", i, line, label)
 			}
 			continue
@@ -581,9 +581,10 @@ func TestTagHeaderLineFitsOneLine(t *testing.T) {
 		}
 	}
 
-	// A tag renders as the label followed by a rule out to the panel edge:
-	// "ab ────" at toolsW-1 = 7 cells.
-	if got, want := stripANSI(m.tagHeaderLine("ab")), "ab ────"; got != want {
+	// A tag renders as the label followed by a rule running out towards the
+	// panel edge, one blank column in from the frame at both ends: " ab ── " at
+	// toolsW-1 = 7 cells.
+	if got, want := stripANSI(m.tagHeaderLine("ab")), " ab ── "; got != want {
 		t.Errorf("short header = %q, want %q", got, want)
 	}
 }
@@ -599,9 +600,9 @@ func TestTagHeaderDividerFormat(t *testing.T) {
 		m.toolsW = 20
 		w := m.toolsW - 1
 		got := stripANSI(m.tagHeaderLine("dev"))
-		// Label first, then the rule out to the edge.
-		if !strings.HasPrefix(got, "dev ─") || !strings.HasSuffix(got, "─") {
-			t.Errorf("header = %q, want the \"dev ───…\" divider (no hashtag)", got)
+		// Label first, then the rule — both one column in from the frame.
+		if !strings.HasPrefix(got, " dev ─") || !strings.HasSuffix(got, "─ ") {
+			t.Errorf("header = %q, want the \" dev ───… \" divider (no hashtag)", got)
 		}
 		if strings.Contains(got, "#") {
 			t.Errorf("header = %q, want no hashtag", got)
@@ -614,8 +615,8 @@ func TestTagHeaderDividerFormat(t *testing.T) {
 	t.Run("empty tag renders untagged divider", func(t *testing.T) {
 		m.toolsW = 20
 		got := stripANSI(m.tagHeaderLine(""))
-		if !strings.HasPrefix(got, "untagged ─") || !strings.HasSuffix(got, "─") {
-			t.Errorf("empty-tag header = %q, want the \"untagged ───…\" divider", got)
+		if !strings.HasPrefix(got, " untagged ─") || !strings.HasSuffix(got, "─ ") {
+			t.Errorf("empty-tag header = %q, want the \" untagged ───… \" divider", got)
 		}
 		if lw := lipgloss.Width(got); lw != m.toolsW-1 {
 			t.Errorf("untagged header width = %d, want %d", lw, m.toolsW-1)

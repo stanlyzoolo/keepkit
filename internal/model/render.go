@@ -777,32 +777,29 @@ func (m Model) calcListHeight() int {
 	return max(m.calcVpHeight()-m.footerRows(), 1)
 }
 
-// panelFooter renders a panel's footer block — the spacer row plus the hints —
-// to exactly footerRows() lines and w cells wide, or "" when the panel is too
-// short for one. left cells are joined by " · " and dropped from the right until
-// they fit (same rule as the status bar, and for the same reason: a footer that
-// wrapped would push the panel past its height); right is pinned to the far
-// edge and dropped first, since it is the least important thing in the block.
+// panelFooter renders a panel's footer block — a blank spacer row plus the
+// hints — to exactly footerRows() lines and w cells wide, or "" when the panel
+// is too short for one. left cells are joined by " · " and dropped from the
+// right until they fit (same rule as the status bar, and for the same reason: a
+// footer that wrapped would push the panel past its height); right is pinned to
+// the far edge and dropped first, since it is the least important thing in the
+// block. Both ends sit one cell in from the panel frame, the same gutter the
+// list's group headers keep — content that touches its own border reads as
+// having overflowed it.
 //
-// rule picks the spacer: [1] separates its footer with a border-colored line
-// because its content is a dense list that would otherwise run into it, while
-// [2] and [3] are prose and a blank row is enough.
-func (m Model) panelFooter(w int, rule bool, left []string, right string) string {
+// The spacer is blank in every panel: [1] carried a border-colored rule for a
+// while, and it only made the footer look like a fourth section of the list
+// rather than the frame's own caption.
+func (m Model) panelFooter(w int, left []string, right string) string {
 	if m.footerRows() == 0 {
 		return ""
 	}
-	s := m.sty()
-	w = max(w, 1)
-
-	spacer := ""
-	if rule {
-		spacer = s.Rule.Render(strings.Repeat("─", w))
-	}
+	inner := max(w-2*panelGutter, 1)
 
 	fit := func(cells []string, reserve int) string {
 		for len(cells) > 0 {
 			line := strings.Join(cells, footerSep)
-			if lipgloss.Width(line)+reserve <= w {
+			if lipgloss.Width(line)+reserve <= inner {
 				return line
 			}
 			cells = cells[:len(cells)-1]
@@ -812,17 +809,25 @@ func (m Model) panelFooter(w int, rule bool, left []string, right string) string
 
 	line := fit(left, rateGaugeMinGap+lipgloss.Width(right))
 	if right != "" {
-		if gap := w - lipgloss.Width(line) - lipgloss.Width(right); gap >= rateGaugeMinGap {
+		if gap := inner - lipgloss.Width(line) - lipgloss.Width(right); gap >= rateGaugeMinGap {
 			line += strings.Repeat(" ", gap) + right
 		} else if line == "" {
-			line = truncateToWidth(stripANSI(right), w)
+			line = truncateToWidth(stripANSI(right), inner)
 		}
 	}
-	if lipgloss.Width(line) > w {
-		line = truncateToWidth(stripANSI(line), w)
+	if lipgloss.Width(line) > inner {
+		line = truncateToWidth(stripANSI(line), inner)
 	}
-	return spacer + "\n" + line
+	gutter := strings.Repeat(" ", panelGutter)
+	return "\n" + gutter + line
 }
+
+// panelGutter is the blank column a panel keeps between its frame and its own
+// chrome — the list's group headers and every footer. Content that touches the
+// border it lives in reads as having overflowed it. Tool rows keep their own,
+// wider indent (toolRowIndent), and the selected row's fill deliberately breaks
+// out of the gutter to span the panel edge to edge.
+const panelGutter = 1
 
 // footerSep separates two cells in a panel footer. The status bar uses two
 // spaces; a footer has fewer cells and more room around them, so the middot
@@ -869,7 +874,8 @@ func (m Model) renderLeftContent() string {
 }
 
 // tagHeaderLine renders a group header as a label followed by a rule running
-// out to the panel edge: "dev ─────────". The label is dim and the rule the
+// out towards the panel edge: " dev ──────── ", one blank column in from the
+// frame at both ends (panelGutter). The label is dim and the rule the
 // panel-frame gray, so a group boundary reads as structure — the tool names stay
 // the only color accent. The trailing group's label is "untagged", the leading
 // one's is updatesGroupLabel.
@@ -889,21 +895,25 @@ func (m Model) tagHeaderLine(tag string) string {
 		label = flattenLine(tag)
 	}
 	w := max(m.toolsW-1, 1)
-	// Too narrow for "label ─" — degrade to the bare label, cut to the panel so
-	// it still occupies a single line no wider than w. lipgloss.Width, not a
+	// Too narrow for " label ─ " — degrade to the bare label, cut to the panel
+	// so it still occupies a single line no wider than w. lipgloss.Width, not a
 	// rune count, so a CJK tag is cut by display cells (the same reason
 	// truncateToWidth exists).
-	if w < 3 {
+	if w < 5 {
 		return s.Dim.Render(truncateToWidth(label, w))
 	}
-	label = truncateToWidth(label, max(w-2, 1))
-	rule := max(w-1-lipgloss.Width(label), 0)
-	return s.Dim.Render(label) + s.Rule.Render(" "+strings.Repeat("─", rule))
+	gutter := strings.Repeat(" ", panelGutter)
+	inner := w - 2*panelGutter
+	label = truncateToWidth(label, max(inner-2, 1))
+	rule := max(inner-1-lipgloss.Width(label), 0)
+	return gutter + s.Dim.Render(label) + s.Rule.Render(" "+strings.Repeat("─", rule)) + gutter
 }
 
-// toolRowIndent is the width of a row's leading gutter: the marker column plus
-// the blank that sets the tool names one column in from their section headers.
-const toolRowIndent = 3
+// toolRowIndent is how far into a row its name starts: the panel gutter, the
+// marker column and one blank. The marker therefore sits in the same column as
+// a section header's label, and the names one step in from it — so a group
+// reads as a group rather than as a label that happens to sit above some rows.
+const toolRowIndent = panelGutter + 2
 
 // updatesGroupLabel heads the group of tools with a pending release. It is the
 // tracker's headline — the answer to the question the app exists to answer —
@@ -1049,12 +1059,10 @@ func (m Model) buildToolRows() (string, []int, []int) {
 			mark = paint(s.Dim).Render("⏺")
 		}
 
-		// Name column: whatever the marker, the indent and the version leave,
+		// Name column: whatever the marker, the indents and the version leave,
 		// with at least one blank cell between name and version so the two
-		// never touch. The indent is what sets the tools one column in from
-		// their section header, so a group reads as a group rather than as a
-		// label that happens to sit above some rows.
-		nameBudget := max(w-toolRowIndent-verW-1, 1)
+		// never touch.
+		nameBudget := max(w-toolRowIndent-panelGutter-verW-1, 1)
 		name := truncateToWidth(flattenLine(mt.Name), nameBudget)
 
 		// Rows that matched only by tag show the tag that earned them the spot,
@@ -1080,9 +1088,13 @@ func (m Model) buildToolRows() (string, []int, []int) {
 
 		// Pad out to the full panel width so a selected row's fill reaches both
 		// edges instead of stopping at the last glyph.
-		gap := max(w-toolRowIndent-lipgloss.Width(name)-lipgloss.Width(tagSuffix)-verW, 1)
-		sb.WriteString(mark + paint(s.Dim).Render(strings.Repeat(" ", toolRowIndent-1)) + rendered +
-			paint(s.Dim).Render(strings.Repeat(" ", gap)) + verStyle.Render(verText) + "\n")
+		// The row's own gutters are *painted*: the selected row's fill breaks out
+		// of them to span the panel edge to edge, which is what makes it read as
+		// a filled row rather than as a highlighted word.
+		gutter := paint(s.Dim).Render(strings.Repeat(" ", panelGutter))
+		gap := max(w-toolRowIndent-panelGutter-lipgloss.Width(name)-lipgloss.Width(tagSuffix)-verW, 1)
+		sb.WriteString(gutter + mark + paint(s.Dim).Render(strings.Repeat(" ", toolRowIndent-panelGutter-1)) +
+			rendered + paint(s.Dim).Render(strings.Repeat(" ", gap)) + verStyle.Render(verText) + gutter + "\n")
 
 		toolLine[i] = line
 		lineTool = append(lineTool, i)
@@ -1251,7 +1263,7 @@ func (m Model) renderTools() string {
 		title = title.append(fmt.Sprintf(" %d↑", n), " "+s.Signal.Render(fmt.Sprintf("%d↑", n)))
 	}
 
-	footer := m.panelFooter(m.toolsW, true, []string{
+	footer := m.panelFooter(m.toolsW, []string{
 		m.hint("/", "filter"),
 		m.hint("space", "group"),
 	}, "")
@@ -1280,7 +1292,7 @@ func (m Model) renderBrief() string {
 		m.hint("o", "repo"),
 		m.hint("c", "changelog"),
 	)
-	footer := m.panelFooter(m.briefW, false, cells, "")
+	footer := m.panelFooter(m.briefW, cells, "")
 	return m.framePanel(m.briefW, focused,
 		withScrollbar(s, m.briefViewport, m.briefW, focused), footer,
 		m.focusTitle("2", "brief", focused))
@@ -1331,7 +1343,7 @@ func (m Model) renderHelp() string {
 	if len(m.helpEntries) > 0 {
 		cells = append(cells, m.hint("j/k", "navigate"))
 	}
-	footer := m.panelFooter(m.helpW, false, cells, m.hint("ctrl+d/u", "page"))
+	footer := m.panelFooter(m.helpW, cells, m.hint("ctrl+d/u", "page"))
 	return m.framePanel(m.helpW, focused,
 		withScrollbar(s, m.helpViewport, m.helpW, focused), footer, title)
 }
