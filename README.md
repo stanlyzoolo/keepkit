@@ -56,14 +56,15 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
   samples are left exactly as written
 - **Clickable card** — the repository and release links on the tool card open in the
   browser by mouse click, or by hotkeys for the repo and changelog pages
+- **Language stack** — the card names a repository's languages with their shares and
+  draws them as a proportional band in GitHub's own per-language colors
 - **Tags and grouping** — one tag per tool; `space` regroups the flat list under
   section headers, led by everything with a pending update, and back
 - **Run tools** — launch any tracked tool in a new terminal tab (tmux / iTerm2 /
   kitty / WezTerm / Terminal.app) or in the current window, without leaving keepkit
 - **Search** — `/` filters by name and tag with match highlighting and an `N/M` counter
-- **GitHub API token** — a quota gauge that appears when the quota is worth acting
-  on, plus token management in the `L` overlay, lifts the anonymous 60 requests/hour
-  to 5000
+- **GitHub API token** — a quota gauge in the status bar, plus token management in
+  the `L` overlay, lifts the anonymous 60 requests/hour to 5000
 - **Session error log** — errors (and only errors) are journaled to a per-session
   file, so a misbehaving session can be researched after the fact; no errors — no file
 - **Mouse support** — scrolling, panel focus, selection and card links all respond
@@ -71,7 +72,9 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
 
 The status bar carries the global keys, each panel's own actions sit in its footer,
 and `?` opens the full hotkeys overlay — every keybinding, grouped by panel. That is
-all you need to learn.
+all you need to learn. Its right corner names the build you are running
+(`keepkit v0.1.0`), and marks it with the same `↑` an outdated tool row carries when
+a newer keepkit release is waiting.
 
 ## Installation
 
@@ -226,8 +229,8 @@ keepkit v0.5.0 available — U update  X dismiss
 
 `U` updates through the same pipeline as any tool — manager detection, confirmation,
 live log in panel `[3]` (visible whichever tool is selected, even with an empty
-tracker). `X` folds the notice into a compact cell next to the API gauge where `U`
-keeps working; nothing is written to disk, so a dismissed notice returns on the next
+tracker). `X` folds the notice into a compact `U update` cell beside the version in the
+bar's right corner, where `U` keeps working; nothing is written to disk, so a dismissed notice returns on the next
 launch. After a successful update the bar reads `keepkit updated — U restart`:
 `U` replaces the running process with the new binary — same terminal tab, same tmux
 pane, same arguments. On Windows there is no in-place restart: keepkit prints
@@ -260,10 +263,11 @@ its README in panel `[3]`; a cold start with a large list and no token can hit t
 limit — cards stay empty until the window resets. The keepkit release check adds one
 more request per 24 hours (none on a dev build).
 
-Quota usage appears in the right corner of the status bar (`api ▮▮░░░░░░░░░░ 12/60`)
-once it is worth acting on — past half the window, or under 500 requests left — and
-the fill turns red as the window runs out. At rest it is not on screen at all. The
-`L` key opens the API status overlay: token source, quota usage with a warning icon
+Quota usage sits in the right corner of the status bar (`api ▮▮░░░░░░░░░░ 12/60`) for
+the whole session once the numbers are known, and the fill turns red as the window
+runs out. It is also the only visible sign that keepkit has an API surface at all, so
+hiding it at rest hid the overlay with it; on a narrow terminal it is the first thing
+the corner drops. The `L` key opens the API status overlay: token source, quota usage with a warning icon
 and the reset time; right in the overlay a token can be entered (validated before it
 is saved), removed or the numbers refreshed.
 

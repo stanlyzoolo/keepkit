@@ -51,48 +51,154 @@ func languagePercents(langs map[string]int) []languagePercent {
 	return out
 }
 
-// renderLangBar renders a horizontal language bar with percentages, wrapping by
-// words at width. firstLineUsed is the column budget already consumed on the
-// first line (e.g. by an inline "languages: " label) so wrapping lines up.
-func renderLangBar(s *ui.Styles, langs map[string]int, width, firstLineUsed int) string {
+// langDot is the marker in front of a language name, painted in that language's
+// own GitHub color — the one thing on the card a reader can identify without
+// reading it. It is East-Asian Ambiguous (two cells under RUNEWIDTH_EASTASIAN=1),
+// the accepted class the list's ⏺/↑ markers already belong to; the band below
+// uses a width-stable glyph precisely because *its* arithmetic has to be exact.
+const langDot = "●" // U+25CF black circle
+
+// langBandGlyph draws the proportional language band. ▬ (U+25AC) rather than a
+// full block: █ is East-Asian Ambiguous and would measure two cells under
+// RUNEWIDTH_EASTASIAN=1, which is the same reason the API gauge does not use it.
+const langBandGlyph = "▬" // U+25AC black rectangle
+
+// langLabel heads the block. The full word, not the old "lang" — the line is a
+// list of names now rather than a labelled value, and the label reads as its
+// title.
+const langLabel = "languages"
+
+// formatShare spells a language's percentage the way GitHub does: one decimal,
+// with a whole number left whole. Rounding to integers printed "makefile 0%" for
+// a language that has a visible segment in the band right below it — a share the
+// card both draws and denies. Anything under a tenth of a percent is stated as
+// the bound rather than rounded, for the same reason.
+func formatShare(pct float64) string {
+	switch {
+	case pct < 0.1:
+		return "<0.1%"
+	case pct == float64(int(pct)):
+		return fmt.Sprintf("%d%%", int(pct))
+	}
+	return strings.TrimSuffix(fmt.Sprintf("%.1f", pct), ".0") + "%"
+}
+
+// languageStyle is a language's own color, or the dim role when linguist has no
+// entry for it — an unknown language reads as unrecognized rather than as
+// whichever known one happened to be nearby.
+func languageStyle(s *ui.Styles, name string) lipgloss.Style {
+	if c, ok := ui.LanguageColor(name); ok {
+		return lipgloss.NewStyle().Foreground(c)
+	}
+	return s.Dim
+}
+
+// renderLangList renders "languages · ● go 99% · ● shell 1%" wrapped by whole
+// entries at width. The label is separated from the first language by the same
+// middot that separates two languages: it is the head of the same list, not a
+// caption over it.
+//
+// A language and its share read at one brightness — they are one fact — and only
+// the dot carries color, so a five-language repo does not turn the row into a
+// rainbow of text.
+func renderLangList(s *ui.Styles, langs map[string]int, width int) []string {
 	percents := languagePercents(langs)
 	if len(percents) == 0 {
+		return nil
+	}
+	const sepPlain = " · "
+	sep := s.Dim.Render(sepPlain)
+
+	lines := []string{}
+	cur := s.Dim.Render(langLabel)
+	curW := utf8.RuneCountInString(langLabel)
+	for _, lp := range percents {
+		text := strings.ToLower(lp.Name) + " " + formatShare(lp.Pct)
+		// The dot is measured as one cell like every other glyph here; under
+		// RUNEWIDTH_EASTASIAN=1 the row is one cell wider per language than the
+		// budget thinks, which can only wrap a row early, never overflow it.
+		entryW := 2 + utf8.RuneCountInString(text)
+
+		if curW+len(sepPlain)+entryW > width && curW > 0 {
+			lines = append(lines, cur)
+			cur, curW = "", 0
+		}
+		if curW > 0 {
+			cur += sep
+			curW += len(sepPlain)
+		}
+		cur += languageStyle(s, lp.Name).Render(langDot) + " " + s.Text.Render(text)
+		curW += entryW
+	}
+	if curW > 0 {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// renderLangBand renders the stack as one solid row of exactly width cells, each
+// language holding a share of it in its own color — the card's only picture, and
+// the thing the percentages above it are the caption for.
+//
+// The shares are normalized over the languages actually listed, not over the
+// repo's total: languagePercents keeps the top five, so a band summed over the
+// total would leave a gap standing for languages the card never named. Cells are
+// handed out one per language first and the remainder by largest fractional
+// part, so nothing listed above is missing from the band and the row is exactly
+// width cells rather than width±rounding.
+func renderLangBand(s *ui.Styles, langs map[string]int, width int) string {
+	percents := languagePercents(langs)
+	if len(percents) == 0 || width <= 0 {
 		return ""
 	}
-	// A language and its share are one fact, so they read at one brightness;
-	// what separates two of them is a middot, the same grouping mark the card's
-	// meta line uses.
-	sep := s.Dim.Render(" · ")
+	// Too narrow to give every language a cell: drop the smallest ones rather
+	// than paint a band that silently rounds one away. They are already sorted
+	// by share, so the head is what survives.
+	if len(percents) > width {
+		percents = percents[:width]
+	}
 
-	var lines []string
-	var cur strings.Builder
-	curW := firstLineUsed
+	total := 0.0
 	for _, lp := range percents {
-		name := strings.ToLower(lp.Name)
-		pct := fmt.Sprintf("%.0f%%", lp.Pct)
-		tokenW := utf8.RuneCountInString(name) + 1 + utf8.RuneCountInString(pct)
+		total += lp.Pct
+	}
+	if total <= 0 {
+		return ""
+	}
 
-		sepW := 0
-		if cur.Len() > 0 {
-			sepW = 3
-		}
-		// Wrap to a new line only when the token would overflow the width.
-		if curW+sepW+tokenW > width && cur.Len() > 0 {
-			lines = append(lines, cur.String())
-			cur.Reset()
-			curW = 0
-			sepW = 0
-		}
-		if sepW > 0 {
-			cur.WriteString(sep)
-		}
-		cur.WriteString(s.Text.Render(name + " " + pct))
-		curW += sepW + tokenW
+	type share struct {
+		idx   int
+		cells int
+		frac  float64
 	}
-	if cur.Len() > 0 {
-		lines = append(lines, cur.String())
+	shares := make([]share, len(percents))
+	used := 0
+	rest := width - len(percents) // the pool above the one cell everyone gets
+	for i, lp := range percents {
+		exact := lp.Pct / total * float64(rest)
+		cells := 1 + int(exact)
+		shares[i] = share{i, cells, exact - float64(int(exact))}
+		used += cells
 	}
-	return strings.Join(lines, "\n")
+	order := make([]int, len(shares))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return shares[order[a]].frac > shares[order[b]].frac })
+	for i := 0; used < width; i++ {
+		shares[order[i%len(order)]].cells++
+		used++
+	}
+
+	var sb strings.Builder
+	for _, sh := range shares {
+		if sh.cells <= 0 {
+			continue
+		}
+		sb.WriteString(languageStyle(s, percents[sh.idx].Name).
+			Render(strings.Repeat(langBandGlyph, sh.cells)))
+	}
+	return sb.String()
 }
 
 func wrapText(s string, width int) string {

@@ -78,6 +78,27 @@ func TestKeepkitStyleDarkOnlyOverrides(t *testing.T) {
 		t.Errorf("dark BlockQuote.Color = %q, want %q", got, string(ui.Default.Dim))
 	}
 
+	// Document is the base every block cascades onto, so this is the panel's
+	// body-text rule: the same Text role the card's changelog notes render in.
+	// The two sitting side by side at slightly different grays was the last
+	// thing that read as "this panel came from another app".
+	if got := deref(t, "dark Document.Color", dark.Document.Color); got != string(ui.Default.Text) {
+		t.Errorf("dark Document.Color = %q, want the card's body text %q", got, string(ui.Default.Text))
+	}
+
+	// Inline code reads exactly like a code span in the card's changelog:
+	// Emphasis on the Surface plate. Not Danger — red is the card's one alarm
+	// color and a README spends it a dozen times a screen.
+	if got := deref(t, "dark Code.Color", dark.Code.Color); got != string(ui.Default.Emphasis) {
+		t.Errorf("dark Code.Color = %q, want %q", got, string(ui.Default.Emphasis))
+	}
+	if got := deref(t, "dark Code.BackgroundColor", dark.Code.BackgroundColor); got != string(ui.Default.Surface) {
+		t.Errorf("dark Code.BackgroundColor = %q, want the %q plate", got, string(ui.Default.Surface))
+	}
+	if got := deref(t, "dark Code.Color", dark.Code.Color); got == string(ui.Default.Danger) {
+		t.Errorf("dark Code.Color is still the alarm role %q", got)
+	}
+
 	if got := deref(t, "light Heading.Color", light.Heading.Color); got == string(ui.Default.Text) {
 		t.Errorf("light Heading.Color = %q — the dark body tint is unreadable on white", got)
 	}

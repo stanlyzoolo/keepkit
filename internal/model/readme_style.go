@@ -71,6 +71,13 @@ func keepkitStyle(t ui.Theme, dark bool) ansi.StyleConfig {
 		return cfg
 	}
 
+	// Document is the base every block cascades onto, so this is the panel's
+	// body-text rule: the same Text role the card's changelog notes render in.
+	// The standard dark config picks its own gray, and the two sitting side by
+	// side at slightly different brightnesses was the last thing that still read
+	// as "this panel came from another app".
+	cfg.Document.Color = ptrTo(string(t.Text))
+
 	// Heading is the base every Hn cascades onto, so this is the H3-H5 rule;
 	// H6 needs its own, because the standard dark config singles it out with a
 	// green non-bold override.
@@ -83,11 +90,19 @@ func keepkitStyle(t ui.Theme, dark bool) ansi.StyleConfig {
 	// readme's own emphasis peak, matching the card's.
 	cfg.Strong.Color = ptrTo(string(t.Emphasis))
 
-	// Inline code is where a README names a file or a flag, and in a tools
-	// tracker that is nearly always the thing that can be broken or missing —
-	// danger, and no plate, so it reads as a word rather than a block.
-	cfg.Code.Color = ptrTo(string(t.Danger))
-	cfg.Code.BackgroundColor = nil
+	// Inline code is where a README names a file, a flag or a command. It used to
+	// be Danger with no plate, and that was wrong twice: red is the card's one
+	// alarm color and a README spends it a dozen times a screen, and the dark red
+	// was the *least* legible thing in the panel rather than the most.
+	//
+	// It now reads exactly like a code span in the card's changelog — Emphasis on
+	// the Surface plate — which is the same rule stated once in two panels: a
+	// literal the reader could type is raised off the prose, not colored against
+	// it. The plate is what makes it noticeable; the brightest text role is what
+	// makes it readable. The prefix/suffix spaces the standard style already puts
+	// around inline code become the plate's padding for free.
+	cfg.Code.Color = ptrTo(string(t.Emphasis))
+	cfg.Code.BackgroundColor = ptrTo(string(t.Surface))
 
 	// A code block is an install command the user is about to run: the one
 	// place the readme gets the Surface background, so it reads as a plate.

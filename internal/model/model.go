@@ -142,17 +142,17 @@ const selfToolName = "keepkit"
 //
 //	selfNone         no newer release known — no banner at all
 //	selfOffered      full banner: "keepkit <v> available — [U] update  [X] dismiss"
-//	selfDismissed    collapsed to a compact "keepkit ↑ [U]" cell by the gauge
+//	selfDismissed    folded to a compact "[U] update" cell beside the version
 //	selfUpdated      full banner: "keepkit updated — [U] restart  [X] later"
-//	selfUpdatedLater collapsed to a compact "keepkit [U] restart" cell
+//	selfUpdatedLater folded to a compact "[U] restart" cell
 //
-// Five sites switch on it — [U] (selfUpdateKey), [X], selfBannerCells,
-// selfCompactCell and the [?] Self group — and .golangci.yml carries no
-// exhaustiveness linter, so a sixth member would compile while silently missing
-// some of them. Every one of those switches therefore enumerates the whole enum
-// and ends in a default (the two key handlers log there), and
-// TestSelfStateSitesAreExhaustive walks selfNone..selfStateCount through all
-// five. selfStateCount must stay last.
+// Six sites switch on it — [U] (selfUpdateKey), [X], selfBannerCells,
+// selfCompactCell, selfUpdateAvailable (the ↑ on the status bar's version cell)
+// and the [?] Self group — and .golangci.yml carries no exhaustiveness linter,
+// so a seventh member would compile while silently missing some of them. Every
+// one of those switches therefore enumerates the whole enum and ends in a
+// default (the two key handlers log there), and TestSelfStateSitesAreExhaustive
+// walks selfNone..selfStateCount through all six. selfStateCount must stay last.
 type selfState int
 
 const (
@@ -2104,8 +2104,12 @@ func (m *Model) markReadmeLoading(name string) {
 // renderHelpContent and setHelpContent must wrap identically — entry ranges
 // are wrapped-line indices, so a width divergence would desync the spotlight
 // from the lines the viewport actually shows.
+//
+// The viewport is one column narrower than the panel (withScrollbar keeps that
+// one for the thumb) and a panelGutter is held at each end, so the text sits one
+// column clear of the frame on the left and of the scrollbar on the right.
 func (m Model) helpWrapWidth() int {
-	return max(m.helpW-2, 20)
+	return max(m.helpW-1-2*panelGutter, 20)
 }
 
 // setHelpContent is the single recompute point for the help panel: whenever

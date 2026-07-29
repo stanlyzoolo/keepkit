@@ -193,18 +193,27 @@ Key invariants:
   selection (focus moves to the card), `esc` rolls the cursor back to the previous tool.
 - **The card is a strip, not a column of labels.** `metricsStrip` lays installed /
   latest / maintenance / stars out as captioned columns on the `Surface` background,
-  re-flowing onto fewer columns as the panel narrows and standing down entirely below
-  one column's worth of room. Every row it emits is exactly the panel's inner width,
-  because a short row would break the fill into a ragged edge — and every segment of a
-  filled row carries the background itself, since a lipgloss style applied *around*
-  already-styled text cannot repaint what is inside it. The same rule governs the
-  selected row in `[1]`.
+  each cell centered in its column, re-flowing onto fewer columns as the panel narrows
+  and standing down entirely below one column's worth of room. Every row it emits is
+  exactly the panel's inner width, because a short row would break the fill into a
+  ragged edge — and every segment of a filled row carries the background itself, since
+  a lipgloss style applied *around* already-styled text cannot repaint what is inside
+  it. The same rule governs the language band under it.
+- **The language stack is a picture; the fields below it are not.** A distribution
+  gets `languages · ● go 99% · ● shell 1%` and a full-width band under it holding the
+  same shares in GitHub's own colors (`ui.LanguageColor`, the one palette a theme
+  switch must not repaint), closed by a blank row so the band reads as an edge rather
+  than an underline. `status`, `tags` and `note` share one wrapped line under
+  it, broken between whole cells — a cell carries ANSI, so a cut inside one would emit
+  a broken escape into a viewport that re-emits its content verbatim.
 - **Colors are a value, not a package.** `ui.Theme` holds ten semantic roles;
   `ui.NewStyles(theme)` is the only function allowed to turn one into a style, and the
   model carries the result in `m.styles`, read through `m.sty()`. No file below
   `internal/ui` carries a hex literal, and `ui.DefaultStyles()` exists only as the
   fallback for a `Model{}` literal — a renderer that reached for it directly would keep
-  painting the default palette after a theme switch.
+  painting the default palette after a theme switch. The one deliberate exception is
+  `ui.LanguageColor`: those are linguist's brand marks rather than keepkit's meanings,
+  so they live in the same package but outside `Theme` and never follow a switch.
 - **Card links are indexed, not parsed.** `buildCard()` returns the card text plus a
   `line → URL` map recorded while writing (line heights vary with wrapping), so a click
   on the title line (which carries the bare `owner/repo` beside the name, linked as the
@@ -217,8 +226,16 @@ Key invariants:
   (the card's actions, `[3]`'s paging and entry cursor, `[1]`'s filter and grouping)
   sits in that panel's own footer, next to the thing it acts on. All three panels
   reserve the same `panelFooterRows` and keep the same `panelGutter` — one blank
-  column between the frame and the panel's own chrome; `calcListHeight()` is the single definition both the `WindowSizeMsg` handler
+  column between the frame and everything the panel draws, which in `[2]` and `[3]` is
+  *all* content: `cardWidth()` and `helpWrapWidth()` are the single definitions of the
+  two budgets, and `indentLines` applies the indent last, to whole finished lines, so
+  it can never split an escape sequence or shift a card link's row.
+  `calcListHeight()` is the single definition both the `WindowSizeMsg` handler
   and the renderers use, so a drift there cannot push the status bar off screen.
+  The status bar's right corner carries keepkit's own name and version
+  (`appVersionCell`), marked with the same ` ↑` as an outdated tool row when a newer
+  release is waiting — the app announces its own update in the vocabulary it announces
+  everyone else's.
 - **A click's X picks the panel, `panelRow` decides whether it is on one at all.**
   The outer margin, the borders and the status bars share the panels' columns; with a
   scrolled viewport an unbounded row would map that chrome onto a list row or a card

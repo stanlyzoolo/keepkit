@@ -467,33 +467,95 @@ func TestMetricsStripMaintenance(t *testing.T) {
 	}
 }
 
-func TestRenderLangBar(t *testing.T) {
-	t.Run("lowercases names and shows percent", func(t *testing.T) {
-		got := renderLangBar(ui.DefaultStyles(), map[string]int{"Go": 1}, 40, 0)
-		if !strings.Contains(got, "go") {
-			t.Errorf("expected lowercase 'go' in %q", got)
+func TestRenderLangList(t *testing.T) {
+	t.Run("leads with the label and lowercases names", func(t *testing.T) {
+		got := stripANSI(strings.Join(renderLangList(ui.DefaultStyles(), map[string]int{"Go": 1}, 40), "\n"))
+		if !strings.HasPrefix(got, "languages · ") {
+			t.Errorf("expected the full label and a middot to head %q", got)
+		}
+		if !strings.Contains(got, langDot+" go 100%") {
+			t.Errorf("expected a dotted lowercase entry in %q", got)
 		}
 		if strings.Contains(got, "Go") {
 			t.Errorf("expected no uppercase 'Go' in %q", got)
 		}
-		if !strings.Contains(got, "100%") {
-			t.Errorf("expected '100%%' in %q", got)
+	})
+
+	t.Run("wraps by whole entries", func(t *testing.T) {
+		langs := map[string]int{"alpha": 30, "bravo": 25, "charlie": 25, "delta": 20}
+		got := renderLangList(ui.DefaultStyles(), langs, 24)
+		if len(got) < 2 {
+			t.Fatalf("expected wrapping, got %d line(s): %q", len(got), got)
+		}
+		for _, line := range got {
+			if w := lipgloss.Width(line); w > 24 {
+				t.Errorf("line %q is %d cells, over the 24 budget", stripANSI(line), w)
+			}
 		}
 	})
 
-	t.Run("wraps when over width", func(t *testing.T) {
-		langs := map[string]int{"alpha": 30, "bravo": 25, "charlie": 25, "delta": 20}
-		got := renderLangBar(ui.DefaultStyles(), langs, 12, 0)
-		if !strings.Contains(got, "\n") {
-			t.Errorf("expected wrapping (newline) in %q", got)
+	t.Run("empty returns nothing", func(t *testing.T) {
+		if got := renderLangList(ui.DefaultStyles(), nil, 40); got != nil {
+			t.Errorf("expected nil, got %q", got)
+		}
+	})
+}
+
+// TestRenderLangBand: the band is the card's only picture and it sits on the same
+// grid as the metrics plate above it, so its width has to be exact — a cell short
+// leaves a notch in the block, a cell over wraps the row and shifts every line
+// below it (which in [2] means every clickable card link).
+func TestRenderLangBand(t *testing.T) {
+	s := ui.DefaultStyles()
+	langs := map[string]int{"Go": 970, "Shell": 20, "Makefile": 10}
+
+	for _, w := range []int{3, 4, 10, 28, 57} {
+		got := renderLangBand(s, langs, w)
+		if lipgloss.Width(got) != w {
+			t.Errorf("renderLangBand(width=%d) = %d cells, want exactly %d", w, lipgloss.Width(got), w)
+		}
+		if strings.Contains(got, "\n") {
+			t.Errorf("renderLangBand(width=%d) wrapped: %q", w, stripANSI(got))
+		}
+	}
+
+	// Every language the list names above the band has to appear in it: a
+	// floor-then-remainder split would round a 1% language away entirely.
+	band := stripANSI(renderLangBand(s, langs, 28))
+	if n := strings.Count(band, langBandGlyph); n != 28 {
+		t.Errorf("band has %d glyphs, want 28", n)
+	}
+
+	t.Run("too narrow for every language drops the smallest", func(t *testing.T) {
+		if got := renderLangBand(s, langs, 2); lipgloss.Width(got) != 2 {
+			t.Errorf("width 2 = %d cells, want 2", lipgloss.Width(got))
 		}
 	})
 
 	t.Run("empty returns empty", func(t *testing.T) {
-		if got := renderLangBar(ui.DefaultStyles(), nil, 40, 0); got != "" {
+		if got := renderLangBand(s, nil, 40); got != "" {
 			t.Errorf("expected empty, got %q", got)
 		}
+		if got := renderLangBand(s, langs, 0); got != "" {
+			t.Errorf("expected empty at width 0, got %q", got)
+		}
 	})
+}
+
+// TestLanguageBandGlyphWidth pins the band's glyph as width-stable: the band is
+// measured in cells and a two-cell glyph under RUNEWIDTH_EASTASIAN=1 would
+// double its footprint and push the card past the panel. The dot beside a
+// language name is deliberately NOT in this class (it is Ambiguous, like the
+// list's ⏺/↑) — it rides in wrapped text, where an over-wide measurement can
+// only wrap a row early.
+func TestLanguageBandGlyphWidth(t *testing.T) {
+	for _, cond := range []bool{false, true} {
+		c := runewidth.NewCondition()
+		c.EastAsianWidth = cond
+		if got := c.StringWidth(langBandGlyph); got != 1 {
+			t.Errorf("langBandGlyph width = %d with EastAsianWidth=%v, want 1", got, cond)
+		}
+	}
 }
 
 func TestFindMatches(t *testing.T) {
@@ -2832,34 +2894,50 @@ func TestRenderCardSpinner(t *testing.T) {
 }
 
 // metricValue reads a metric's value out of the card's strip: it finds the row
-// carrying the caption, takes the caption's column, and reads the same column on
-// the row `below` lines down. That is exactly the reading the strip's layout
-// promises — captions over values — so a value that drifted out of its column
-// fails here instead of passing a loose "card contains v2.0.0" check.
+// carrying the caption, works out which column of that row it sits in, and reads
+// the same column on the row `below` lines down. That is exactly the reading the
+// strip's layout promises — captions over values — so a value that drifted into
+// a neighbouring column fails here instead of passing a loose "card contains
+// v2.0.0" check.
 //
-// Rune indices, not byte offsets: an earlier column can hold ✓ or ↑, and every
-// glyph the strip prints is one cell wide in the default runewidth condition.
+// The column is identified by the rules between columns, not by the caption's
+// start offset: caption and value are each centered in their column, so the two
+// deliberately do not begin at the same cell.
 func metricValue(t *testing.T, card, label string, below int) string {
 	t.Helper()
 	lines := strings.Split(stripANSI(card), "\n")
 	for i, line := range lines {
-		col := strings.Index(line, label)
-		if col < 0 || i+below >= len(lines) {
+		if !strings.Contains(line, label) || i+below >= len(lines) {
 			continue
 		}
-		col = utf8.RuneCountInString(line[:col])
-		row := []rune(lines[i+below])
-		if col >= len(row) {
-			return ""
+		cols := strings.Split(line, "│")
+		for c, col := range cols {
+			if !strings.Contains(col, label) {
+				continue
+			}
+			below := strings.Split(lines[i+below], "│")
+			if c >= len(below) {
+				t.Fatalf("row below %q has %d columns, want at least %d", label, len(below), c+1)
+			}
+			return strings.TrimSpace(below[c])
 		}
-		v := string(row[col:])
-		if j := strings.Index(v, "│"); j >= 0 {
-			v = v[:j]
-		}
-		return strings.TrimSpace(v)
 	}
 	t.Fatalf("card has no %q metric; got:\n%s", label, stripANSI(card))
 	return ""
+}
+
+// metricColumnCentered reports whether a column's text sits centered in it, with
+// at most one cell more slack on the right than on the left. It is what says the
+// strip reads as a block of measurements rather than as text hanging off the
+// rules between them.
+func metricColumnCentered(col string) bool {
+	trimmed := strings.TrimSpace(col)
+	if trimmed == "" {
+		return true
+	}
+	left := utf8.RuneCountInString(col) - utf8.RuneCountInString(strings.TrimLeft(col, " "))
+	right := utf8.RuneCountInString(col) - utf8.RuneCountInString(strings.TrimRight(col, " "))
+	return right-left >= 0 && right-left <= 1
 }
 
 // TestMetricsStripLayout pins the block the card's [info] section became: every
@@ -2874,7 +2952,7 @@ func TestMetricsStripLayout(t *testing.T) {
 		Stars: 42123, Latest: "v2.0.0", PublishedAt: "2026-01-02T15:04:05Z", RepoStatus: "active",
 	}
 
-	for _, inner := range []int{58, 30, 20, metricMinCol} {
+	for _, inner := range []int{58, 40, 30, 20, metricStripMinWidth} {
 		m.briefW = inner + 2
 		rows := m.metricsStrip(m.tools[0], inner)
 		if len(rows) == 0 {
@@ -2883,6 +2961,17 @@ func TestMetricsStripLayout(t *testing.T) {
 		for i, row := range rows {
 			if w := lipgloss.Width(row); w != inner {
 				t.Errorf("inner=%d: row %d is %d cells, want exactly %d (a ragged fill)", inner, i, w, inner)
+			}
+		}
+		// A caption is never cut. metricMinCol exists to guarantee that, but the
+		// column count has to be solved against the row the strip actually draws
+		// — a blank at each end plus a rule between every pair. Solved against
+		// inner alone it answered "three columns" at a 40-cell panel and then
+		// handed each of them 10 cells, printing MAINTENANC.
+		body := stripANSI(strings.Join(rows, "\n"))
+		for _, caption := range []string{"INSTALLED", "LATEST", "MAINTENANCE", "STARS"} {
+			if !strings.Contains(body, caption) {
+				t.Errorf("inner=%d: caption %q was cut instead of re-flowing:\n%s", inner, caption, body)
 			}
 		}
 	}
@@ -2900,6 +2989,18 @@ func TestMetricsStripLayout(t *testing.T) {
 	// The release date is a second line under the version, not a suffix on it.
 	if got := metricValue(t, card, "LATEST", 2); got != "2026-01-02" {
 		t.Errorf("LATEST sub-line = %q, want the release date", got)
+	}
+
+	// Every cell is centered in its column. Only the last column of a row is
+	// exempt from the measurement: it absorbs the row's rounding fill, so its
+	// right margin says nothing about where its text sits.
+	for r, row := range m.metricsStrip(m.tools[0], 58) {
+		cols := strings.Split(stripANSI(row), "│")
+		for c, col := range cols[:max(len(cols)-1, 0)] {
+			if !metricColumnCentered(col) {
+				t.Errorf("row %d column %d = %q, want its text centered", r, c, col)
+			}
+		}
 	}
 
 	// Narrow: the same four metrics, still readable, on more rows.
@@ -3659,18 +3760,24 @@ func TestResizeHeightOnlyKeepsCursor(t *testing.T) {
 }
 
 // TestHelpBaseCache: setHelpContent caches the colorized base and the normal
-// render path serves it; the spotlight is applied over the cache.
+// render path serves it; the spotlight is applied over the cache. The comparison
+// is against helpContent, not renderHelpContent — the latter is the same text
+// stepped in by the panel gutter, which is applied at the single point every
+// branch lands on and is not part of what the cache holds.
 func TestHelpBaseCache(t *testing.T) {
 	forceColorProfile(t)
 	m := helpNavModel()
 	if m.helpBase == "" {
 		t.Fatalf("helpBase empty after setHelpContent")
 	}
-	if got := m.renderHelpContent(); got != m.helpBase {
+	if got := m.helpContent(); got != m.helpBase {
 		t.Errorf("cursor-off render differs from cached base")
 	}
+	if got := m.renderHelpContent(); got != indentLines(m.helpBase) {
+		t.Errorf("panel render is not the base stepped in by the gutter")
+	}
 	m.helpNavIdx = 0
-	if got := m.renderHelpContent(); got == m.helpBase || !strings.Contains(got, themeSeq(ui.Default.Dim)) {
+	if got := m.helpContent(); got == m.helpBase || !strings.Contains(got, themeSeq(ui.Default.Dim)) {
 		t.Errorf("spotlight render did not dim over the cached base")
 	}
 }
@@ -4447,46 +4554,107 @@ func TestMetricsStripValuesAreNeverCut(t *testing.T) {
 	}
 }
 
-// TestMetaLineLanguagesStayOnOneLine: the language bar is one cell among
-// several, and a cell that wrapped internally would break the line's whole
-// arithmetic — lipgloss.Width measures a multi-line string by its widest line,
-// not by the footprint it occupies, so the next cell could be spliced onto the
-// middle of the bar. The continuation lines also arrived with no "lang" label
-// to say what they were.
-func TestMetaLineLanguagesStayOnOneLine(t *testing.T) {
+// TestMetaLineShape pins what the meta block is: the language stack — a
+// distribution, so it gets named shares and a band under them holding those
+// shares — and then status, tags and note sharing one wrapped line under it.
+// Wrapping is by whole cells, because a cell carries ANSI and a cut inside one
+// would emit a broken escape into the viewport.
+func TestMetaLineShape(t *testing.T) {
 	m := New([]loader.ToolMeta{{
 		Name: "gh", GitHub: "cli/cli", Status: loader.StatusActive, Note: "n", Tags: []string{"cli"},
 	}})
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	// Wide enough that the three fields share a line — the narrow case, where
+	// they wrap between whole cells, is TestMetaLineFieldsWrapByWholeCells.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 24})
 	mm := updated.(Model)
 	mm.repoCards["gh"] = version.RepoCard{Languages: map[string]int{
 		"Go": 800, "Shell": 90, "Makefile": 40, "Dockerfile": 30, "TypeScript": 25,
 	}}
 
-	inner := max(mm.briefW-2, 1)
+	inner := mm.cardWidth()
 	lines := strings.Split(stripANSI(mm.metaLine(mm.tools[0], inner)), "\n")
 
-	var langLines int
 	for _, l := range lines {
-		if strings.HasPrefix(l, "lang ") {
-			langLines++
-		}
 		if w := lipgloss.Width(l); w > inner {
 			t.Errorf("meta line %q is %d cells, past the %d-cell panel", l, w, inner)
 		}
 	}
-	if langLines != 1 {
-		t.Errorf("%d lines carry the lang label, want exactly 1:\n%s", langLines, strings.Join(lines, "\n"))
+	if !strings.HasPrefix(lines[0], "languages · ") {
+		t.Errorf("meta block opens with %q, want the languages label", lines[0])
 	}
-	// A dropped language is said, not silently lost.
-	if !strings.Contains(lines[0], "…") {
-		t.Errorf("lang cell = %q, want the … marking the languages left out", lines[0])
+
+	// The band is the row of langBandGlyph and it fills the panel exactly: it is
+	// the card's one full-width element, so a cell short leaves a notch and a
+	// cell over wraps the row and shifts every clickable line below it.
+	band := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, langBandGlyph) {
+			band = i
+			break
+		}
 	}
-	// Every other cell still starts its own line or follows a separator — none
-	// of them may land inside the bar.
-	for i, l := range lines[1:] {
-		if strings.Contains(l, "%") {
-			t.Errorf("line %d = %q, want the language bar confined to the first line", i+1, l)
+	if band < 0 {
+		t.Fatalf("meta block has no language band:\n%s", strings.Join(lines, "\n"))
+	}
+	if w := lipgloss.Width(lines[band]); w != inner {
+		t.Errorf("band is %d cells, want exactly the %d-cell panel", w, inner)
+	}
+	if strings.Trim(lines[band], langBandGlyph) != "" {
+		t.Errorf("band row = %q, want nothing but band glyphs", lines[band])
+	}
+
+	// Every named language appears above the band, and every field below it, in
+	// order, one per line.
+	named := strings.Join(lines[:band], " ")
+	for _, lang := range []string{"go", "shell", "makefile", "dockerfile", "typescript"} {
+		if !strings.Contains(named, langDot+" "+lang+" ") {
+			t.Errorf("languages = %q, want a dotted %q entry", named, lang)
+		}
+	}
+	// The band closes the language block with a blank row: it runs the full width
+	// of the panel, so without one the field line reads as a caption hanging off
+	// the bar rather than as the next thing.
+	if lines[band+1] != "" {
+		t.Errorf("row under the band = %q, want it blank", lines[band+1])
+	}
+
+	// status/tags/note share one line under that, in that order, joined by the
+	// same middot that groups the languages above.
+	fields := lines[band+2:]
+	if len(fields) != 1 {
+		t.Fatalf("got %d field lines, want the three fields on one:\n%s", len(fields), strings.Join(fields, "\n"))
+	}
+	if want := "status ● active · tags cli · note n"; fields[0] != want {
+		t.Errorf("field line = %q, want %q", fields[0], want)
+	}
+}
+
+// TestMetaLineFieldsWrapByWholeCells: the three fields share a line until they
+// no longer fit, and the break falls between two cells — never inside one. A
+// cell carries ANSI, so a cut inside it would emit a broken escape into the
+// viewport, which re-emits its content to the terminal verbatim.
+func TestMetaLineFieldsWrapByWholeCells(t *testing.T) {
+	m := New([]loader.ToolMeta{{
+		Name:   "gh",
+		Status: loader.StatusActive,
+		Tags:   []string{"command-line"},
+		Note:   "the official GitHub client",
+	}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	mm := updated.(Model)
+
+	inner := mm.cardWidth()
+	lines := strings.Split(stripANSI(mm.metaLine(mm.tools[0], inner)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected the fields to wrap at %d cells, got one line: %q", inner, lines)
+	}
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w > inner {
+			t.Errorf("line %d = %q is %d cells, past the %d-cell panel", i, l, w, inner)
+		}
+		// A cell was never split: every line still opens with a whole label.
+		if !strings.HasPrefix(l, "status ") && !strings.HasPrefix(l, "tags ") && !strings.HasPrefix(l, "note ") {
+			t.Errorf("line %d = %q does not start on a cell boundary", i, l)
 		}
 	}
 }
@@ -4507,14 +4675,16 @@ func TestCardHeadHasOneTypographicPeak(t *testing.T) {
 	mm.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0", Stars: 219, RepoStatus: "active"}
 	card := mm.renderCard()
 
-	title := strings.SplitN(card, "\n", 3)[1] // [0] is the card's blank top row
-	if want := s.EmphasisBold.Render("gh"); !strings.HasPrefix(title, want) {
+	// [0] is the card's blank top row; every row then opens with the panel
+	// gutter, which is where the name starts.
+	title := strings.SplitN(card, "\n", 3)[1]
+	if want := strings.Repeat(" ", panelGutter) + s.EmphasisBold.Render("gh"); !strings.HasPrefix(title, want) {
 		t.Errorf("card does not open with the name at the emphasis peak: %q", title)
 	}
 	// No metric value may share that role — the strip renders them on the plate,
 	// so compare the foreground sequence rather than a whole rendered string.
 	peak := themeSeq(ui.Default.Emphasis)
-	strip := mm.metricsStrip(mm.tools[0], max(mm.briefW-2, 1))
+	strip := mm.metricsStrip(mm.tools[0], mm.cardWidth())
 	for i, row := range strip {
 		if strings.Contains(row, peak) {
 			t.Errorf("strip row %d (%q) uses the name's emphasis role", i, stripANSI(row))
@@ -4624,5 +4794,91 @@ func TestHotkeysOverlayNamesTheBuild(t *testing.T) {
 	bare.appVersion = ""
 	if got := stripANSI(strings.SplitN(bare.renderHotkeys(), "\n", 3)[1]); strings.Contains(got, "keepkit") {
 		t.Errorf("overlay title = %q, want no build name when none was injected", got)
+	}
+}
+
+// TestPanelsKeepTheirGutter: [2] and [3] hold one blank column between their
+// frame and everything they draw. Content that touches the border it lives in
+// reads as having overflowed it, and in [3] the right-hand column is also what
+// keeps the text off the scrollbar thumb. The two panels reach it differently —
+// [2] sizes itself to cardWidth and steps the finished card in, [3] wraps to
+// helpWrapWidth and steps that in — so both are checked on the rendered result
+// rather than on the arithmetic.
+func TestPanelsKeepTheirGutter(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli", Note: "a note", Tags: []string{"cli"}}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	mm.repoCards["gh"] = version.RepoCard{
+		About: "the GitHub CLI", Latest: "v2.0.0", Stars: 219, RepoStatus: "active",
+		Languages: map[string]int{"Go": 900, "Shell": 100},
+	}
+	mm.helpCache["gh"] = [2]string{helpModeHelp: "usage: gh <command>\n\n  --flag   does a thing"}
+	mm.helpMode = helpModeHelp
+	mm.setHelpContent()
+
+	panels := map[string]struct {
+		content string
+		budget  int
+	}{
+		"[2]": {mm.renderCard(), mm.briefW - 1},
+		"[3]": {mm.renderHelpContent(), mm.helpW - 1},
+	}
+	for name, p := range panels {
+		for i, line := range strings.Split(stripANSI(p.content), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if !strings.HasPrefix(line, strings.Repeat(" ", panelGutter)) {
+				t.Errorf("%s line %d = %q, want it to open with the gutter", name, i, line)
+			}
+			if w := lipgloss.Width(line); w > p.budget-panelGutter {
+				t.Errorf("%s line %d is %d cells, past the %d the gutter leaves", name, i, w, p.budget-panelGutter)
+			}
+		}
+	}
+}
+
+// TestPanelFooterSeparatorIsDim: the middot between two footer hints is painted,
+// like the one between two languages on the card. Left unpainted it renders at
+// the terminal's default brightness — louder than the hint labels it is there to
+// separate, which is the one thing a separator may not be.
+func TestPanelFooterSeparatorIsDim(t *testing.T) {
+	forceColorProfile(t)
+	m := New([]loader.ToolMeta{{Name: "gh"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	mm := updated.(Model)
+
+	footer := mm.panelFooter(mm.briefW, []string{mm.hint("r", "refresh"), mm.hint("s", "status")}, "")
+	if !strings.Contains(footer, mm.sty().Dim.Render(footerSep)) {
+		t.Errorf("footer = %q, want the separator rendered in the dim role", stripANSI(footer))
+	}
+	if strings.Contains(footer, "\x1b[0m"+footerSep) {
+		t.Errorf("footer = %q, want no unpainted separator", stripANSI(footer))
+	}
+}
+
+// TestFormatShare: a language's percentage is spelled the way GitHub spells it —
+// one decimal, a whole number left whole. Rounding to integers printed
+// "makefile 0%" for a language with a visible segment in the band right below
+// it, a share the card both draws and denies.
+func TestFormatShare(t *testing.T) {
+	tests := []struct {
+		pct  float64
+		want string
+	}{
+		{100, "100%"},
+		{94, "94%"},
+		{93.94, "93.9%"},
+		{4.26, "4.3%"},
+		{1, "1%"},
+		{0.94, "0.9%"},
+		{0.09, "<0.1%"},
+		{0, "<0.1%"},
+	}
+	for _, tt := range tests {
+		if got := formatShare(tt.pct); got != tt.want {
+			t.Errorf("formatShare(%v) = %q, want %q", tt.pct, got, tt.want)
+		}
 	}
 }

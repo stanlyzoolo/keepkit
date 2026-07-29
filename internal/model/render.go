@@ -172,21 +172,49 @@ func (m Model) globalHints() []string {
 	}
 }
 
-// updateCountCell is the status bar's right-hand answer to "is there anything
-// to do?": "3 updates ↑" in the signal color, or "" when everything is current.
-// It counts the whole tracker, not the filtered view — a search narrowing the
-// list must not make pending updates disappear from the one place that totals
-// them.
-func (m Model) updateCountCell() string {
-	n := m.updateCount()
-	if n == 0 {
+// appVersionCell is the status bar's right-hand identity line: the name of the
+// binary the user is looking at and the version it is, dim — the one fact about
+// keepkit itself that is true on every frame, and the answer to "which build is
+// this?" without opening [?].
+//
+// It replaces the pending-updates count that used to sit here. That count was
+// the third surface for the same number ([1]'s title carries it beside the
+// tracked count, and every outdated row carries its own ↑), while the running
+// version had none outside an overlay.
+//
+// When a newer keepkit release is known the version takes the signal color and
+// the ↑ an outdated tool row carries — the same mark for the same fact, so the
+// app announces its own update in the vocabulary it announces everyone else's.
+// The version shown stays the *running* one: the offer is that this is behind,
+// not a preview of what it would become.
+func (m Model) appVersionCell() string {
+	if m.appVersion == "" {
 		return ""
 	}
-	word := "updates"
-	if n == 1 {
-		word = "update"
+	s := m.sty()
+	ver := displayVersion(m.appVersion)
+	if m.selfUpdateAvailable() {
+		return s.Dim.Render(selfToolName+" ") + s.SignalBold.Render(ver+" ↑")
 	}
-	return m.sty().Signal.Render(fmt.Sprintf("%d %s ↑", n, word))
+	return s.Dim.Render(selfToolName + " " + ver)
+}
+
+// selfUpdateAvailable reports whether a newer keepkit release is known and still
+// uninstalled — the two states in which the running version is behind. Once the
+// update has been installed the pending action is a restart, not a download, and
+// selfCompactCell is what says so; marking the version ↑ there would advertise
+// an update the user has already taken.
+func (m Model) selfUpdateAvailable() bool {
+	switch m.selfState {
+	case selfOffered, selfDismissed:
+		return m.selfLatest != ""
+	case selfNone, selfUpdated, selfUpdatedLater:
+		return false
+	default:
+		// Enumerated like every other selfState site: a new member must be
+		// decided here, and TestSelfStateSitesAreExhaustive is what says so.
+		return false
+	}
 }
 
 // updateCount is how many tracked tools have a newer release than the version
@@ -227,13 +255,15 @@ const hintSep = "  "
 // terminal) it is truncated rather than allowed to wrap.
 //
 // Only then is the right group placed. It has three members — the API-usage
-// gauge, the pending-updates count and the collapsed self-update cell — and
-// they are dropped in order of how *actionable* they are: the gauge first (a
-// read-only reminder, and it only shows up under quota pressure at all), then
-// the self cell, and the updates count last, since it is the one thing on the
-// bar that says the tracker needs attention. The candidate list spells that
-// order out rather than computing it, because "which combination is next"
-// is a judgement about meaning, not about width.
+// gauge, keepkit's own name and version, and the collapsed self-update cell —
+// and they are dropped in order of how *actionable* they are: the gauge first (a
+// read-only reminder), then the version cell (identity, and its ↑ is repeated
+// under [U] anyway), and the self cell last, since after [X] it is the only
+// remaining way to act on a pending self-update. The candidate list spells that
+// order out rather than computing it, because "which combination is next" is a
+// judgement about meaning, not about width; it is also ordered by decreasing
+// width, so place() — which fails monotonically — never skips a wider candidate
+// only to try it again two rows down.
 func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 	inner := m.width - 2
 	joined := func(cs []string) int { return lipgloss.Width(strings.Join(cs, hintSep)) }
@@ -249,14 +279,14 @@ func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 		return strings.Join(kept, hintSep)
 	}
 	full, compact := m.renderRateGauge(false), m.renderRateGauge(true)
-	upd, self := m.updateCountCell(), m.selfCompactCell()
+	app, self := m.appVersionCell(), m.selfCompactCell()
 
-	// The two undroppable members are reserved for before any dropping starts:
-	// they live in the right group and the hints have to fit around them. One
-	// loop, one rule — a plain "fit the hints" pass ahead of it would be dead
-	// work whose predicate has to be kept in sync with this one by hand.
+	// The two non-gauge members are reserved before any dropping starts: they
+	// live in the right group and the hints have to fit around them. One loop,
+	// one rule — a plain "fit the hints" pass ahead of it would be dead work
+	// whose predicate has to be kept in sync with this one by hand.
 	reserve := 0
-	if keep := join(upd, self); keep != "" {
+	if keep := join(app, self); keep != "" {
 		reserve = rateGaugeMinGap + lipgloss.Width(keep)
 	}
 	for len(cells) > 1 && joined(cells)+reserve > inner {
@@ -280,12 +310,9 @@ func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 		return hints + strings.Repeat(" ", gap) + right, true
 	}
 	for _, c := range []string{
-		join(full, upd, self),
-		join(compact, upd, self),
-		join(upd, self),
-		join(compact, upd),
-		join(upd),
-		join(compact, self),
+		join(full, app, self),
+		join(compact, app, self),
+		join(app, self),
 		join(self),
 		join(compact),
 	} {
@@ -337,20 +364,22 @@ func (m Model) selfBannerCells() ([]string, bool) {
 // what keeps [U] reachable for the rest of the session after [X], so the dismiss
 // is a fold, not a cancel.
 //
-// The ↑ glyph is East-Asian Ambiguous (two cells under RUNEWIDTH_EASTASIAN=1),
-// the same accepted class as the tool list's ⏺/↑ markers. renderHintsBar
-// measures the cell with lipgloss.Width, so an over-wide measurement can only
-// drop the cell earlier, never overflow the line.
+// It carries the action alone and does not name keepkit: appVersionCell sits
+// immediately to its left in the right group and already does, with the ↑ that
+// says the version is behind. Both are governed by the same gate — a state other
+// than selfNone is only ever reached under selfCheckEnabled(), which requires the
+// very appVersion the identity cell renders — so the action can never appear
+// without its subject beside it. Repeating the name cost eight columns to say
+// "keepkit" twice in one corner.
 func (m Model) selfCompactCell() string {
-	s := m.sty()
 	if m.selfUpdating() {
-		return selfToolName + " updating…"
+		return m.sty().Dim.Render("updating…")
 	}
 	switch m.selfState {
 	case selfDismissed:
-		return selfToolName + " " + s.SignalBold.Render("↑") + " " + m.key("U")
+		return m.hint("U", "update")
 	case selfUpdatedLater:
-		return selfToolName + " " + m.hint("U", "restart")
+		return m.hint("U", "restart")
 	case selfNone, selfOffered, selfUpdated:
 		// Nothing to collapse: no banner at all, or the full one is on screen.
 	default:
@@ -375,8 +404,7 @@ func (m Model) key(k string) string {
 // hint the eye needs to find, so the word beside it steps back rather than
 // competing at reading brightness.
 func (m Model) hint(k, label string) string {
-	s := m.sty()
-	return s.Accent.Render(k) + " " + s.Dim.Render(label)
+	return m.key(k) + " " + m.sty().Dim.Render(label)
 }
 
 // gaugeCells is the fixed width of the API-usage bar, independent of whether the
@@ -795,10 +823,15 @@ func (m Model) panelFooter(w int, left []string, right string) string {
 		return ""
 	}
 	inner := max(w-2*panelGutter, 1)
+	// The separator is dim, exactly like the one between two languages on the
+	// card: a middot is a grouping mark, and at the footer's density an
+	// unpainted one reads at terminal-default brightness — louder than the hint
+	// labels it is supposed to be separating.
+	sep := m.sty().Dim.Render(footerSep)
 
 	fit := func(cells []string, reserve int) string {
 		for len(cells) > 0 {
-			line := strings.Join(cells, footerSep)
+			line := strings.Join(cells, sep)
 			if lipgloss.Width(line)+reserve <= inner {
 				return line
 			}
@@ -1471,15 +1504,15 @@ func (m Model) buildCard() (string, map[int]string) {
 	s := m.sty()
 	links := make(map[int]string)
 	if len(m.meta) == 0 {
-		return s.Note.Render("no tools tracked.\npress t to add one."), links
+		return indentLines(s.Note.Render("no tools tracked.\npress t to add one.")), links
 	}
 
 	t, ok := m.selectedTool()
 	if !ok {
-		return s.Note.Render("select a tool from the left panel."), links
+		return indentLines(s.Note.Render("select a tool from the left panel.")), links
 	}
 
-	inner := max(m.briefW-2, 1)
+	inner := m.cardWidth()
 	card, hasCard := m.repoCards[t.Name]
 
 	var sb strings.Builder
@@ -1572,7 +1605,34 @@ func (m Model) buildCard() (string, map[int]string) {
 		sb.WriteString(heading + "\n\n" + changelogContent)
 	}
 
-	return sb.String(), links
+	// The gutter is applied last, to whole finished lines. Threading it through
+	// every writer above would put it in front of the strip's own background
+	// segments — and indenting cannot shift a line index, so the link map built
+	// while writing stays correct for free.
+	return indentLines(sb.String()), links
+}
+
+// cardWidth is the single source of the brief card's column budget — the twin of
+// helpWrapWidth for panel [2], and for the same reasons. The viewport is one
+// column narrower than the panel (withScrollbar keeps that one for the thumb)
+// and a panelGutter is held at each end, so nothing the card draws — the metrics
+// plate and the language band, both of which are sized to fill it exactly — ever
+// touches a border or the scrollbar.
+func (m Model) cardWidth() int {
+	return max(m.briefW-1-2*panelGutter, 1)
+}
+
+// indentLines steps a block of already-rendered text in by one panelGutter. The
+// indent is plain spaces outside the styling, so it can never split an escape
+// sequence — the one thing a viewport, which re-emits its content verbatim, must
+// never be handed.
+func indentLines(text string) string {
+	gutter := strings.Repeat(" ", panelGutter)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = gutter + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // metricLabels are the strip's captions, uppercased so they read as a caption
@@ -1581,7 +1641,15 @@ func (m Model) buildCard() (string, map[int]string) {
 //
 // metricMinCol is the narrowest a column may get before the strip re-flows onto
 // fewer columns — the widest label plus a cell of breathing room.
-const metricMinCol = len("MAINTENANCE") + 1
+//
+// metricStripMinWidth is the narrowest the whole block may get: one such column
+// plus the blank cell the row keeps at each end. Measuring the stand-down against
+// metricMinCol alone was two cells short, so a 12-cell panel drew a single column
+// of 10 and printed MAINTENANC — the caption this floor exists to protect.
+const (
+	metricMinCol        = len("MAINTENANCE") + 1
+	metricStripMinWidth = metricMinCol + 2
+)
 
 // metricCell is one measurement in the strip: a caption, its value with the
 // style that carries the value's meaning, and an optional second line under it.
@@ -1664,7 +1732,7 @@ func (m Model) metricsStrip(t loader.Tool, inner int) []string {
 	// would not eat whole, so the strip stands down rather than printing
 	// single-letter columns. Only a hand-built model gets here: the brief panel
 	// has a 30-cell minimum.
-	if len(cells) == 0 || inner < metricMinCol {
+	if len(cells) == 0 || inner < metricStripMinWidth {
 		return nil
 	}
 
@@ -1676,18 +1744,40 @@ func (m Model) metricsStrip(t loader.Tool, inner int) []string {
 	for _, c := range cells {
 		need = max(need, lipgloss.Width(c.value)+1, lipgloss.Width(c.sub)+1)
 	}
-	cols := min(max((inner-1)/need, 1), len(cells))
+	// The column count has to be solved against the row the strip actually
+	// draws — a blank at each end plus a rule between every pair — not against
+	// inner alone. Dividing inner by `need` ignores that overhead, so at a
+	// 40-cell panel it answered "three columns" and then handed each of them 10
+	// cells, which cut MAINTENANCE to MAINTENANC: the caption `metricMinCol`
+	// exists to protect. Counting up is what keeps colW >= need by construction.
 	sep := " │ "
-	colW := max((inner-2-(cols-1)*lipgloss.Width(sep))/cols, 1)
+	sepW := lipgloss.Width(sep)
+	cols := 1
+	for c := 2; c <= len(cells) && 2+c*need+(c-1)*sepW <= inner; c++ {
+		cols = c
+	}
+	colW := max((inner-2-(cols-1)*sepW)/cols, 1)
 
-	// pad renders one cell's text on the block background and pads it to the
-	// column. Every segment carries the background itself: a style applied
-	// around already-styled text cannot repaint what is inside it, and the
-	// inner reset sequences would punch holes in the fill.
+	// pad renders one cell's text on the block background, centered in its
+	// column. Centering rather than flush-left is what makes the column read as
+	// a block: a caption and the value under it are one measurement, and left
+	// alignment hangs them off a rule that is nowhere near either. Odd slack
+	// goes to the right, so a caption and its value can differ by at most one
+	// cell in where they start.
+	//
+	// Every segment carries the background itself: a style applied around
+	// already-styled text cannot repaint what is inside it, and the inner reset
+	// sequences would punch holes in the fill.
+	fill := func(n int) string {
+		if n <= 0 {
+			return ""
+		}
+		return s.Surface.Render(strings.Repeat(" ", n))
+	}
 	pad := func(text string, style lipgloss.Style) string {
 		text = truncateToWidth(text, colW)
-		return style.Background(s.Theme.Surface).Render(text) +
-			s.Surface.Render(strings.Repeat(" ", max(colW-lipgloss.Width(text), 0)))
+		slack := max(colW-lipgloss.Width(text), 0)
+		return fill(slack/2) + style.Background(s.Theme.Surface).Render(text) + fill(slack-slack/2)
 	}
 	blank := s.Surface.Render(" ")
 	rule := s.Rule.Background(s.Theme.Surface).Render(sep)
@@ -1722,10 +1812,17 @@ func (m Model) metricsStrip(t loader.Tool, inner int) []string {
 	return append(out, pad0)
 }
 
-// metaLine is everything the user has told keepkit about the tool, plus what
-// the repo says it is written in, on one wrapped line instead of four labelled
-// ones. Empty values do not get a line of their own — they get the key that
-// fills them ("tags — # add"), which is the only thing an empty field is for.
+// metaLine is everything the user has told keepkit about the tool, plus what the
+// repo says it is written in. Empty values do not get a line of their own — they
+// get the key that fills them ("tags — # add"), which is the only thing an empty
+// field is for.
+//
+// Two blocks, and they are shaped by what they are. The language stack is a
+// *distribution*, so it gets the card's one picture: the named shares, then a
+// band of exactly inner cells under them holding those shares in GitHub's own
+// colors. Under the band, status/tags/note share one wrapped line — three short
+// values that each occupied a whole row spent three rows on a sentence's worth
+// of text, and the band above already gives the block its structure.
 func (m Model) metaLine(t loader.Tool, inner int) string {
 	s := m.sty()
 	mt, ok := m.selectedMeta()
@@ -1734,26 +1831,21 @@ func (m Model) metaLine(t loader.Tool, inner int) string {
 	}
 	card := m.repoCards[t.Name]
 
-	var cells []string
+	var lines []string
 	if len(card.Languages) > 0 {
-		// One line, always. renderLangBar wraps on its own budget, and a cell
-		// that wrapped internally would break the whole line's arithmetic
-		// below: lipgloss.Width measures a multi-line string by its widest
-		// line, which is not the footprint it occupies, so the next cell could
-		// be spliced onto the middle of the bar — and the continuation lines
-		// arrive with no "lang" label to say what they are. So the bar is cut
-		// to one line like every other over-wide value here, with a … saying a
-		// language was left out.
-		const langLabel = "lang "
-		budget := max(inner-len(langLabel)-2, 10)
-		bar, rest, wrapped := strings.Cut(renderLangBar(s, card.Languages, budget, 0), "\n")
-		if wrapped && rest != "" {
-			bar += s.Dim.Render(" …")
+		lines = append(lines, renderLangList(s, card.Languages, inner)...)
+		if band := renderLangBand(s, card.Languages, inner); band != "" {
+			// A blank row under the band. It is the block's own closing edge: the
+			// band runs the full width of the panel, so without it the field line
+			// reads as a caption hanging off the bar rather than as the next
+			// thing. Written bare — styling an empty string only emits an empty
+			// escape pair, the same rule the changelog's blank rows follow.
+			lines = append(lines, band, "")
 		}
-		cells = append(cells, s.Dim.Render(langLabel)+bar)
 	}
-	cells = append(cells, s.Dim.Render("status ")+
-		s.Status(mt.Status).Render(loader.StatusSymbol[mt.Status]+" "+string(mt.Status)))
+
+	cells := []string{s.Dim.Render("status ") +
+		s.Status(mt.Status).Render(loader.StatusSymbol[mt.Status]+" "+string(mt.Status))}
 
 	// The two editable fields. In edit mode the input replaces the value in
 	// place, so the card never jumps while it is being typed into.
@@ -1786,9 +1878,9 @@ func (m Model) metaLine(t loader.Tool, inner int) string {
 	}
 
 	// Wrapping is by whole cells: a cell carries ANSI, so it must never be cut
-	// mid-escape, and half a "note …" reads as noise anyway.
+	// mid-escape, and half a "note …" reads as noise anyway. Cells are already
+	// single-line — the language block, which is not one, was emitted above.
 	sep := s.Dim.Render(" · ")
-	var lines []string
 	cur, curW := "", 0
 	for _, c := range cells {
 		w := lipgloss.Width(c)
@@ -2085,7 +2177,17 @@ func (m Model) readmeContent(name string) (string, bool) {
 	return "No README for " + name + ".\nPress [h] for --help.", false
 }
 
+// renderHelpContent is what panel [3]'s viewport is set to. It is helpContent
+// stepped in by one panelGutter at both ends — the right end is held by
+// helpWrapWidth, which every producer of this text wraps to, so the indent here
+// is the only thing left to apply. Every path lands on this single point (the
+// spotlight, the search highlight, the placeholders and the update log alike),
+// so no branch can render flush against the frame.
 func (m Model) renderHelpContent() string {
+	return indentLines(m.helpContent())
+}
+
+func (m Model) helpContent() string {
 	s := m.sty()
 	// Live update log: while a tool is (or was just) being updated, [3] shows the
 	// merged stdout+stderr buffer instead of help. This branch sits ahead of the
