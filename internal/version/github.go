@@ -285,7 +285,7 @@ var testAPIBase string
 // the token (testTokenDir, token.go) — at dir, and returns a restore func.
 //
 // Exported like loader.SetConfigDirForTesting and for the same reason: a model
-// test that drives the [L] overlay reaches SetToken, which rewrites the user's
+// test that drives the [a] overlay reaches SetToken, which rewrites the user's
 // real GitHub token file, and any fetch path rewrites the real cache. Test
 // binaries install this once in TestMain rather than relying on every test to
 // remember. restore reverts to the previous overrides, so a nested per-test

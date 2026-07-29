@@ -288,10 +288,10 @@ func TestStartUpdateCmdStreamsToCompletion(t *testing.T) {
 }
 
 // TestHelpKeyDismissesCompletedUpdateLog: the update log is sticky in [3] after
-// completion, but an explicit [h]/[m] is intent to leave it — the key must clear
+// completion, but an explicit [H]/[M] is intent to leave it — the key must clear
 // updateLogFor so --help / man is reachable for that tool again.
 func TestHelpKeyDismissesCompletedUpdateLog(t *testing.T) {
-	for _, key := range []string{"h", "m"} {
+	for _, key := range []string{"H", "M"} {
 		m := New([]loader.ToolMeta{{Name: "git"}})
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 		m = updated.(Model)
@@ -308,10 +308,10 @@ func TestHelpKeyDismissesCompletedUpdateLog(t *testing.T) {
 	}
 }
 
-// TestHelpKeyKeepsLiveUpdateLog: while an update is still in flight, [h]/[m]
+// TestHelpKeyKeepsLiveUpdateLog: while an update is still in flight, [H]/[M]
 // must NOT drop the live log — updatingFor still names the tool.
 func TestHelpKeyKeepsLiveUpdateLog(t *testing.T) {
-	for _, key := range []string{"h", "m"} {
+	for _, key := range []string{"H", "M"} {
 		m := New([]loader.ToolMeta{{Name: "git"}})
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 		m = updated.(Model)

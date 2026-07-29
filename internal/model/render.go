@@ -150,23 +150,26 @@ func (m Model) renderStatusBar() string {
 	return m.renderHintsBar(style, m.globalHints())
 }
 
-// globalHints is the status bar's left half, and it is deliberately the SAME in
-// every focus. It used to be three per-focus lists, which meant the one line
-// always on screen kept rewriting itself as the user moved between panels while
-// the keys it advertised were mostly reachable from anywhere anyway. What is
-// genuinely panel-local now lives in that panel's own footer, next to the thing
-// it acts on; what is left here is the tracker's global verb list.
+// globalHints is what the status bar carries, and the list is now a definition
+// rather than a selection: a key belongs here exactly when it does the same
+// thing in every focus. Six qualify — the tracker's three verbs (t/u/m), the API
+// overlay, the keys overlay and quit — and nothing else does.
 //
-// No space/group cell: it is [1]-local and its footer carries it. Cells are
-// ordered most-important-first — renderHintsBar drops from the right.
+// enter and / used to lead this list and were the two that failed the
+// definition: enter runs a tool in [1] but installs a release in [2] and does
+// nothing in [3], and / filters the list in [1] but searches [3]'s text from
+// [2]. Both moved to the [1] footer, beside the panel where their meaning is
+// fixed. What is left is genuinely focus-independent, which is what lets one
+// line stay on screen without rewriting itself as the user moves between panels.
+//
+// No space/group cell either: it is [1]-local and its footer carries it. Cells
+// are ordered most-important-first — renderHintsBar drops from the right.
 func (m Model) globalHints() []string {
 	return []string{
-		m.hint("enter", "run"),
-		m.hint("/", "search"),
 		m.hint("t", "track"),
 		m.hint("u", "untrack"),
-		m.hint("R", "rename"),
-		m.hint("L", "api"),
+		m.hint("m", "rename"),
+		m.hint("a", "api"),
 		m.hint("?", "keys"),
 		m.hint("q", "quit"),
 	}
@@ -237,38 +240,36 @@ const rateGaugeMinGap = 2
 // hintSep separates two hint cells in the status bar.
 const hintSep = "  "
 
-// renderHintsBar lays out the left-aligned hint cells with the right group (the
-// API-usage gauge plus, when there is one, the collapsed self-update cell)
-// pinned to the right corner. inner is HelpStyle's content width (m.width-2, the
-// border sits outside it).
+// renderHintsBar lays the status bar out as three zones: keepkit's own identity
+// pinned to the left edge, the hint cells centered, the API-usage gauge pinned to
+// the right edge. inner is StatusBar's content width (m.width-2, the border sits
+// outside it).
 //
-// The bar must stay exactly one line: HelpStyle is width-constrained, so a hint
-// list wider than inner wraps to a second row and View() returns m.height+1
-// lines — one row past the terminal, which scrolls the top border off the alt
-// screen. Cells are therefore dropped from the right (they are ordered
-// most-important first) until the joined hints fit; the least useful reminders
-// ([?] keys, [q] quit) are the first to go on a narrow terminal. A collapsed
-// self cell keeps dropping them: it is the only remaining surface of a pending
-// update, so it outranks the trailing reminders as well as the gauge, and at 80
-// columns it would otherwise never fit at all. The leading cell is never
-// dropped, and when even it is too wide (the fused banner cell on a very narrow
-// terminal) it is truncated rather than allowed to wrap.
+// The two edges are the two facts that are true regardless of what the user is
+// doing — which build this is, and how much API quota is left — so they sit where
+// a reader's eye returns to rather than in the middle of a key list. The keys
+// between them are the ones that mean the same thing in every focus (see
+// globalHints), which is what makes centering them honest: a centered block that
+// changed with focus would just be a moving target. The collapsed self-update
+// cell rides with the version on the left, because it carries its action alone
+// ("U update") and appVersionCell is the subject that names what is being
+// updated — separating them would leave a verb with no noun.
 //
-// Only then is the right group placed. It has three members — the API-usage
-// gauge, keepkit's own name and version, and the collapsed self-update cell —
-// and they are dropped in order of how *actionable* they are: the gauge first (a
-// read-only reminder), then the version cell (identity, and its ↑ is repeated
-// under [U] anyway), and the self cell last, since after [X] it is the only
-// remaining way to act on a pending self-update. The candidate list spells that
-// order out rather than computing it, because "which combination is next" is a
-// judgement about meaning, not about width; it is also ordered by decreasing
-// width, so place() — which fails monotonically — never skips a wider candidate
-// only to try it again two rows down.
+// The bar must stay exactly one line: StatusBar is width-constrained, so a list
+// wider than inner wraps to a second row and View() returns m.height+1 lines —
+// one row past the terminal, which scrolls the top border off the alt screen.
+// Everything below is about getting back to one line, in order of how
+// *actionable* the thing dropped is: trailing hint cells first (they are ordered
+// most-important-first, so [?] keys and [q] quit go before [t] track), then the
+// gauge (read-only), then the version cell (identity, and its ↑ is repeated under
+// [U] anyway), and the self cell last, since after [X] it is the only remaining
+// way to act on a pending update. The leading hint cell is never dropped, and
+// when even it is too wide — the fused banner cell on a very narrow terminal — it
+// is truncated rather than allowed to wrap.
 func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
-	inner := m.width - 2
-	joined := func(cs []string) int { return lipgloss.Width(strings.Join(cs, hintSep)) }
-	// join drops empty members so a candidate never renders a stray separator;
-	// an all-empty candidate collapses to "" and place() skips it.
+	inner := max(m.width-2, 1)
+	// join drops empty members so the pair never renders a stray separator, and
+	// collapses to "" when neither member exists.
 	join := func(parts ...string) string {
 		kept := parts[:0]
 		for _, p := range parts {
@@ -278,49 +279,67 @@ func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 		}
 		return strings.Join(kept, hintSep)
 	}
-	full, compact := m.renderRateGauge(false), m.renderRateGauge(true)
-	app, self := m.appVersionCell(), m.selfCompactCell()
+	// width of a zone plus the blank gap it needs against its neighbour; an
+	// absent zone costs nothing, gap included.
+	claim := func(zone string) int {
+		if zone == "" {
+			return 0
+		}
+		return lipgloss.Width(zone) + rateGaugeMinGap
+	}
 
-	// The two non-gauge members are reserved before any dropping starts: they
-	// live in the right group and the hints have to fit around them. One loop,
-	// one rule — a plain "fit the hints" pass ahead of it would be dead work
-	// whose predicate has to be kept in sync with this one by hand.
-	reserve := 0
-	if keep := join(app, self); keep != "" {
-		reserve = rateGaugeMinGap + lipgloss.Width(keep)
-	}
-	for len(cells) > 1 && joined(cells)+reserve > inner {
-		cells = cells[:len(cells)-1]
-	}
+	app, self := m.appVersionCell(), m.selfCompactCell()
+	left := join(app, self)
 	hints := strings.Join(cells, hintSep)
+
+	// Fit the hints beside the left zone, shedding trailing cells and then the
+	// left zone's own members in the documented order.
+	for len(cells) > 1 && lipgloss.Width(hints)+claim(left) > inner {
+		cells = cells[:len(cells)-1]
+		hints = strings.Join(cells, hintSep)
+	}
+	if lipgloss.Width(hints)+claim(left) > inner {
+		left = self
+	}
+	if lipgloss.Width(hints)+claim(left) > inner {
+		left = ""
+	}
 	if lipgloss.Width(hints) > inner {
-		// One cell wider than the whole bar — the fused banner cell on a very
-		// narrow terminal. Styling is stripped before the cut: a cut landing
-		// inside an escape sequence would be re-emitted to the terminal verbatim.
-		hints = truncateToWidth(stripANSI(hints), max(inner, 1))
+		// Styling is stripped before the cut: a cut landing inside an escape
+		// sequence would be re-emitted to the terminal verbatim.
+		hints = truncateToWidth(stripANSI(hints), inner)
 	}
-	place := func(right string) (string, bool) {
-		if right == "" {
-			return "", false
-		}
-		gap := inner - lipgloss.Width(hints) - lipgloss.Width(right)
-		if gap < rateGaugeMinGap {
-			return "", false
-		}
-		return hints + strings.Repeat(" ", gap) + right, true
-	}
-	for _, c := range []string{
-		join(full, app, self),
-		join(compact, app, self),
-		join(app, self),
-		join(self),
-		join(compact),
-	} {
-		if line, ok := place(c); ok {
-			return style.Render(line)
+
+	// The gauge takes whatever is left over, widest form first.
+	right := ""
+	for _, g := range []string{m.renderRateGauge(false), m.renderRateGauge(true)} {
+		if g != "" && claim(left)+lipgloss.Width(hints)+claim(g) <= inner {
+			right = g
+			break
 		}
 	}
-	return style.Render(hints)
+
+	// Center the hints on the whole bar, then clamp them into the band the two
+	// edges leave. Centering on the bar rather than on the leftover band is the
+	// point: the block should read as centered on the screen, and the two edges
+	// are rarely the same width.
+	lw, hw := lipgloss.Width(left), lipgloss.Width(hints)
+	start := max((inner-hw)/2, claim(left))
+	if end := inner - claim(right) - hw; start > end {
+		start = max(end, claim(left))
+	}
+
+	var b strings.Builder
+	b.WriteString(left)
+	b.WriteString(strings.Repeat(" ", max(start-lw, 0)))
+	b.WriteString(hints)
+	if right != "" {
+		if pad := inner - lipgloss.Width(b.String()) - lipgloss.Width(right); pad > 0 {
+			b.WriteString(strings.Repeat(" ", pad))
+		}
+		b.WriteString(right)
+	}
+	return style.Render(b.String())
 }
 
 // selfBannerCells returns the self-update banner as most-important-first hint
@@ -432,7 +451,7 @@ const gaugeDangerRemaining = 100
 
 // gaugeVisible reports whether there is a quota to show. The gauge is on screen
 // for the whole session once the rate is known: it is also the only place the
-// API surface is visible at all, so hiding it at rest hid the [L] overlay with
+// API surface is visible at all, so hiding it at rest hid the [a] overlay with
 // it — the numbers are the affordance.
 func gaugeVisible(r version.RateLimit) bool {
 	return r.Known && r.Limit > 0
@@ -444,7 +463,7 @@ func gaugeVisible(r version.RateLimit) bool {
 // The bar is ▮ fill / ░ track glyphs — foreground-colored, so it survives a
 // stripped-ANSI profile, and any usage shows at least one filled cell via
 // gaugeFilled. The fill turns danger-red as the window runs out; the ⚠/✕ alarm
-// itself still lives only in the [L] overlay, which the [?] overlay documents —
+// itself still lives only in the [a] overlay, which the [?] overlay documents —
 // the bar spends no columns advertising a key. compact drops the bar, keeping
 // "api used/limit" for narrow terminals.
 func (m Model) renderRateGauge(compact bool) string {
@@ -470,7 +489,7 @@ func (m Model) renderRateGauge(compact bool) string {
 }
 
 // usedOf returns consumed requests (Limit-Remaining) clamped to [0,Limit], the
-// single source of used/limit for both the status-bar gauge and the [L] overlay.
+// single source of used/limit for both the status-bar gauge and the [a] overlay.
 // GitHub always reports Remaining in [0,Limit]; the clamp is defensive against a
 // malformed snapshot.
 func usedOf(r version.RateLimit) int {
@@ -704,8 +723,8 @@ func (m Model) renderHotkeys() string {
 			{"/", "search"},
 			{"t", "track a repo"},
 			{"u", "untrack selected"},
-			{"R", "rename selected"},
-			{"L", "api usage"},
+			{"m", "rename selected"},
+			{"a", "api usage"},
 			{"?", "this overlay"},
 		}},
 		{"[1] tools", []hotkeyRow{
@@ -731,7 +750,7 @@ func (m Model) renderHotkeys() string {
 			{"o/c", "repo / releases"},
 		}},
 		{"[3] readme", []hotkeyRow{
-			{"r/h/m", "readme/help/man"},
+			{"R/H/M", "readme/help/man"},
 			{"j/k ↑/↓", "navigate / scroll"},
 			{"ctrl+d/u", "half page"},
 		}},
@@ -840,7 +859,15 @@ func (m Model) panelFooter(w int, left []string, right string) string {
 		return ""
 	}
 
-	line := fit(left, rateGaugeMinGap+lipgloss.Width(right))
+	// An absent right cell reserves nothing — not even the gap that would
+	// separate it. [1] and [2] pass "" here, and charging them two cells for a
+	// neighbour that does not exist is what dropped [1]'s last footer cell one
+	// step earlier than it had to.
+	reserve := 0
+	if right != "" {
+		reserve = rateGaugeMinGap + lipgloss.Width(right)
+	}
+	line := fit(left, reserve)
 	if right != "" {
 		if gap := inner - lipgloss.Width(line) - lipgloss.Width(right); gap >= rateGaugeMinGap {
 			line += strings.Repeat(" ", gap) + right
@@ -1300,8 +1327,14 @@ func (m Model) renderTools() string {
 		title = title.append(fmt.Sprintf(" %d↑", n), " "+s.Signal.Render(fmt.Sprintf("%d↑", n)))
 	}
 
+	// enter joins / and space here because it is a [1] action, not a global one:
+	// the same key installs a release in [2] and does nothing in [3], so the
+	// status bar could only advertise one of the three meanings. Ordered
+	// most-important-first — panelFooter drops from the right, and on a narrow
+	// list "run" is the one worth keeping over "group".
 	footer := m.panelFooter(m.toolsW, []string{
 		m.hint("/", "filter"),
+		m.hint("enter", "run"),
 		m.hint("space", "group"),
 	}, "")
 	return m.framePanel(m.toolsW, focused,
@@ -1359,7 +1392,7 @@ func (m Model) renderHelp() string {
 		// The other two sources of this panel, named in the frame rather than
 		// in the footer: they switch what the panel *is*, which is a property
 		// of the panel, not an action on its content.
-		for _, alt := range [][2]string{{"h", "help"}, {"m", "man"}, {"r", "readme"}} {
+		for _, alt := range [][2]string{{"H", "help"}, {"M", "man"}, {"R", "readme"}} {
 			if alt[1] == name {
 				continue
 			}
@@ -1564,7 +1597,7 @@ func (m Model) buildCard() (string, map[int]string) {
 		sb.WriteString(s.Text.Render(wrapText(card.About, inner)) + "\n")
 	}
 	if !hasCard && m.repoStatus[t.Name] == "rate-limited" {
-		sb.WriteString(s.SignalBold.Render("rate limited — press L") + "\n")
+		sb.WriteString(s.SignalBold.Render("rate limited — press a") + "\n")
 	}
 
 	// One blank row between blocks. The strip needs no second one: its own
@@ -2113,7 +2146,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // applySpotlight dims every line outside the current navigation entry while
 // the [3] cursor is active: the entry's lines keep their full colorizeHelp
 // styling, the rest are stripped of their own coloring and repainted with
-// s.Dim — the same strip-then-repaint trick the [L] overlay uses,
+// s.Dim — the same strip-then-repaint trick the [a] overlay uses,
 // but per whole line, so no ANSI-safe splicing is needed. A stale
 // out-of-bounds index renders undimmed rather than panicking (entries and
 // cursor are reset together in setHelpContent, but a value-receiver render
@@ -2163,18 +2196,18 @@ func (m Model) readmeContent(name string) (string, bool) {
 	}
 	t, found := m.toolByName(name)
 	if !found || t.GitHub == "" {
-		return "No repo for " + name + ".\nPress [h] for --help.", false
+		return "No repo for " + name + ".\nPress [H] for --help.", false
 	}
 	if !ok {
 		return "Loading...", false
 	}
 	switch {
 	case errors.Is(data.err, version.ErrNoReadme):
-		return "No README in " + t.GitHub + ".\nPress [h] for --help.", false
+		return "No README in " + t.GitHub + ".\nPress [H] for --help.", false
 	case errors.Is(data.err, version.ErrRateLimited):
-		return "rate limited — press L", false
+		return "rate limited — press a", false
 	}
-	return "No README for " + name + ".\nPress [h] for --help.", false
+	return "No README for " + name + ".\nPress [H] for --help.", false
 }
 
 // renderHelpContent is what panel [3]'s viewport is set to. It is helpContent
@@ -2232,9 +2265,9 @@ func (m Model) helpContent() string {
 	cached, has := m.helpCache[mt.Name]
 	if !has || cached[m.helpMode] == "" {
 		if m.helpMode == helpModeHelp {
-			return s.Note.Render("Press [h] for --help\nPress [m] for man page")
+			return s.Note.Render("Press [H] for --help\nPress [M] for man page")
 		}
-		return s.Note.Render("Press [m] for man page\nPress [h] for --help")
+		return s.Note.Render("Press [M] for man page\nPress [H] for --help")
 	}
 	if m.mode != modeHelpSearch || m.helpSearch.Value() == "" {
 		// Cursor moves and clear-cursor repaints hit this path once per

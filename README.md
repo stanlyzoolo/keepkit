@@ -64,17 +64,18 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
   kitty / WezTerm / Terminal.app) or in the current window, without leaving keepkit
 - **Search** — `/` filters by name and tag with match highlighting and an `N/M` counter
 - **GitHub API token** — a quota gauge in the status bar, plus token management in
-  the `L` overlay, lifts the anonymous 60 requests/hour to 5000
+  the `a` overlay, lifts the anonymous 60 requests/hour to 5000
 - **Session error log** — errors (and only errors) are journaled to a per-session
   file, so a misbehaving session can be researched after the fact; no errors — no file
 - **Mouse support** — scrolling, panel focus, selection and card links all respond
   to the mouse
 
-The status bar carries the global keys, each panel's own actions sit in its footer,
-and `?` opens the full hotkeys overlay — every keybinding, grouped by panel. That is
-all you need to learn. Its right corner names the build you are running
-(`keepkit v0.1.0`), and marks it with the same `↑` an outdated tool row carries when
-a newer keepkit release is waiting.
+The status bar carries the keys that mean the same thing in every panel, each
+panel's own actions sit in its footer, and `?` opens the full hotkeys overlay —
+every keybinding, grouped by panel. That is all you need to learn. Its left corner
+names the build you are running (`keepkit v0.1.0`), marked with the same `↑` an
+outdated tool row carries when a newer keepkit release is waiting; the quota gauge
+sits in the right corner.
 
 ## Installation
 
@@ -132,7 +133,8 @@ Run `keepkit` — a three-panel interface opens:
   languages, status, tag and note. From here `enter` installs a pending release, the
   repo or changelog opens in the browser, and the card data is force-refreshed.
 - **`[3] Readme / Help / Man`** — the docs panel: the rendered repository README (the
-  default), the tool's `--help` output or its `man` page. A README is cleaned up
+  default, `R`), the tool's `--help` output (`H`) or its `man` page (`M`) — the three
+  sources are capitals, so none collides with `r` refresh or `m` rename. A README is cleaned up
   before rendering — badges, logos, HTML and pictographic emoji go, link text stays
   without its URL, the title (and a slogan under it that only repeats the card's own)
   is dropped so the panel opens on the first sentence that says something new, and
@@ -141,9 +143,12 @@ Run `keepkit` — a three-panel interface opens:
 
 Focus moves with `←` / `→` or the digits `1` / `2` / `3` (each panel's number is in
 its title, and the focused panel is marked with `▸` as well as by color). The status
-bar carries the global keys — `enter` run, `/` search, `t` track, `u` untrack,
-`R` rename, `?` keys, `q` quit — while each panel's own actions sit in its footer.
-Press `?` any time for the full hotkeys overlay, grouped by panel.
+bar carries the six keys that do the same thing in every focus — `t` track, `u`
+untrack, `m` rename, `a` api, `?` keys, `q` quit — centered between the running
+version on the left and the quota gauge on the right. Everything panel-local sits in
+that panel's own footer: `/` filter, `enter` run and `space` group in `[1]`, the
+card's actions in `[2]`. Press `?` any time for the full hotkeys overlay, grouped by
+panel.
 
 When you enter a GitHub URL (`https://github.com/owner/repo`, with `.git`, without a
 scheme, or in SSH form `git@github.com:owner/repo.git`), keepkit puts the short tool
@@ -267,7 +272,7 @@ Quota usage sits in the right corner of the status bar (`api ▮▮░░░░�
 the whole session once the numbers are known, and the fill turns red as the window
 runs out. It is also the only visible sign that keepkit has an API surface at all, so
 hiding it at rest hid the overlay with it; on a narrow terminal it is the first thing
-the corner drops. The `L` key opens the API status overlay: token source, quota usage with a warning icon
+the corner drops. The `a` key opens the API status overlay: token source, quota usage with a warning icon
 and the reset time; right in the overlay a token can be entered (validated before it
 is saved), removed or the numbers refreshed.
 
