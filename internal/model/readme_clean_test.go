@@ -119,7 +119,7 @@ func TestRcSegments(t *testing.T) {
 // segmentation exists.
 func TestCleanReadmeMarkdownProtectsFences(t *testing.T) {
 	const fence = "```md\n![Build](https://img.shields.io/badge.svg)\n<div align=\"center\">🚀 :rocket:</div>\n[docs](https://example.com/docs)\n<!-- a comment -->\n```"
-	got := cleanReadmeMarkdown("intro\n\n" + fence + "\n\nafter\n")
+	got := cleanReadmeMarkdown("intro\n\n" + fence + "\n\nafter\n", "")
 	if !strings.Contains(got, fence) {
 		t.Errorf("fenced block was rewritten\n--- got ---\n%s\n--- want to contain ---\n%s", got, fence)
 	}
@@ -141,7 +141,7 @@ func TestCleanReadmeMarkdownProtectsInlineSpans(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := cleanReadmeMarkdown("text " + tt.span + " tail\n")
+			got := cleanReadmeMarkdown("text " + tt.span + " tail\n", "")
 			if !strings.Contains(got, tt.span) {
 				t.Errorf("inline span was rewritten\ngot:  %q\nwant to contain: %q", got, tt.span)
 			}
@@ -197,7 +197,7 @@ func TestCleanReadmeMarkdownImagesAndLinks(t *testing.T) {
 		{
 			name: "inline badge header vanishes",
 			in:   "# Title\n\n![Build](https://img.shields.io/b.svg) ![License](https://img.shields.io/l.svg)\n\nIntro\n",
-			want: "# Title\n\nIntro\n",
+			want: "Intro\n",
 		},
 		{
 			name: "linked badge vanishes whole",
@@ -268,7 +268,7 @@ func TestCleanReadmeMarkdownImagesAndLinks(t *testing.T) {
 		{
 			name: "ten-badge header folds to one blank line",
 			in:   "# T\n\n![a](x)\n![b](y)\n![c](z)\n\nbody\n",
-			want: "# T\n\nbody\n",
+			want: "body\n",
 		},
 		{
 			// Two trailing spaces are markup; a removal inside the line has no
@@ -294,7 +294,7 @@ func TestCleanReadmeMarkdownImagesAndLinks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cleanReadmeMarkdown(tt.in); got != tt.want {
+			if got := cleanReadmeMarkdown(tt.in, ""); got != tt.want {
 				t.Errorf("cleanReadmeMarkdown(%q)\n = %q\nwant %q", tt.in, got, tt.want)
 			}
 		})
@@ -325,12 +325,12 @@ func TestCleanReadmeMarkdownHTML(t *testing.T) {
 		{
 			name: "picture element removed with its body",
 			in:   "<picture>\n  <source srcset=\"d.png\">\n  <img src=\"l.png\" alt=\"logo\">\n</picture>\n\n# Title\n",
-			want: "\n# Title\n",
+			want: "",
 		},
 		{
 			name: "img tag removed",
 			in:   "<img src=\"logo.png\" alt=\"logo\">\n\n# Title\n",
-			want: "\n# Title\n",
+			want: "",
 		},
 		{
 			name: "inline tag keeps its text",
@@ -357,7 +357,7 @@ func TestCleanReadmeMarkdownHTML(t *testing.T) {
 			// leaves the tail of the tag on screen.
 			name: "attribute value carrying a greater-than",
 			in:   "<img alt=\"a > b\" src=\"x.png\">\n\n# Title\n",
-			want: "\n# Title\n",
+			want: "",
 		},
 		{
 			// The label set is collected AFTER the HTML rules run: gathering it
@@ -370,7 +370,7 @@ func TestCleanReadmeMarkdownHTML(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cleanReadmeMarkdown(tt.in); got != tt.want {
+			if got := cleanReadmeMarkdown(tt.in, ""); got != tt.want {
 				t.Errorf("cleanReadmeMarkdown(%q)\n = %q\nwant %q", tt.in, got, tt.want)
 			}
 		})
@@ -393,7 +393,7 @@ func TestCleanReadmeMarkdownEmojiAndShortcodes(t *testing.T) {
 			// styled blank row.
 			name: "emoji-only heading is dropped",
 			in:   "# Title\n\n## 🚀\n\nbody\n",
-			want: "# Title\n\nbody\n",
+			want: "body\n",
 		},
 		{
 			name: "leading emoji leaves no indent",
@@ -439,7 +439,7 @@ func TestCleanReadmeMarkdownEmojiAndShortcodes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cleanReadmeMarkdown(tt.in); got != tt.want {
+			if got := cleanReadmeMarkdown(tt.in, ""); got != tt.want {
 				t.Errorf("cleanReadmeMarkdown(%q)\n = %q\nwant %q", tt.in, got, tt.want)
 			}
 		})
@@ -461,7 +461,7 @@ func TestCleanReadmeMarkdownShortcodeNeedsAKnownName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := cleanReadmeMarkdown(tt.in)
+			got := cleanReadmeMarkdown(tt.in, "")
 			if changed := got != tt.in; changed != tt.removed {
 				t.Errorf("cleanReadmeMarkdown(%q) = %q; removed=%v, want removed=%v", tt.in, got, changed, tt.removed)
 			}
@@ -501,7 +501,7 @@ func TestCleanReadmeMarkdownLeavesContentAlone(t *testing.T) {
 	}
 	for _, tt := range unchanged {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cleanReadmeMarkdown(tt.in); got != tt.in {
+			if got := cleanReadmeMarkdown(tt.in, ""); got != tt.in {
 				t.Errorf("cleanReadmeMarkdown(%q) = %q, want it unchanged", tt.in, got)
 			}
 		})
@@ -515,8 +515,8 @@ func TestCleanReadmeMarkdownNormalizesCRLF(t *testing.T) {
 	const lf = "# T\n\n```go\ncode\n```\n\n![b](https://b.svg)\n\ntail\n"
 	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
 
-	want := cleanReadmeMarkdown(lf)
-	if got := cleanReadmeMarkdown(crlf); got != want {
+	want := cleanReadmeMarkdown(lf, "")
+	if got := cleanReadmeMarkdown(crlf, ""); got != want {
 		t.Errorf("CRLF input\n = %q\nwant the LF result %q", got, want)
 	}
 	if strings.Contains(want, "b.svg") {
@@ -538,7 +538,7 @@ func TestCleanReadmeMarkdownPathologicalInputIsFast(t *testing.T) {
 	for name, in := range inputs {
 		t.Run(name, func(t *testing.T) {
 			start := time.Now()
-			cleanReadmeMarkdown(in)
+			cleanReadmeMarkdown(in, "")
 			if elapsed := time.Since(start); elapsed > budget {
 				t.Errorf("%d bytes took %v, want under %v", len(in), elapsed, budget)
 			}
@@ -550,11 +550,74 @@ func TestCleanReadmeMarkdownPathologicalInputIsFast(t *testing.T) {
 // drops every control character), and a direct caller must not be able to
 // smuggle a placeholder into the restore table either.
 func TestCleanReadmeMarkdownDropsSentinel(t *testing.T) {
-	got := cleanReadmeMarkdown("a\x000\x00b `code` c\n")
+	got := cleanReadmeMarkdown("a\x000\x00b `code` c\n", "")
 	if strings.Contains(got, "\x00") {
 		t.Errorf("sentinel survived: %q", got)
 	}
 	if !strings.Contains(got, "`code`") {
 		t.Errorf("code span lost: %q", got)
+	}
+}
+
+// TestDropTitleBlock pins the one rule that deletes a whole paragraph: the
+// leading H1 always goes (the card prints the tool's name a panel away), and
+// the line under it goes only when it repeats the repo description the card
+// prints beside that name. Everything else stays — a shape-based guess at
+// "this looks like a tagline" also matches a short opening sentence, which is
+// content the reader came for.
+func TestDropTitleBlock(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   string
+		about string
+		want  string
+	}{
+		{
+			name:  "title and matching tagline both go",
+			raw:   "# lazyskills\n\nmission control for agent skills\n\nLazySkills is a TUI.\n",
+			about: "Mission control for agent skills",
+			want:  "LazySkills is a TUI.\n",
+		},
+		{
+			name:  "emphasis and punctuation do not defeat the match",
+			raw:   "# tool\n\n**A tracker for CLI tools.**\n\nBody.\n",
+			about: "A tracker for CLI tools",
+			want:  "Body.\n",
+		},
+		{
+			name:  "a different first paragraph survives",
+			raw:   "# tool\n\nThis is the real intro.\n\nBody.\n",
+			about: "Mission control for agent skills",
+			want:  "This is the real intro.\n\nBody.\n",
+		},
+		{
+			name: "with no description nothing below the title is touched",
+			raw:  "# tool\n\nmission control for agent skills\n\nBody.\n",
+			want: "mission control for agent skills\n\nBody.\n",
+		},
+		{
+			name:  "a two-line paragraph is prose, not a slogan",
+			raw:   "# tool\n\nmission control for agent skills\nand more\n\nBody.\n",
+			about: "mission control for agent skills",
+			want:  "mission control for agent skills\nand more\n\nBody.\n",
+		},
+		{
+			name:  "only the leading heading is a title",
+			raw:   "Intro first.\n\n# Install\n\nRun it.\n",
+			about: "Intro first",
+			want:  "Intro first.\n\n# Install\n\nRun it.\n",
+		},
+		{
+			name: "a document that never had a title is untouched",
+			raw:  "## Usage\n\nRun it.\n",
+			want: "## Usage\n\nRun it.\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cleanReadmeMarkdown(tt.raw, tt.about); got != tt.want {
+				t.Errorf("cleanReadmeMarkdown(%q, %q)\n = %q\nwant %q", tt.raw, tt.about, got, tt.want)
+			}
+		})
 	}
 }

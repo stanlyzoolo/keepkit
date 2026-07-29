@@ -64,11 +64,11 @@ func TestGroupedOrderingByTag(t *testing.T) {
 	}
 }
 
-// TestGroupedOrderingSuppressesUpdatePartition: grouping and the update
-// partition are exclusive — an updatable untagged tool stays in the trailing
-// untagged group instead of floating to the top, or the tag sections would not
-// be contiguous.
-func TestGroupedOrderingSuppressesUpdatePartition(t *testing.T) {
+// TestGroupedOrderingLeadsWithUpdates: in the grouped view an outdated tool
+// leaves its tag section for the leading updates section — a tag says what a
+// tool is, an update says what it needs, and the second is the reason the app
+// is open. The section leads regardless of where its tools sit in meta.yaml.
+func TestGroupedOrderingLeadsWithUpdates(t *testing.T) {
 	m := groupTestModel(t)
 	m.versions["jq"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
 
@@ -77,8 +77,11 @@ func TestGroupedOrderingSuppressesUpdatePartition(t *testing.T) {
 	}
 
 	m.groupByTag = true
-	if got, want := displayedNames(m), []string{"rg", "fd", "git", "lazygit", "jq"}; !sameNames(got, want) {
-		t.Errorf("grouped order = %v, want %v (update partition suppressed)", got, want)
+	if got, want := displayedNames(m), []string{"jq", "rg", "fd", "git", "lazygit"}; !sameNames(got, want) {
+		t.Errorf("grouped order = %v, want %v (updates section first)", got, want)
+	}
+	if content := stripANSI(m.renderLeftContent()); !strings.HasPrefix(content, "\n updates ") {
+		t.Errorf("grouped content does not lead with the updates header:\n%s", content)
 	}
 }
 
@@ -98,28 +101,33 @@ func TestGroupingSuppressedWhileSearching(t *testing.T) {
 	if strings.Contains(stripANSI(content), "─ cli") {
 		t.Errorf("search results carry a group divider header:\n%s", stripANSI(content))
 	}
+	// The blank top row shifts every tool by one, and nothing else does: with
+	// no headers the maps are the identity offset by that single row.
 	for i := range toolLine {
-		if toolLine[i] != i || lineTool[i] != i {
-			t.Fatalf("maps are not the identity while searching: toolLine=%v lineTool=%v", toolLine, lineTool)
+		if toolLine[i] != i+1 || lineTool[i+1] != i {
+			t.Fatalf("maps are not the flat list's while searching: toolLine=%v lineTool=%v", toolLine, lineTool)
 		}
 	}
 }
 
-// TestBuildToolRowsMapsFlat: with grouping off there are no header rows, so
-// both maps are the identity — every downstream translation is a no-op and the
-// pre-grouping behaviour is bit-for-bit unchanged.
+// TestBuildToolRowsMapsFlat: with grouping off the only non-tool row is the
+// blank one at the top, so every tool sits exactly one line below its index and
+// the maps stay each other's inverse.
 func TestBuildToolRowsMapsFlat(t *testing.T) {
 	m := groupTestModel(t)
 	_, toolLine, lineTool := m.buildToolRows()
-	if len(toolLine) != 5 || len(lineTool) != 5 {
-		t.Fatalf("map sizes = %d/%d, want 5/5", len(toolLine), len(lineTool))
+	if len(toolLine) != 5 || len(lineTool) != 6 {
+		t.Fatalf("map sizes = %d/%d, want 5/6 (5 tools under one blank row)", len(toolLine), len(lineTool))
+	}
+	if lineTool[0] != -1 {
+		t.Errorf("lineTool[0] = %d, want -1 for the blank top row", lineTool[0])
 	}
 	for i := range toolLine {
-		if toolLine[i] != i {
-			t.Errorf("toolLine[%d] = %d, want %d", i, toolLine[i], i)
+		if toolLine[i] != i+1 {
+			t.Errorf("toolLine[%d] = %d, want %d", i, toolLine[i], i+1)
 		}
-		if lineTool[i] != i {
-			t.Errorf("lineTool[%d] = %d, want %d", i, lineTool[i], i)
+		if lineTool[i+1] != i {
+			t.Errorf("lineTool[%d] = %d, want %d", i+1, lineTool[i+1], i)
 		}
 	}
 }
@@ -133,12 +141,15 @@ func TestBuildToolRowsMapsGrouped(t *testing.T) {
 	content, toolLine, lineTool := m.buildToolRows()
 	lines := strings.Split(strings.TrimRight(stripANSI(content), "\n"), "\n")
 
-	// cli header, rg, fd, scm header, git, lazygit, untagged header, jq
-	wantTool := []int{1, 2, 4, 5, 7}
+	// blank, cli header, rg, fd, blank, scm header, git, lazygit, blank,
+	// untagged header, jq — the list opens with a blank row and every section
+	// but the first is preceded by one; blanks and headers alike are
+	// non-selectable.
+	wantTool := []int{2, 3, 6, 7, 10}
 	if !sameInts(toolLine, wantTool) {
 		t.Fatalf("toolLine = %v, want %v", toolLine, wantTool)
 	}
-	wantLine := []int{-1, 0, 1, -1, 2, 3, -1, 4}
+	wantLine := []int{-1, -1, 0, 1, -1, -1, 2, 3, -1, -1, 4}
 	if !sameInts(lineTool, wantLine) {
 		t.Fatalf("lineTool = %v, want %v", lineTool, wantLine)
 	}
@@ -146,16 +157,22 @@ func TestBuildToolRowsMapsGrouped(t *testing.T) {
 		t.Fatalf("rendered %d lines, lineTool covers %d", len(lines), len(lineTool))
 	}
 
-	// Divider headers: "─ <label> ────…". Match by the framed label rather than
-	// the full line, whose dash count depends on the panel width.
-	wantHeaders := map[int]string{0: "cli", 3: "scm", 6: "untagged"}
+	// Divider headers: "<label> ────…". Match by the label and its rule rather
+	// than the full line, whose dash count depends on the panel width.
+	wantHeaders := map[int]string{1: "cli", 5: "scm", 9: "untagged"}
 	for i, line := range lines {
 		if label, isHeader := wantHeaders[i]; isHeader {
 			if lineTool[i] != -1 {
 				t.Errorf("line %d (%q) maps to tool %d, want -1", i, line, lineTool[i])
 			}
-			if !strings.Contains(line, "─ "+label+" ") {
+			if !strings.HasPrefix(line, " "+label+" ─") {
 				t.Errorf("line %d = %q, want the %q divider header", i, line, label)
+			}
+			continue
+		}
+		if lineTool[i] == -1 {
+			if strings.TrimSpace(line) != "" {
+				t.Errorf("line %d = %q, want the blank row above a section", i, line)
 			}
 			continue
 		}
@@ -331,10 +348,10 @@ func TestGroupingIsCaseInsensitive(t *testing.T) {
 	content := stripANSI(m.renderLeftContent())
 	// The header shows the group's first spelling ("CLI"); the case-folded key
 	// keeps "cli" in the same section, so no second lowercase divider appears.
-	if n := strings.Count(content, "─ CLI "); n != 1 {
+	if n := strings.Count(content, "CLI ─"); n != 1 {
 		t.Errorf("content has %d CLI divider headers, want 1:\n%s", n, content)
 	}
-	if strings.Contains(content, "─ cli ") {
+	if strings.Contains(content, "cli ─") {
 		t.Errorf("content split the group into a second cli section:\n%s", content)
 	}
 }
@@ -372,14 +389,14 @@ func TestSyncToolsViewportUsesScreenLine(t *testing.T) {
 	m.groupByTag = true
 	m.toolsViewport.Height = 4 // 8 rendered lines, only 4 visible
 
-	m.metaSelected = 4 // jq: tool index 4, screen line 7
+	m.metaSelected = 4 // jq: tool index 4, screen line 10
 	m.setToolsContent()
 
-	if got, want := m.selectedLine(), 7; got != want {
+	if got, want := m.selectedLine(), 10; got != want {
 		t.Fatalf("selectedLine = %d, want %d", got, want)
 	}
-	if got, want := m.toolsViewport.YOffset, 4; got != want {
-		t.Errorf("YOffset = %d, want %d (screen line 7 bottom-aligned in 4 rows)", got, want)
+	if got, want := m.toolsViewport.YOffset, 7; got != want {
+		t.Errorf("YOffset = %d, want %d (screen line 10 bottom-aligned in 4 rows)", got, want)
 	}
 }
 
@@ -402,8 +419,9 @@ func TestWindowSizeRebuildsLineMaps(t *testing.T) {
 	}
 }
 
-// pagingModel builds a grouped list taller than its viewport: 12 tools in 4
-// tag groups (16 screen lines) with a 5-row viewport.
+// pagingModel builds a grouped list taller than its viewport: 12 tools in 4 tag
+// groups (19 screen lines — a header per group plus a blank row above all but
+// the first) with a 5-row viewport.
 func pagingModel(t *testing.T) Model {
 	t.Helper()
 	var metas []loader.ToolMeta
@@ -430,18 +448,19 @@ func pagingModel(t *testing.T) Model {
 // count of tools — that skips the rows the headers occupied, which were never
 // displayed.
 func TestGroupedPagingStepsScreenLines(t *testing.T) {
-	// The cursor starts on t00, screen line 1 (line 0 is the #g0 header).
-	// A page moves it a viewport height of *lines*, and syncToolsViewport
-	// scrolls by the same amount, so the user reads consecutive pages: line
-	// 1+5 = 6 is t11. Counting the step in tools instead would land on line
-	// 1+5 tools = t12, skipping a row that was never displayed.
+	// The cursor starts on t00, screen line 1 (line 0 is the g0 header). A page
+	// moves it a viewport height of *lines*, and syncToolsViewport scrolls by
+	// the same amount, so the user reads consecutive pages: lines 1-3 are g0's
+	// tools, 4 is blank, 5 is the g1 header, so line 1+5 = 6 is t10. Counting
+	// the step in tools instead would land on t12, skipping two rows that were
+	// never displayed.
 	tests := []struct {
 		name string
 		key  tea.KeyMsg
 		want string
 	}{
-		{"pgdown", tea.KeyMsg{Type: tea.KeyPgDown}, "t11"},
-		{"ctrl+f", ctrlKey('f'), "t11"},
+		{"pgdown", tea.KeyMsg{Type: tea.KeyPgDown}, "t10"},
+		{"ctrl+f", ctrlKey('f'), "t10"},
 		// Half a page = 2 lines: line 1 → line 3 = t02.
 		{"ctrl+d", ctrlKey('d'), "t02"},
 	}
@@ -501,16 +520,16 @@ func TestMouseClickGroupedList(t *testing.T) {
 	m.groupByTag = true
 	m.setToolsContent()
 
-	// Screen line 4 is git's row (see TestBuildToolRowsMapsGrouped), +2 for the
+	// Screen line 6 is git's row (see TestBuildToolRowsMapsGrouped), +2 for the
 	// top margin and the panel border.
-	updated, _ := m.Update(leftClick(1, 4+2))
+	updated, _ := m.Update(leftClick(1, 6+2))
 	nm := updated.(Model)
 	if sel, _ := nm.selectedMeta(); sel.Name != "git" {
 		t.Errorf("click on git's row selected %q, want git", sel.Name)
 	}
 
-	// Screen line 3 is the scm divider header.
-	updated, _ = nm.Update(leftClick(1, 3+2))
+	// Screen line 5 is the scm divider header.
+	updated, _ = nm.Update(leftClick(1, 5+2))
 	after := updated.(Model)
 	if sel, _ := after.selectedMeta(); sel.Name != "git" {
 		t.Errorf("click on a header moved the selection to %q, want it left on git", sel.Name)
@@ -568,17 +587,18 @@ func TestTagHeaderLineFitsOneLine(t *testing.T) {
 		}
 	}
 
-	// A tag renders as a full-width divider with the label centered (odd
-	// remainder → extra dash on the right): "─ ab ──" at toolsW-1 = 7 cells.
-	if got, want := stripANSI(m.tagHeaderLine("ab")), "─ ab ──"; got != want {
+	// A tag renders as the label followed by a rule running out towards the
+	// panel edge, one blank column in from the frame at both ends: " ab ── " at
+	// toolsW-1 = 7 cells.
+	if got, want := stripANSI(m.tagHeaderLine("ab")), " ab ── "; got != want {
 		t.Errorf("short header = %q, want %q", got, want)
 	}
 }
 
-// TestTagHeaderDividerFormat pins the divider look: "───… <label> ───…" to
-// exactly the panel width with the label centered, the empty-tag label is
-// "untagged" (no hashtag), and a panel too narrow to frame degrades to the bare
-// label without panicking.
+// TestTagHeaderDividerFormat pins the divider look: "<label> ───…" to exactly
+// the panel width with the label leading, the empty-tag label is "untagged" (no
+// hashtag), and a panel too narrow to frame degrades to the bare label without
+// panicking.
 func TestTagHeaderDividerFormat(t *testing.T) {
 	m := groupTestModel(t)
 
@@ -586,9 +606,9 @@ func TestTagHeaderDividerFormat(t *testing.T) {
 		m.toolsW = 20
 		w := m.toolsW - 1
 		got := stripANSI(m.tagHeaderLine("dev"))
-		// Label centered: a rule on each side, the label spaced in the middle.
-		if !strings.HasPrefix(got, "─") || !strings.HasSuffix(got, "─") || !strings.Contains(got, " dev ") {
-			t.Errorf("header = %q, want the \"───… dev ───…\" divider (no hashtag)", got)
+		// Label first, then the rule — both one column in from the frame.
+		if !strings.HasPrefix(got, " dev ─") || !strings.HasSuffix(got, "─ ") {
+			t.Errorf("header = %q, want the \" dev ───… \" divider (no hashtag)", got)
 		}
 		if strings.Contains(got, "#") {
 			t.Errorf("header = %q, want no hashtag", got)
@@ -601,8 +621,8 @@ func TestTagHeaderDividerFormat(t *testing.T) {
 	t.Run("empty tag renders untagged divider", func(t *testing.T) {
 		m.toolsW = 20
 		got := stripANSI(m.tagHeaderLine(""))
-		if !strings.HasPrefix(got, "─") || !strings.HasSuffix(got, "─") || !strings.Contains(got, " untagged ") {
-			t.Errorf("empty-tag header = %q, want the \"───… untagged ───…\" divider", got)
+		if !strings.HasPrefix(got, " untagged ─") || !strings.HasSuffix(got, "─ ") {
+			t.Errorf("empty-tag header = %q, want the \" untagged ───… \" divider", got)
 		}
 		if lw := lipgloss.Width(got); lw != m.toolsW-1 {
 			t.Errorf("untagged header width = %d, want %d", lw, m.toolsW-1)

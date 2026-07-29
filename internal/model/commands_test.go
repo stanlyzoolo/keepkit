@@ -483,8 +483,10 @@ func TestReadmeMsgRepaintsSelected(t *testing.T) {
 	m.width, m.height = 80, 24
 	m.helpMode = helpModeReadme
 
+	// The leading H1 is dropped by the preprocessor (the card prints the tool
+	// name), so the body is what proves the render ran.
 	m = mustModel(m.Update(readmeMsg{toolName: "rg", content: "# ripgrep\n\nfast search"}))
-	if !strings.Contains(stripANSI(m.helpBase), "ripgrep") {
+	if !strings.Contains(stripANSI(m.helpBase), "fast search") {
 		t.Errorf("helpBase = %q, want the rendered README", m.helpBase)
 	}
 

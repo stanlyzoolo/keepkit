@@ -44,7 +44,7 @@ func TestPlaceOverlayCenters(t *testing.T) {
 	}, "\n")
 	fg := "XX"
 
-	out := PlaceOverlay(bg, fg)
+	out := PlaceOverlay(bg, fg, DefaultStyles().OverlayDim)
 	lines := strings.Split(out, "\n")
 	if len(lines) != 3 {
 		t.Fatalf("line count = %d, want 3", len(lines))
@@ -64,7 +64,7 @@ func TestPlaceOverlayCenters(t *testing.T) {
 func TestPlaceOverlayPreservesRowWidth(t *testing.T) {
 	bg := strings.Repeat("-", 20)
 	fg := "MODAL"
-	out := PlaceOverlay(bg, fg)
+	out := PlaceOverlay(bg, fg, DefaultStyles().OverlayDim)
 	if w := lipgloss.Width(out); w != 20 {
 		t.Errorf("overlaid width = %d, want 20", w)
 	}
@@ -78,7 +78,7 @@ func TestPlaceOverlayPreservesRowWidth(t *testing.T) {
 func TestPlaceOverlayWiderThanBackground(t *testing.T) {
 	bg := "ab"
 	fg := strings.Join([]string{"WIDE-OVERLAY", "SECOND-LINE"}, "\n")
-	out := PlaceOverlay(bg, fg)
+	out := PlaceOverlay(bg, fg, DefaultStyles().OverlayDim)
 	if !strings.Contains(out, "WIDE-OVERLAY") {
 		t.Errorf("wide overlay content missing from %q", out)
 	}
@@ -105,13 +105,15 @@ func TestPlaceOverlayDimsBackground(t *testing.T) {
 	bg := strings.Join([]string{bgLine, bgLine, bgLine}, "\n")
 	fg := red.Render("XX") // styled fg must survive byte-for-byte
 
-	out := PlaceOverlay(bg, fg)
+	out := PlaceOverlay(bg, fg, DefaultStyles().OverlayDim)
 	lines := strings.Split(out, "\n")
 	if len(lines) != 3 {
 		t.Fatalf("line count = %d, want 3", len(lines))
 	}
 
-	dimSeq := "38;2;136;136;136" // ColorDim #888888 in truecolor
+	// Derived from the theme rather than spelled as a hex literal, so a palette
+	// change cannot turn this into a test of a color nothing uses any more.
+	dimSeq := termenv.TrueColor.Color(string(Default.Dim)).Sequence(false)
 	redSeq := "38;2;255;0;0"
 
 	// Uncovered rows: dimmed, original color gone.
@@ -149,7 +151,7 @@ func TestPlaceOverlayDimKeepsAlignment(t *testing.T) {
 	bgLine := styled.Render(strings.Repeat("-", 30))
 	bg := strings.Join([]string{bgLine, bgLine, bgLine, bgLine}, "\n")
 
-	out := PlaceOverlay(bg, "MODAL")
+	out := PlaceOverlay(bg, "MODAL", DefaultStyles().OverlayDim)
 	for i, line := range strings.Split(out, "\n") {
 		if w := lipgloss.Width(line); w != 30 {
 			t.Errorf("row %d visible width = %d, want 30", i, w)

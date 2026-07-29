@@ -40,7 +40,10 @@ func wheelDown(x, y int) tea.MouseMsg {
 // toolRowY maps a list index to the screen row handleMouse expects
 // (row 0 = top margin, row 1 = border, row 2 = first list row).
 func toolRowY(m Model, idx int) int {
-	return 2 + idx - m.toolsViewport.YOffset
+	// +1 for the blank row the list opens with: a tool's screen line is its
+	// index one row down (buildToolRows' line map says so, and this mirrors it
+	// for the flat lists these tests build).
+	return 2 + 1 + idx - m.toolsViewport.YOffset
 }
 
 // forceColor pins the color profile for one test: renderLeftContent's
@@ -304,11 +307,12 @@ func TestMouseClickHonorsYOffset(t *testing.T) {
 	m := newMouseTestModel(t, 80, 10, names...)
 	m.toolsViewport.YOffset = 5
 
-	// Screen row 2 is the first visible list row = index YOffset.
+	// Screen row 2 is the first visible list row = screen line YOffset, which
+	// with the blank row the list opens with is the tool one index below it.
 	updated, _ := m.Update(leftClick(1, 2))
 	nm := updated.(Model)
-	if nm.metaSelected != 5 {
-		t.Errorf("metaSelected = %d, want 5 (YOffset honored)", nm.metaSelected)
+	if nm.metaSelected != 4 {
+		t.Errorf("metaSelected = %d, want 4 (YOffset honored)", nm.metaSelected)
 	}
 }
 

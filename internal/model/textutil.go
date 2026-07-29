@@ -51,46 +51,154 @@ func languagePercents(langs map[string]int) []languagePercent {
 	return out
 }
 
-// renderLangBar renders a horizontal language bar with percentages, wrapping by
-// words at width. firstLineUsed is the column budget already consumed on the
-// first line (e.g. by an inline "languages: " label) so wrapping lines up.
-func renderLangBar(langs map[string]int, width, firstLineUsed int) string {
+// langDot is the marker in front of a language name, painted in that language's
+// own GitHub color — the one thing on the card a reader can identify without
+// reading it. It is East-Asian Ambiguous (two cells under RUNEWIDTH_EASTASIAN=1),
+// the accepted class the list's ⏺/↑ markers already belong to; the band below
+// uses a width-stable glyph precisely because *its* arithmetic has to be exact.
+const langDot = "●" // U+25CF black circle
+
+// langBandGlyph draws the proportional language band. ▬ (U+25AC) rather than a
+// full block: █ is East-Asian Ambiguous and would measure two cells under
+// RUNEWIDTH_EASTASIAN=1, which is the same reason the API gauge does not use it.
+const langBandGlyph = "▬" // U+25AC black rectangle
+
+// langLabel heads the block. The full word, not the old "lang" — the line is a
+// list of names now rather than a labelled value, and the label reads as its
+// title.
+const langLabel = "languages"
+
+// formatShare spells a language's percentage the way GitHub does: one decimal,
+// with a whole number left whole. Rounding to integers printed "makefile 0%" for
+// a language that has a visible segment in the band right below it — a share the
+// card both draws and denies. Anything under a tenth of a percent is stated as
+// the bound rather than rounded, for the same reason.
+func formatShare(pct float64) string {
+	switch {
+	case pct < 0.1:
+		return "<0.1%"
+	case pct == float64(int(pct)):
+		return fmt.Sprintf("%d%%", int(pct))
+	}
+	return strings.TrimSuffix(fmt.Sprintf("%.1f", pct), ".0") + "%"
+}
+
+// languageStyle is a language's own color, or the dim role when linguist has no
+// entry for it — an unknown language reads as unrecognized rather than as
+// whichever known one happened to be nearby.
+func languageStyle(s *ui.Styles, name string) lipgloss.Style {
+	if c, ok := ui.LanguageColor(name); ok {
+		return lipgloss.NewStyle().Foreground(c)
+	}
+	return s.Dim
+}
+
+// renderLangList renders "languages · ● go 99% · ● shell 1%" wrapped by whole
+// entries at width. The label is separated from the first language by the same
+// middot that separates two languages: it is the head of the same list, not a
+// caption over it.
+//
+// A language and its share read at one brightness — they are one fact — and only
+// the dot carries color, so a five-language repo does not turn the row into a
+// rainbow of text.
+func renderLangList(s *ui.Styles, langs map[string]int, width int) []string {
 	percents := languagePercents(langs)
 	if len(percents) == 0 {
+		return nil
+	}
+	const sepPlain = " · "
+	sep := s.Dim.Render(sepPlain)
+
+	lines := []string{}
+	cur := s.Dim.Render(langLabel)
+	curW := utf8.RuneCountInString(langLabel)
+	for _, lp := range percents {
+		text := strings.ToLower(lp.Name) + " " + formatShare(lp.Pct)
+		// The dot is measured as one cell like every other glyph here; under
+		// RUNEWIDTH_EASTASIAN=1 the row is one cell wider per language than the
+		// budget thinks, which can only wrap a row early, never overflow it.
+		entryW := 2 + utf8.RuneCountInString(text)
+
+		if curW+len(sepPlain)+entryW > width && curW > 0 {
+			lines = append(lines, cur)
+			cur, curW = "", 0
+		}
+		if curW > 0 {
+			cur += sep
+			curW += len(sepPlain)
+		}
+		cur += languageStyle(s, lp.Name).Render(langDot) + " " + s.Text.Render(text)
+		curW += entryW
+	}
+	if curW > 0 {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// renderLangBand renders the stack as one solid row of exactly width cells, each
+// language holding a share of it in its own color — the card's only picture, and
+// the thing the percentages above it are the caption for.
+//
+// The shares are normalized over the languages actually listed, not over the
+// repo's total: languagePercents keeps the top five, so a band summed over the
+// total would leave a gap standing for languages the card never named. Cells are
+// handed out one per language first and the remainder by largest fractional
+// part, so nothing listed above is missing from the band and the row is exactly
+// width cells rather than width±rounding.
+func renderLangBand(s *ui.Styles, langs map[string]int, width int) string {
+	percents := languagePercents(langs)
+	if len(percents) == 0 || width <= 0 {
 		return ""
 	}
-	// Language names lowercase in the normal note color; percentages dimmed.
-	pctStyle := lipgloss.NewStyle().Foreground(ui.ColorDim)
+	// Too narrow to give every language a cell: drop the smallest ones rather
+	// than paint a band that silently rounds one away. They are already sorted
+	// by share, so the head is what survives.
+	if len(percents) > width {
+		percents = percents[:width]
+	}
 
-	var lines []string
-	var cur strings.Builder
-	curW := firstLineUsed
+	total := 0.0
 	for _, lp := range percents {
-		name := strings.ToLower(lp.Name)
-		pct := fmt.Sprintf("%.0f%%", lp.Pct)
-		tokenW := utf8.RuneCountInString(name) + 1 + utf8.RuneCountInString(pct)
+		total += lp.Pct
+	}
+	if total <= 0 {
+		return ""
+	}
 
-		sep := 0
-		if cur.Len() > 0 {
-			sep = 2
-		}
-		// Wrap to a new line only when the token would overflow the width.
-		if curW+sep+tokenW > width && cur.Len() > 0 {
-			lines = append(lines, cur.String())
-			cur.Reset()
-			curW = 0
-			sep = 0
-		}
-		if sep > 0 {
-			cur.WriteString("  ")
-		}
-		cur.WriteString(ui.InfoStyle.Render(name) + " " + pctStyle.Render(pct))
-		curW += sep + tokenW
+	type share struct {
+		idx   int
+		cells int
+		frac  float64
 	}
-	if cur.Len() > 0 {
-		lines = append(lines, cur.String())
+	shares := make([]share, len(percents))
+	used := 0
+	rest := width - len(percents) // the pool above the one cell everyone gets
+	for i, lp := range percents {
+		exact := lp.Pct / total * float64(rest)
+		cells := 1 + int(exact)
+		shares[i] = share{i, cells, exact - float64(int(exact))}
+		used += cells
 	}
-	return strings.Join(lines, "\n")
+	order := make([]int, len(shares))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return shares[order[a]].frac > shares[order[b]].frac })
+	for i := 0; used < width; i++ {
+		shares[order[i%len(order)]].cells++
+		used++
+	}
+
+	var sb strings.Builder
+	for _, sh := range shares {
+		if sh.cells <= 0 {
+			continue
+		}
+		sb.WriteString(languageStyle(s, percents[sh.idx].Name).
+			Render(strings.Repeat(langBandGlyph, sh.cells)))
+	}
+	return sb.String()
 }
 
 func wrapText(s string, width int) string {
@@ -209,14 +317,16 @@ func mdInline(s string) string {
 }
 
 // mdLineKind tags a converted line for the styling the consumer applies to it.
-// Two kinds only: the card's changelog block paints headings one step brighter
-// and everything else muted, so a third tag (code, list, quote) would have no
-// reader — what makes those blocks special lives inside the converter.
+// Three kinds, and each one exists because the card renders it differently:
+// headings one step brighter, fenced code on the card's own plate, everything
+// else muted. A fourth tag (list, quote) still has no reader — what makes those
+// blocks special lives inside the converter, in their indent and markers.
 type mdLineKind int
 
 const (
-	mdBody    mdLineKind = iota // paragraphs, list items, code, quotes
+	mdBody    mdLineKind = iota // paragraphs, list items, quotes
 	mdHeading                   // a #-heading line
+	mdCode                      // a line inside a fenced block, verbatim
 )
 
 // mdLine is one finished, already-wrapped output line. Wrapping happens inside
@@ -299,13 +409,15 @@ func markdownToLines(s string, width int) []mdLine {
 			}
 			switch {
 			case line != "":
-				emit(mdCodeIndent+line, mdBody)
+				emit(mdCodeIndent+line, mdCode)
 			case len(out) > 0:
 				// A blank line inside the block is verbatim too, so a sample
 				// keeps its own spacing instead of going through the collapse
 				// — but not as the very first output line, which would be a
-				// leading blank row no one trims.
-				emit("", mdBody)
+				// leading blank row no one trims. It carries mdCode so the
+				// plate the card paints behind the block is not punched
+				// through by the empty rows inside it.
+				emit("", mdCode)
 			}
 			continue
 		}
@@ -510,13 +622,13 @@ func stylePrefix(s lipgloss.Style) string {
 	return ""
 }
 
-func colorizeHelp(s string) string {
-	base := stylePrefix(ui.InfoStyle)
+func colorizeHelp(s *ui.Styles, text string) string {
+	base := stylePrefix(s.Text)
 	const reset = "\x1b[0m"
-	lines := strings.Split(s, "\n")
+	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if isHelpSectionHeader(line) {
-			lines[i] = ui.HelpSectionStyle.Render(line)
+			lines[i] = s.EmphasisBold.Render(line)
 			continue
 		}
 		if line == "" {
@@ -533,11 +645,11 @@ func colorizeHelp(s string) string {
 			switch {
 			case m[4] >= 0: // flag: group 1 = boundary, group 2 = flag text
 				b.WriteString(line[m[2]:m[3]])
-				b.WriteString(ui.HelpFlagStyle.Render(line[m[4]:m[5]]))
+				b.WriteString(s.Accent.Render(line[m[4]:m[5]]))
 			case m[6] >= 0: // <angle> meta
-				b.WriteString(ui.HelpMetaStyle.Render(line[m[6]:m[7]]))
+				b.WriteString(s.Dim.Render(line[m[6]:m[7]]))
 			case m[8] >= 0: // [bracket] meta
-				b.WriteString(ui.HelpMetaStyle.Render(line[m[8]:m[9]]))
+				b.WriteString(s.Dim.Render(line[m[8]:m[9]]))
 			}
 			b.WriteString(base)
 			last = m[1]
@@ -686,7 +798,7 @@ func findMatches(text, query string) []int {
 	return matches
 }
 
-func highlightMatch(line, query string) string {
+func highlightMatch(s *ui.Styles, line, query string) string {
 	if query == "" {
 		return line
 	}
@@ -697,7 +809,7 @@ func highlightMatch(line, query string) string {
 		return line
 	}
 	end := idx + len(qr)
-	return string(lr[:idx]) + ui.SearchMatchStyle.Render(string(lr[idx:end])) + string(lr[end:])
+	return string(lr[:idx]) + s.AccentBold.Render(string(lr[idx:end])) + string(lr[end:])
 }
 
 // runeIndexFold returns the rune index of the first occurrence of query

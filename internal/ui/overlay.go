@@ -8,22 +8,13 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-// OverlayBorder frames a centered modal (e.g. the API-status overlay) so it
-// stands out from the panels behind it.
-var OverlayBorder = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(ColorPrimary).
-	Padding(0, 1)
-
-// OverlayDimStyle repaints the background behind a modal so the overlay is
-// the only full-color element on screen.
-var OverlayDimStyle = lipgloss.NewStyle().Foreground(ColorDim)
-
 // PlaceOverlay renders fg centered over bg, replacing the background cells it
 // covers so the modal reads as floating on top. The visible background is
-// dimmed: original styling is stripped and repainted with OverlayDimStyle.
-// fg is passed through untouched.
-func PlaceOverlay(bg, fg string) string {
+// dimmed: original styling is stripped and repainted with dim (the caller's
+// Styles.OverlayDim — passed in rather than read from a package var, so the
+// compositor follows a theme switch like everything else). fg is passed through
+// untouched.
+func PlaceOverlay(bg, fg string, dim lipgloss.Style) string {
 	bgLines := strings.Split(bg, "\n")
 	fgLines := strings.Split(fg, "\n")
 
@@ -37,21 +28,21 @@ func PlaceOverlay(bg, fg string) string {
 	for i, line := range bgLines {
 		// Covered rows are handled below via overlayLine, which strips the bg
 		// styling itself; dimming them here first would be undone by that strip.
-		out[i] = dimBG(line)
+		out[i] = dimBG(line, dim)
 	}
 	for i, fgLine := range fgLines {
 		row := y + i
 		if row >= len(out) {
 			break
 		}
-		out[row] = overlayLine(bgLines[row], fgLine, x)
+		out[row] = overlayLine(bgLines[row], fgLine, x, dim)
 	}
 	return strings.Join(out, "\n")
 }
 
 // overlayLine splices fg into bg starting at visual column x, dimming the
 // visible bg margins to the left and right of the overlaid span.
-func overlayLine(bg, fg string, x int) string {
+func overlayLine(bg, fg string, x int, dim lipgloss.Style) string {
 	fgW := lipgloss.Width(fg)
 	left := truncateVisible(bg, x)
 	leftW := lipgloss.Width(left)
@@ -59,15 +50,15 @@ func overlayLine(bg, fg string, x int) string {
 		left += strings.Repeat(" ", x-leftW)
 	}
 	right := dropVisible(bg, x+fgW)
-	return dimBG(left) + fg + dimBG(right)
+	return dimBG(left, dim) + fg + dimBG(right, dim)
 }
 
-// dimBG strips s of its own styling and repaints it with OverlayDimStyle.
-func dimBG(s string) string {
+// dimBG strips s of its own styling and repaints it with the overlay's dim.
+func dimBG(s string, dim lipgloss.Style) string {
 	if s == "" {
 		return ""
 	}
-	return OverlayDimStyle.Render(StripANSI(s))
+	return dim.Render(StripANSI(s))
 }
 
 // truncateVisible returns the prefix of s spanning the first w visible columns,

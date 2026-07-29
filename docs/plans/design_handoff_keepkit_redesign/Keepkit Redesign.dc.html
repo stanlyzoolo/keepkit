@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet" />
+<style>
+body { margin: 0; background: #14161B; }
+a { color: #5F93B8; text-decoration: none; }
+a:hover { color: #7FB0D4; text-decoration: underline; }
+</style>
+</helmet>
+
+<div style="font-family: 'JetBrains Mono', ui-monospace, monospace; background: #14161B; color: #E8E8E8; padding: 40px; display: flex; flex-direction: column; gap: 36px; width: 1560px; box-sizing: border-box;">
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div style="font-size: 13px; letter-spacing: 0.14em; color: #767C88; text-transform: uppercase;">Оверлей горячих клавиш — [?] из любого места; группы названы по панелям, close-hint в титуле (влезает в 80×24)</div>
+    <div style="position: relative; background: #2E323B; border-radius: 8px; padding: 30px 18px 18px; font-size: 13.5px; line-height: 1.62; overflow: hidden;">
+      <div style="display: grid; grid-template-columns: 300px 1fr 440px; gap: 14px; height: 540px; opacity: 0.35;">
+        <div style="position: relative; border: 1px solid #DA7756; border-radius: 6px; padding: 14px 12px 10px; display: flex; flex-direction: column; gap: 1px;">
+          <div style="position: absolute; top: -0.7em; left: 14px; background: #2E323B; padding: 0 8px; font-weight: 700; color: #DA7756; white-space: nowrap;">▸ [1] tools <span style="color: #767C88; font-weight: 400;">27</span> <span style="color: #E5A040;">3↑</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; color: #767C88; margin: 4px 0 3px;"><span>updates</span><span style="flex: 1; border-top: 1px solid #454B57;"></span></div>
+          <div style="display: flex; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">agterm</span><span style="color: #E5A040;">0.4.1 ↑</span></div>
+          <div style="display: flex; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">ralphex</span><span style="color: #E5A040;">2.0.0 ↑</span></div>
+          <div style="display: flex; gap: 8px; background: #363C47; margin: 0 -12px; padding: 0 12px;"><span style="width: 10px; color: #DA7756;">⏺</span><span style="flex: 1; color: #DA7756; font-weight: 700;">lazyskills</span><span style="color: #E5A040;">1.0.2 ↑</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; color: #767C88; margin: 10px 0 3px;"><span>cli</span><span style="flex: 1; border-top: 1px solid #454B57;"></span></div>
+          <div style="display: flex; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">bat</span><span style="color: #767C88;">0.24.0</span></div>
+          <div style="display: flex; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">fzf</span><span style="color: #767C88;">0.56.3</span></div>
+          <div style="display: flex; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">gh</span><span style="color: #767C88;">2.63.2</span></div>
+          <div style="display: flex; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">glow</span><span style="color: #767C88;">1.5.1</span></div>
+        </div>
+        <div style="position: relative; border: 1px solid #454B57; border-radius: 6px; padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 14px;">
+          <div style="position: absolute; top: -0.7em; left: 14px; background: #2E323B; padding: 0 8px; color: #767C88; white-space: nowrap;">[2] brief</div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="font-size: 19px; font-weight: 700; color: #F2F3F5;">lazyskills <span style="font-size: 13.5px; font-weight: 400; color: #767C88;">alvinunreal/lazyskills</span></div>
+            <div style="color: #A8ADB8;">mission control for agent skills</div>
+          </div>
+          <div style="display: flex; gap: 20px; padding: 12px 14px; background: #343945; border-radius: 4px; color: #A8ADB8; white-space: nowrap;">
+            <span><span style="color: #767C88;">installed</span> <span style="color: #F2F3F5;">v0.3.2</span></span>
+            <span><span style="color: #767C88;">latest</span> <span style="color: #E5A040; font-weight: 700;">v1.0.2 ↑</span></span>
+            <span><span style="color: #767C88;">maintenance</span> <span style="color: #6AAF6A;">● active</span></span>
+            <span><span style="color: #767C88;">stars</span> <span style="color: #F2F3F5;">219</span></span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 5px; color: #A8ADB8;">
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #6AAF6A; text-align: right;">feat</span><span style="flex: 1;">discover skills nested below the one-level scan horizon</span><span style="color: #767C88;">8295a99</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #6AAF6A; text-align: right;">feat</span><span style="flex: 1;">suppress bundle dirs from skill inventory</span><span style="color: #767C88;">676e09d</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; text-align: right;">fix</span><span style="flex: 1;">handle nested skill symlinks</span><span style="color: #767C88;">084c449</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; text-align: right;">fix</span><span style="flex: 1;">skip project locations inside global roots</span><span style="color: #767C88;">ede313d</span></div>
+          </div>
+        </div>
+        <div style="position: relative; border: 1px solid #454B57; border-radius: 6px; padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="position: absolute; top: -0.7em; left: 14px; background: #2E323B; padding: 0 8px; color: #767C88; white-space: nowrap;">[3] readme</div>
+          <div style="color: #A8ADB8; line-height: 1.66;">LazySkills is a terminal UI for managing agent skills. It gives you one place to see what is installed, which agents can use each skill, and what actions are safe to run next.</div>
+          <div style="display: flex; align-items: center; gap: 10px;"><span style="color: #F2F3F5; font-weight: 700;">Features</span><span style="flex: 1; border-top: 1px solid #2E323B;"></span></div>
+          <div style="color: #A8ADB8;"><span style="color: #F2F3F5;">See every skill in one place</span> — project, global, universal and agent-specific skills in a single TUI.</div>
+          <div style="color: #A8ADB8;"><span style="color: #F2F3F5;">Check agent visibility</span> — switch agents and see which skills are actually usable.</div>
+        </div>
+      </div>
+      <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
+        <div style="width: 960px; background: #2E323B; border: 1px solid #DA7756; border-radius: 6px; padding: 14px 18px 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: baseline; gap: 10px;">
+            <span style="color: #F2F3F5; font-weight: 700;">keys</span>
+            <span style="color: #767C88;">keepkit 0.8.1</span>
+            <span style="flex: 1;"></span>
+            <span style="color: #767C88; white-space: nowrap;"><span style="color: #DA7756;">esc</span> close</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 44px;">
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+              <div style="color: #A8ADB8; font-weight: 700; margin-bottom: 2px;">global</div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">tab</span><span style="color: #A8ADB8;">next panel</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">1 2 3</span><span style="color: #A8ADB8;">jump to panel</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">/</span><span style="color: #A8ADB8;">search tools</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">t</span><span style="color: #A8ADB8;">track a repo</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">u</span><span style="color: #A8ADB8;">untrack selected</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">R</span><span style="color: #A8ADB8;">rename selected</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">U</span><span style="color: #A8ADB8;">update all <span style="color: #E5A040; white-space: nowrap;">3 ↑</span></span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">T</span><span style="color: #A8ADB8;">themes</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">q</span><span style="color: #A8ADB8;">quit</span></div>
+              <div style="color: #A8ADB8; font-weight: 700; margin: 8px 0 2px;">[1] tools</div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">j/k</span><span style="color: #A8ADB8;">move selection</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">g/G</span><span style="color: #A8ADB8;">first / last tool</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">enter</span><span style="color: #A8ADB8;">run selected tool</span></div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+              <div style="color: #A8ADB8; font-weight: 700; margin-bottom: 2px;">[2] brief</div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">enter</span><span style="color: #A8ADB8;">update to latest</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">e</span><span style="color: #A8ADB8;">edit note</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">#</span><span style="color: #A8ADB8;">edit tags</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">r</span><span style="color: #A8ADB8;">refresh from GitHub</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">o</span><span style="color: #A8ADB8;">open repo in browser</span></div>
+              <div style="color: #A8ADB8; font-weight: 700; margin: 8px 0 2px;">[3] readme</div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">r/h/m</span><span style="color: #A8ADB8;">readme / help / man</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">j/k</span><span style="color: #A8ADB8;">scroll line</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">d/u</span><span style="color: #A8ADB8;">scroll half-page</span></div>
+              <div style="color: #A8ADB8; font-weight: 700; margin: 8px 0 2px;">status</div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">L</span><span style="color: #A8ADB8;">api usage details</span></div>
+              <div style="display: flex;"><span style="width: 86px; color: #DA7756;">?</span><span style="color: #A8ADB8;">this overlay</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div style="font-size: 13px; letter-spacing: 0.14em; color: #767C88; text-transform: uppercase;">Оверлей выбора темы — курсор на gruvbox, space уже перекрасил фон и сам оверлей (live-превью), enter применит</div>
+    <div style="position: relative; background: #282828; border-radius: 8px; padding: 30px 18px 18px; font-size: 13.5px; line-height: 1.62; overflow: hidden;">
+      <div style="display: grid; grid-template-columns: 300px 1fr 440px; gap: 14px; height: 540px; opacity: 0.4;">
+        <div style="position: relative; border: 1px solid #FE8019; border-radius: 6px; padding: 14px 12px 10px; display: flex; flex-direction: column; gap: 1px;">
+          <div style="position: absolute; top: -0.7em; left: 14px; background: #282828; padding: 0 8px; font-weight: 700; color: #FE8019; white-space: nowrap;">▸ [1] tools <span style="color: #928374; font-weight: 400;">27</span> <span style="color: #FABD2F;">3↑</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; color: #928374; margin: 4px 0 3px;"><span>updates</span><span style="flex: 1; border-top: 1px solid #504945;"></span></div>
+          <div style="display: flex; gap: 8px; color: #A89984;"><span style="width: 10px;"> </span><span style="flex: 1;">agterm</span><span style="color: #FABD2F;">0.4.1 ↑</span></div>
+          <div style="display: flex; gap: 8px; color: #A89984;"><span style="width: 10px;"> </span><span style="flex: 1;">ralphex</span><span style="color: #FABD2F;">2.0.0 ↑</span></div>
+          <div style="display: flex; gap: 8px; background: #3C3836; margin: 0 -12px; padding: 0 12px;"><span style="width: 10px; color: #FE8019;">⏺</span><span style="flex: 1; color: #FE8019; font-weight: 700;">lazyskills</span><span style="color: #FABD2F;">1.0.2 ↑</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; color: #928374; margin: 10px 0 3px;"><span>cli</span><span style="flex: 1; border-top: 1px solid #504945;"></span></div>
+          <div style="display: flex; gap: 8px; color: #A89984;"><span style="width: 10px;"> </span><span style="flex: 1;">bat</span><span style="color: #928374;">0.24.0</span></div>
+          <div style="display: flex; gap: 8px; color: #A89984;"><span style="width: 10px;"> </span><span style="flex: 1;">fzf</span><span style="color: #928374;">0.56.3</span></div>
+          <div style="display: flex; gap: 8px; color: #A89984;"><span style="width: 10px;"> </span><span style="flex: 1;">gh</span><span style="color: #928374;">2.63.2</span></div>
+          <div style="display: flex; gap: 8px; color: #A89984;"><span style="width: 10px;"> </span><span style="flex: 1;">glow</span><span style="color: #928374;">1.5.1</span></div>
+        </div>
+        <div style="position: relative; border: 1px solid #504945; border-radius: 6px; padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 14px;">
+          <div style="position: absolute; top: -0.7em; left: 14px; background: #282828; padding: 0 8px; color: #928374; white-space: nowrap;">[2] brief</div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="font-size: 19px; font-weight: 700; color: #EBDBB2;">lazyskills <span style="font-size: 13.5px; font-weight: 400; color: #928374;">alvinunreal/lazyskills</span></div>
+            <div style="color: #A89984;">mission control for agent skills</div>
+          </div>
+          <div style="display: flex; gap: 20px; padding: 12px 14px; background: #3C3836; border-radius: 4px; color: #A89984;">
+            <span><span style="color: #928374;">installed</span> <span style="color: #EBDBB2;">v0.3.2</span></span>
+            <span><span style="color: #928374;">latest</span> <span style="color: #FABD2F; font-weight: 700;">v1.0.2 ↑</span></span>
+            <span><span style="color: #928374;">maintenance</span> <span style="color: #B8BB26;">● active</span></span>
+            <span><span style="color: #928374;">stars</span> <span style="color: #EBDBB2;">219</span></span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 5px; color: #A89984;">
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #B8BB26; text-align: right;">feat</span><span style="flex: 1;">discover skills nested below the one-level scan horizon</span><span style="color: #928374;">8295a99</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #B8BB26; text-align: right;">feat</span><span style="flex: 1;">suppress bundle dirs from skill inventory</span><span style="color: #928374;">676e09d</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; text-align: right;">fix</span><span style="flex: 1;">handle nested skill symlinks</span><span style="color: #928374;">084c449</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; text-align: right;">fix</span><span style="flex: 1;">skip project locations inside global roots</span><span style="color: #928374;">ede313d</span></div>
+          </div>
+        </div>
+        <div style="position: relative; border: 1px solid #504945; border-radius: 6px; padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="position: absolute; top: -0.7em; left: 14px; background: #282828; padding: 0 8px; color: #928374; white-space: nowrap;">[3] readme</div>
+          <div style="color: #A89984; line-height: 1.66;">LazySkills is a terminal UI for managing agent skills. It gives you one place to see what is installed, which agents can use each skill, and what actions are safe to run next.</div>
+          <div style="display: flex; align-items: center; gap: 10px;"><span style="color: #EBDBB2; font-weight: 700;">Features</span><span style="flex: 1; border-top: 1px solid #3C3836;"></span></div>
+          <div style="color: #A89984;"><span style="color: #EBDBB2;">See every skill in one place</span> — project, global, universal and agent-specific skills in a single TUI.</div>
+          <div style="color: #A89984;"><span style="color: #EBDBB2;">Check agent visibility</span> — switch agents and see which skills are actually usable.</div>
+        </div>
+      </div>
+      <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
+        <div style="width: 620px; background: #282828; border: 1px solid #FE8019; border-radius: 6px; padding: 14px 16px 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; align-items: baseline; gap: 10px;">
+            <span style="color: #EBDBB2; font-weight: 700;">themes</span>
+            <span style="color: #928374;">~/.config/keepkit/theme</span>
+            <span style="flex: 1;"></span>
+            <span style="color: #928374;"><span style="color: #FE8019;">esc</span> cancel</span>
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <div style="display: flex; align-items: center; gap: 10px; padding: 3px 10px;">
+              <span style="width: 12px;"> </span>
+              <span style="flex: 1; color: #A89984;">keepkit</span>
+              <span style="color: #928374; font-style: italic;">active</span>
+              <span style="display: flex; gap: 5px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #DA7756;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #E5A040;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #6AAF6A;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #D06060;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #A8ADB8;"></span></span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 3px 10px; background: #3C3836; border-radius: 3px;">
+              <span style="width: 12px; color: #FE8019;">⏺</span>
+              <span style="flex: 1; color: #FE8019; font-weight: 700;">gruvbox</span>
+              <span style="color: #928374; font-style: italic;">previewing</span>
+              <span style="display: flex; gap: 5px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #FE8019;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #FABD2F;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #B8BB26;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #FB4934;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #A89984;"></span></span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 3px 10px;">
+              <span style="width: 12px;"> </span>
+              <span style="flex: 1; color: #A89984;">catppuccin mocha</span>
+              <span style="display: flex; gap: 5px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #FAB387;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #F9E2AF;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #A6E3A1;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #F38BA8;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #BAC2DE;"></span></span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 3px 10px;">
+              <span style="width: 12px;"> </span>
+              <span style="flex: 1; color: #A89984;">nord</span>
+              <span style="display: flex; gap: 5px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #D08770;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #EBCB8B;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #A3BE8C;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #BF616A;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #D8DEE9;"></span></span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 3px 10px;">
+              <span style="width: 12px;"> </span>
+              <span style="flex: 1; color: #A89984;">monochrome</span>
+              <span style="display: flex; gap: 5px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #E8E8E8;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #B8B8B8;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #888888;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #555555;"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #454B57;"></span></span>
+            </div>
+          </div>
+          <div style="display: flex; gap: 18px; padding-top: 8px; border-top: 1px solid #3C3836; color: #A89984; font-size: 12.5px; white-space: nowrap;">
+            <span><span style="color: #FE8019;">j/k</span> move</span>
+            <span><span style="color: #FE8019;">space</span> preview</span>
+            <span><span style="color: #FE8019;">enter</span> apply</span>
+            <span style="margin-left: auto; color: #928374; font-style: italic;">preview reverts on esc</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div style="font-size: 13px; letter-spacing: 0.14em; color: #767C88; text-transform: uppercase;">Предлагаемая палитра — 2 акцента, 4 ступени нейтрали, 3 сигнала</div>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+      <div style="display: flex; flex-direction: column; gap: 6px; width: 168px;">
+        <div style="height: 44px; background: #DA7756; border-radius: 2px;"></div>
+        <div style="font-size: 12px; color: #E8E8E8;">#DA7756 accent</div>
+        <div style="font-size: 11px; color: #767C88;">фокус · выбор · клавиши</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; width: 168px;">
+        <div style="height: 44px; background: #E5A040; border-radius: 2px;"></div>
+        <div style="font-size: 12px; color: #E8E8E8;">#E5A040 signal</div>
+        <div style="font-size: 11px; color: #767C88;">требует действия</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; width: 168px;">
+        <div style="height: 44px; background: #6AAF6A; border-radius: 2px;"></div>
+        <div style="font-size: 12px; color: #E8E8E8;">#6AAF6A ok</div>
+        <div style="font-size: 11px; color: #767C88;">здоровое состояние</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; width: 168px;">
+        <div style="height: 44px; background: #D06060; border-radius: 2px;"></div>
+        <div style="font-size: 12px; color: #E8E8E8;">#D06060 danger</div>
+        <div style="font-size: 11px; color: #767C88;">сломано · лимит</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; width: 168px;">
+        <div style="height: 44px; background: #5F93B8; border-radius: 2px;"></div>
+        <div style="font-size: 12px; color: #E8E8E8;">#5F93B8 link</div>
+        <div style="font-size: 11px; color: #767C88;">только URL</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; width: 350px;">
+        <div style="height: 44px; display: flex; border-radius: 2px; overflow: hidden;">
+          <div style="flex: 1; background: #F2F3F5;"></div>
+          <div style="flex: 1; background: #A8ADB8;"></div>
+          <div style="flex: 1; background: #767C88;"></div>
+          <div style="flex: 1; background: #454B57;"></div>
+          <div style="flex: 1; background: #2E323B;"></div>
+        </div>
+        <div style="font-size: 12px; color: #E8E8E8;">F2F3F5 · A8ADB8 · 767C88 · 454B57 · 2E323B</div>
+        <div style="font-size: 11px; color: #767C88;">emphasis · text · dim · border · surface</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; width: 350px; padding-left: 18px; border-left: 1px solid #2E323B;">
+        <div style="height: 44px; display: flex; border-radius: 2px; overflow: hidden; opacity: 0.5;">
+          <div style="flex: 1; background: #E8A87C;"></div>
+          <div style="flex: 1; background: #C8A97E;"></div>
+          <div style="flex: 1; background: #5588AA;"></div>
+        </div>
+        <div style="font-size: 12px; color: #A8ADB8;">удалить: E8A87C · C8A97E · 5588AA</div>
+        <div style="font-size: 11px; color: #767C88;">category / key / meta → веса и dim</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px; background: #2E323B; border-radius: 8px; padding: 30px 18px 18px; font-size: 13.5px; line-height: 1.62;">
+
+    <div style="display: grid; grid-template-columns: 300px 1fr 460px; gap: 14px; align-items: stretch; height: 880px;">
+
+      <div style="position: relative; border: 1px solid #DA7756; border-radius: 6px; padding: 14px 12px 10px; display: flex; flex-direction: column; gap: 1px;">
+        <div style="position: absolute; top: -0.7em; left: 14px; background: #2E323B; padding: 0 8px; white-space: nowrap; font-weight: 700; color: #DA7756;">▸ [1] tools <span style="color: #767C88; font-weight: 400;">27</span> <span style="color: #E5A040;">3↑</span></div>
+
+        <div style="display: flex; align-items: center; gap: 8px; color: #767C88; margin: 4px 0 3px;">
+          <span style="letter-spacing: 0.06em;">updates</span>
+          <span style="flex: 1; border-top: 1px solid #454B57;"></span>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">agterm</span><span style="color: #E5A040;">0.4.1 ↑</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">ralphex</span><span style="color: #E5A040;">2.0.0 ↑</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; background: #363C47; margin: 0 -12px; padding: 0 12px;"><span style="width: 10px; color: #DA7756;">⏺</span><span style="flex: 1; color: #DA7756; font-weight: 700;">lazyskills</span><span style="color: #E5A040;">1.0.2 ↑</span></div>
+
+        <div style="display: flex; align-items: center; gap: 8px; color: #767C88; margin: 10px 0 3px;">
+          <span style="letter-spacing: 0.06em;">cli</span>
+          <span style="flex: 1; border-top: 1px solid #454B57;"></span>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">bat</span><span style="color: #767C88;">0.24.0</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">fzf</span><span style="color: #767C88;">0.56.3</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">gh</span><span style="color: #767C88;">2.63.2</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">glow</span><span style="color: #767C88;">1.5.1</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">jq</span><span style="color: #767C88;">1.7.1</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">lnav</span><span style="color: #767C88;">0.12.3</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">revdiff</span><span style="color: #767C88;">0.9.4</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">ttl</span><span style="color: #767C88;">1.2.0</span></div>
+
+        <div style="display: flex; align-items: center; gap: 8px; color: #767C88; margin: 10px 0 3px;">
+          <span style="letter-spacing: 0.06em;">tui</span>
+          <span style="flex: 1; border-top: 1px solid #454B57;"></span>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">dive</span><span style="color: #767C88;">0.12.0</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">hacker-news-tui</span><span style="color: #767C88;">0.3.0</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">keepkit</span><span style="color: #6AAF6A;">0.8.1 •</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">lazyjira</span><span style="color: #767C88;">0.6.2</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">micro</span><span style="color: #767C88;">2.0.14</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">riptide</span><span style="color: #767C88;">0.4.0</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">treemd</span><span style="color: #767C88;">0.2.7</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">vhs</span><span style="color: #767C88;">0.8.0</span></div>
+        <div style="display: flex; align-items: baseline; gap: 8px; color: #A8ADB8;"><span style="width: 10px;"> </span><span style="flex: 1;">yazi</span><span style="color: #767C88;">0.4.2</span></div>
+
+        <div style="margin-top: auto; padding-top: 10px; color: #767C88; font-size: 12.5px; border-top: 1px solid #2E323B;">/ filter · <span style="color: #DA7756;">g</span> group by tag</div>
+      </div>
+
+      <div style="position: relative; border: 1px solid #454B57; border-radius: 6px; padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="position: absolute; top: -0.7em; left: 14px; background: #2E323B; padding: 0 8px; white-space: nowrap; color: #767C88;">[2] brief</div>
+
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <div style="font-size: 19px; font-weight: 700; color: #F2F3F5; letter-spacing: -0.01em;">lazyskills <span style="font-size: 13.5px; font-weight: 400; color: #767C88;">alvinunreal/lazyskills</span></div>
+          <div style="color: #A8ADB8;">mission control for agent skills</div>
+        </div>
+
+        <div style="display: flex; align-items: stretch; gap: 20px; padding: 12px 14px; background: #343945; border-radius: 4px;">
+          <div style="display: flex; flex-direction: column; gap: 2px; flex: 1;">
+            <div style="color: #767C88; font-size: 12px; letter-spacing: 0.08em;">INSTALLED</div>
+            <div style="font-size: 16px; color: #F2F3F5;">v0.3.2</div>
+          </div>
+          <div style="width: 1px; background: #454B57;"></div>
+          <div style="display: flex; flex-direction: column; gap: 2px; flex: 1;">
+            <div style="color: #767C88; font-size: 12px; letter-spacing: 0.08em;">LATEST</div>
+            <div style="font-size: 16px; color: #E5A040; font-weight: 700;">v1.0.2 ↑ <span style="font-size: 12px; font-weight: 400; color: #767C88;">2026-07-22</span></div>
+          </div>
+          <div style="width: 1px; background: #454B57;"></div>
+          <div style="display: flex; flex-direction: column; gap: 2px; flex: 1;">
+            <div style="color: #767C88; font-size: 12px; letter-spacing: 0.08em;">MAINTENANCE</div>
+            <div style="font-size: 16px; color: #6AAF6A;">● active</div>
+          </div>
+          <div style="width: 1px; background: #454B57;"></div>
+          <div style="display: flex; flex-direction: column; gap: 2px; flex: 1;">
+            <div style="color: #767C88; font-size: 12px; letter-spacing: 0.08em;">STARS</div>
+            <div style="font-size: 16px; color: #F2F3F5;">219</div>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 6px 26px; color: #A8ADB8; white-space: nowrap;">
+          <div><span style="color: #767C88;">lang</span> go 99% · shell 1%</div>
+          <div><span style="color: #767C88;">status</span> <span style="color: #E5A040;">◌ trying</span></div>
+          <div><span style="color: #767C88;">tags</span> <span style="color: #767C88;">— <span style="color: #DA7756;">#</span> add</span></div>
+          <div><span style="color: #767C88;">note</span> <span style="color: #767C88;">— <span style="color: #DA7756;">e</span> write</span></div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px; min-height: 0;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="color: #A8ADB8; font-weight: 700;">changelog</span>
+            <span style="color: #767C88;">v0.3.2 → v1.0.2 · 12 commits</span>
+            <span style="flex: 1; border-top: 1px solid #2E323B;"></span>
+            <a href="https://github.com/alvinunreal/lazyskills/releases/tag/v1.0.2">release notes ↗</a>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 5px; color: #A8ADB8;">
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #6AAF6A; text-align: right;">feat</span><span style="flex: 1;">discover skills nested below the one-level scan horizon</span><span style="color: #767C88;">{{ shaA }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #6AAF6A; text-align: right;">feat</span><span style="flex: 1;">suppress bundle dirs from skill inventory</span><span style="color: #767C88;">{{ shaB }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #6AAF6A; text-align: right;">feat</span><span style="flex: 1;">prompt to star repo after install</span><span style="color: #767C88;">{{ shaC }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #6AAF6A; text-align: right;">feat</span><span style="flex: 1;">restore missing locked skills</span><span style="color: #767C88;">{{ shaD }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #A8ADB8; text-align: right;">fix</span><span style="flex: 1;">handle nested skill symlinks</span><span style="color: #767C88;">{{ shaE }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #A8ADB8; text-align: right;">fix</span><span style="flex: 1;">skip project locations inside global roots <span style="color: #767C88;">#35</span></span><span style="color: #767C88;">{{ shaF }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #A8ADB8; text-align: right;">fix</span><span style="flex: 1;">harden restore against state changes</span><span style="color: #767C88;">{{ shaG }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #A8ADB8; text-align: right;">fix</span><span style="flex: 1;">ignore Darwin system path aliases</span><span style="color: #767C88;">{{ shaH }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #A8ADB8; text-align: right;">fix</span><span style="flex: 1;">protect canonical skill files behind symlinked scope roots</span><span style="color: #767C88;">{{ shaI }}</span></div>
+            <div style="display: flex; gap: 12px;"><span style="width: 42px; color: #A8ADB8; text-align: right;">fix</span><span style="flex: 1;">revalidate shared scope mutations</span><span style="color: #767C88;">{{ shaJ }}</span></div>
+            <div style="color: #767C88; padding-left: 54px;">+2 more · j/k scroll</div>
+          </div>
+        </div>
+
+        <div style="margin-top: auto; padding-top: 10px; color: #767C88; font-size: 12.5px; border-top: 1px solid #2E323B;"><span style="color: #DA7756;">enter</span> update to v1.0.2 · <span style="color: #DA7756;">r</span> refresh</div>
+      </div>
+
+      <div style="position: relative; border: 1px solid #454B57; border-radius: 6px; padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="position: absolute; top: -0.7em; left: 14px; background: #2E323B; padding: 0 8px; white-space: nowrap; color: #767C88;">[3] readme <span style="color: #454B57;">· h help · m man</span></div>
+
+        <div style="color: #A8ADB8; line-height: 1.66;">LazySkills is a terminal UI for managing agent skills. It gives you one place to see what is installed, which agents can use each skill, why visibility may be broken, and what actions are safe to run next.</div>
+
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
+          <span style="color: #F2F3F5; font-weight: 700;">Features</span>
+          <span style="flex: 1; border-top: 1px solid #2E323B;"></span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 9px; color: #A8ADB8;">
+          <div><span style="color: #F2F3F5;">See every skill in one place</span> — project, global, universal and agent-specific skills in a single TUI.</div>
+          <div><span style="color: #F2F3F5;">Check agent visibility</span> — switch agents and see which skills are actually usable by Claude Code, OpenCode, Codex, Cursor, Gemini CLI.</div>
+          <div><span style="color: #F2F3F5;">Spot broken installs fast</span> — highlights missing <span style="color: #D06060;">SKILL.md</span>, invalid frontmatter, broken symlinks, missing lock entries, ghost agent skills.</div>
+          <div><span style="color: #F2F3F5;">Preview before you act</span> — inspect metadata, rendered skill content, and the exact command LazySkills is about to run.</div>
+          <div><span style="color: #F2F3F5;">Safe skill actions</span> — open, reinstall/update, remove, prune orphaned locks, or run bulk updates with confirmation prompts.</div>
+          <div><span style="color: #F2F3F5;">Discover more from a source</span> — scan local checkouts or GitHub skill sources to find skills you have not installed yet.</div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
+          <span style="color: #F2F3F5; font-weight: 700;">Install</span>
+          <span style="flex: 1; border-top: 1px solid #2E323B;"></span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="color: #767C88;">macOS · Linux</div>
+          <div style="background: #343945; border-radius: 3px; padding: 8px 12px; color: #E8E8E8;">curl -fsSL https://lazyskills.sh/install | sh</div>
+          <div style="background: #343945; border-radius: 3px; padding: 8px 12px; color: #E8E8E8;">brew install --cask alvinunreal/tap/lazyskills</div>
+        </div>
+
+        <div style="margin-top: auto; padding-top: 10px; color: #767C88; font-size: 12.5px; border-top: 1px solid #2E323B; display: flex; justify-content: space-between;"><span>readme · 1/3</span><span>d/u page</span></div>
+      </div>
+    </div>
+
+    <div style="border: 1px solid #454B57; border-radius: 6px; padding: 7px 14px; display: flex; align-items: center; justify-content: space-between; color: #A8ADB8;">
+      <div style="display: flex; gap: 20px; white-space: nowrap;">
+        <span><span style="color: #DA7756;">enter</span> run</span>
+        <span><span style="color: #DA7756;">/</span> search</span>
+        <span><span style="color: #DA7756;">t</span> track</span>
+        <span><span style="color: #DA7756;">u</span> untrack</span>
+        <span><span style="color: #DA7756;">R</span> rename</span>
+        <span><span style="color: #DA7756;">?</span> keys</span>
+        <span><span style="color: #DA7756;">q</span> quit</span>
+      </div>
+      <div style="display: flex; gap: 18px; align-items: center;">
+        <sc-if value="{{ showGauge }}" hint-placeholder-val="{{ false }}">
+          <span style="color: #767C88;">api <span style="color: #E5A040;">▮▮▮▮</span><span style="color: #7A5A1E;">░░░░░░░░</span> 1712/5000</span>
+        </sc-if>
+        <span style="color: #E5A040;">3 updates ↑ <span style="color: #767C88;">U update all</span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1560,&quot;height&quot;:2470},&quot;showGauge&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Status bar&quot;},&quot;longSha&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Changelog&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const long = this.props.longSha ?? false;
+    const full = ["8295a999eb8e50eb8ee617c67f237fe1090ea8d3","676e09d66e71bf4852e9f47debbd679ebb0375d5","3b11ff9e929567501c365dc0e0eae3b26c2b8e79","0172490c4abf59d29ca800165aee29aa898f7bc3","084c4491da65cce8cb395be993fa351a239c408d","ede313d51b44b3e0a4f50439d70afdc052cb7895","559224599f0fe8794d77134028fa3fea7328a3fb","b3f61c850c77582cf6484fa199d42535d68f6869","cd82d49e0e192f6152cffed4ba35d90c68eb0556","1914b59e210dfb09bbd62e9c8ac264c626aaa79a"];
+    const keys = ["shaA","shaB","shaC","shaD","shaE","shaF","shaG","shaH","shaI","shaJ"];
+    const out = { showGauge: this.props.showGauge ?? false };
+    keys.forEach((k, i) => { out[k] = long ? full[i] : full[i].slice(0, 7); });
+    return out;
+  }
+}
+
+</script>
+</body>
+</html>

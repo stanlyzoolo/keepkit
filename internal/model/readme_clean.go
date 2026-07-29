@@ -101,7 +101,7 @@ var rcSpanMarkRe = regexp.MustCompile("\x00(\\d+)\x00")
 // result is the restore table for rcUnmaskSpans.
 //
 // Known limit: two spans separated by nothing but a removed construct come back
-// adjacent (`x`![i](u)`y` → `x``y`), which CommonMark then reads as one span.
+// adjacent (`x`![i](u)`y` → `x“y`), which CommonMark then reads as one span.
 // It needs zero whitespace on either side of the construct, so no real prose
 // hits it; fixing it means inventing a separator the author did not write.
 func rcMaskSpans(s string) (string, []string) {
@@ -341,7 +341,7 @@ func rcStripShortcodes(s string) string {
 // cleanReadmeMarkdown is the whole preprocessing pass: segment, then rewrite
 // only the cleanable segments. It is pure — every rule is a string rewrite — so
 // the tables test it directly.
-func cleanReadmeMarkdown(s string) string {
+func cleanReadmeMarkdown(s, about string) string {
 	if s == "" {
 		return ""
 	}
@@ -382,7 +382,64 @@ func cleanReadmeMarkdown(s string) string {
 		}
 		out[i] = rcUnmaskSpans(rcCollapseBlankRuns(rcCleanLines(seg.text, labels)), spans[i])
 	}
-	return strings.Join(out, "\n")
+	return rcDropTitleBlock(strings.Join(out, "\n"), about)
+}
+
+// rcDropTitleBlock removes a README's leading H1 and, when it merely repeats
+// the repo description the card already prints, the slogan under it. Both are
+// on screen a panel away: the card shows the tool's name as the largest thing
+// in the app with the description right below it, so in the readme they are a
+// title page the reader scrolls past to reach the first sentence that says
+// anything new.
+//
+// Only the *leading* heading goes — a later "# Install" is content.
+//
+// The slogan is matched against `about` rather than guessed at, and that is the
+// whole point: dropping a paragraph is the most destructive thing this pass can
+// do, and every shape-based rule for "this looks like a tagline" also matches a
+// short opening sentence. Equality with a string the app already displays is
+// something the reader can verify at a glance; a heuristic is not. With no
+// description to compare against, nothing below the heading is touched.
+func rcDropTitleBlock(s, about string) string {
+	lines := strings.Split(s, "\n")
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i >= len(lines) || !strings.HasPrefix(lines[i], "# ") {
+		return s
+	}
+	i++
+	if key := rcTaglineKey(about); key != "" {
+		// A slogan sits directly under the title, separated by blank lines only,
+		// and is a paragraph of its own — a second line makes it prose no matter
+		// how the first one reads.
+		blank := i
+		for blank < len(lines) && strings.TrimSpace(lines[blank]) == "" {
+			blank++
+		}
+		if blank < len(lines) && rcTaglineKey(lines[blank]) == key &&
+			(blank+1 >= len(lines) || strings.TrimSpace(lines[blank+1]) == "") {
+			i = blank + 1
+		}
+	}
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	return strings.Join(lines[i:], "\n")
+}
+
+// rcTaglineKey normalizes a line for the slogan comparison: a README writes the
+// repo's own description with its own emphasis and punctuation, so the match
+// looks past markdown markers, case, spacing and a trailing full stop. It
+// answers "" for anything that cannot be a slogan at all.
+func rcTaglineKey(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "*_`>#")
+	s = strings.TrimSpace(s)
+	s = strings.TrimRight(s, ".!")
+	s = strings.ToLower(strings.Join(strings.Fields(s), " "))
+	return s
 }
 
 // rcDefinedLabels collects every declared link-reference label, document-wide:

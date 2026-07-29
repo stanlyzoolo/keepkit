@@ -285,6 +285,20 @@ func TestCleanTerminalOutput(t *testing.T) {
 // forceColorProfile forces truecolor so lipgloss actually emits ANSI escapes
 // (a non-TTY test run strips them and hides regressions), restoring the
 // previous profile on cleanup so the global doesn't leak into later tests.
+// toolRows returns the tool list's rows without the blank one the panel opens
+// with, so a test can index tools from 0 regardless of the list's top padding.
+func toolRows(content string) []string {
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	if len(lines) > 0 && strings.TrimSpace(stripANSI(lines[0])) == "" {
+		return lines[1:]
+	}
+	return lines
+}
+
+func themeSeq(c lipgloss.Color) string {
+	return termenv.TrueColor.Color(string(c)).Sequence(false)
+}
+
 func forceColorProfile(t *testing.T) {
 	t.Helper()
 	old := lipgloss.ColorProfile()
@@ -297,13 +311,13 @@ func TestColorizeHelp(t *testing.T) {
 
 	// A dash inside a word (e.g. "golangci-lint") must not be styled as a
 	// short flag, which would inject an ANSI escape mid-word.
-	got := colorizeHelp("golangci-lint runs linters")
+	got := colorizeHelp(ui.DefaultStyles(), "golangci-lint runs linters")
 	if strings.Contains(got, "golangci\x1b") {
 		t.Errorf("colorizeHelp injected escape inside word: %q", got)
 	}
 
 	// A real flag preceded by whitespace should still be styled.
-	got = colorizeHelp("use --verbose for details")
+	got = colorizeHelp(ui.DefaultStyles(), "use --verbose for details")
 	if !strings.Contains(got, "\x1b") {
 		t.Errorf("colorizeHelp did not style a real flag: %q", got)
 	}
@@ -316,7 +330,7 @@ func TestColorizeHelp(t *testing.T) {
 		"usage: tool [options] --verbose",
 		"see <arg> and --flag here",
 	} {
-		got := colorizeHelp(in)
+		got := colorizeHelp(ui.DefaultStyles(), in)
 		if strings.Contains(got, "\x1b\x1b") {
 			t.Errorf("colorizeHelp produced doubled ESC for %q: %q", in, got)
 		}
@@ -357,21 +371,22 @@ func TestRenderChangelogBlockMarkdown(t *testing.T) {
 			"**Full Changelog**: https://github.com/cli/cli/compare/v1.9.0...v2.0.0\r\n",
 	})
 
-	// The release URL still leads the block — buildCard registers that line as
-	// the clickable one, so it must stay first and unstyled by the converter.
-	if !strings.HasPrefix(got, ui.InfoStyle.Render(url)+"\n\n") {
-		t.Fatalf("block does not lead with the release URL: %q", firstLine(got))
+	// The release link lives on the changelog heading now (as "release notes ↗",
+	// which is what buildCard registers as clickable), so the block itself is
+	// the notes and nothing else.
+	if strings.Contains(got, url) {
+		t.Fatalf("block still carries the raw release URL: %q", firstLine(got))
 	}
 	if !strings.HasSuffix(got, "\n") {
 		t.Errorf("block lost its trailing newline: %q", got)
 	}
-	if want := ui.ChangelogHeadingStyle.Render("What's Changed"); !strings.Contains(got, want) {
+	if want := ui.DefaultStyles().EmphasisBold.Render("What's Changed"); !strings.Contains(got, want) {
 		t.Errorf("heading not rendered with ChangelogHeadingStyle:\n%q", got)
 	}
-	if unwanted := ui.InfoStyle.Render("What's Changed"); strings.Contains(got, unwanted) {
+	if unwanted := ui.DefaultStyles().Text.Render("What's Changed"); strings.Contains(got, unwanted) {
 		t.Errorf("heading rendered with the muted body style:\n%q", got)
 	}
-	if want := ui.InfoStyle.Render("• fix: crash in #12"); !strings.Contains(got, want) {
+	if want := ui.DefaultStyles().Text.Render("• fix: crash in #12"); !strings.Contains(got, want) {
 		t.Errorf("bullet not rendered muted with a • marker:\n%q", got)
 	}
 	plain := stripANSI(got)
@@ -405,7 +420,7 @@ func TestRenderChangelogBlockFallback(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := m.renderChangelogBlock(changelogMsg{toolName: "gh", body: tt.body})
-			if want := ui.InfoStyle.Render("no release notes available.") + "\n"; got != want {
+			if want := changelogIndent + ui.DefaultStyles().Text.Render("no release notes available.") + "\n"; got != want {
 				t.Errorf("renderChangelogBlock(%q) = %q, want the fallback", tt.body, got)
 			}
 		})
@@ -419,7 +434,7 @@ func TestRenderChangelogBlockError(t *testing.T) {
 	m := changelogBlockModel()
 
 	got := m.renderChangelogBlock(changelogMsg{toolName: "gh", err: errors.New("boom"), body: "# ignored"})
-	if want := ui.InfoStyle.Render("changelog unavailable: boom") + "\n"; got != want {
+	if want := changelogIndent + ui.DefaultStyles().Text.Render("changelog unavailable: boom") + "\n"; got != want {
 		t.Errorf("error branch = %q, want %q", got, want)
 	}
 }
@@ -429,52 +444,118 @@ func firstLine(s string) string {
 	return line
 }
 
-func TestRenderRepoStatus(t *testing.T) {
+func TestMetricsStripMaintenance(t *testing.T) {
+	forceColorProfile(t)
 	tests := []struct {
 		status string
 		want   []string // substrings that must be present
 	}{
-		{"active", []string{"●", "active"}},
-		{"archived", []string{"⚠", "archived"}},
-		{"weird", []string{"weird"}},
+		{"active", []string{"MAINTENANCE", "●", "active"}},
+		{"archived", []string{"MAINTENANCE", "⚠", "archived"}},
+		{"weird", []string{"MAINTENANCE", "weird"}},
 	}
 	for _, tt := range tests {
-		got := renderRepoStatus(tt.status)
+		m := New([]loader.ToolMeta{{Name: "rg", GitHub: "github.com/BurntSushi/ripgrep"}})
+		m.briefW = 60
+		m.repoCards["rg"] = version.RepoCard{RepoStatus: tt.status}
+		got := stripANSI(strings.Join(m.metricsStrip(m.tools[0], 58), "\n"))
 		for _, sub := range tt.want {
 			if !strings.Contains(got, sub) {
-				t.Errorf("renderRepoStatus(%q) = %q, missing %q", tt.status, got, sub)
+				t.Errorf("metricsStrip(%q) = %q, missing %q", tt.status, got, sub)
 			}
 		}
 	}
 }
 
-func TestRenderLangBar(t *testing.T) {
-	t.Run("lowercases names and shows percent", func(t *testing.T) {
-		got := renderLangBar(map[string]int{"Go": 1}, 40, 0)
-		if !strings.Contains(got, "go") {
-			t.Errorf("expected lowercase 'go' in %q", got)
+func TestRenderLangList(t *testing.T) {
+	t.Run("leads with the label and lowercases names", func(t *testing.T) {
+		got := stripANSI(strings.Join(renderLangList(ui.DefaultStyles(), map[string]int{"Go": 1}, 40), "\n"))
+		if !strings.HasPrefix(got, "languages · ") {
+			t.Errorf("expected the full label and a middot to head %q", got)
+		}
+		if !strings.Contains(got, langDot+" go 100%") {
+			t.Errorf("expected a dotted lowercase entry in %q", got)
 		}
 		if strings.Contains(got, "Go") {
 			t.Errorf("expected no uppercase 'Go' in %q", got)
 		}
-		if !strings.Contains(got, "100%") {
-			t.Errorf("expected '100%%' in %q", got)
+	})
+
+	t.Run("wraps by whole entries", func(t *testing.T) {
+		langs := map[string]int{"alpha": 30, "bravo": 25, "charlie": 25, "delta": 20}
+		got := renderLangList(ui.DefaultStyles(), langs, 24)
+		if len(got) < 2 {
+			t.Fatalf("expected wrapping, got %d line(s): %q", len(got), got)
+		}
+		for _, line := range got {
+			if w := lipgloss.Width(line); w > 24 {
+				t.Errorf("line %q is %d cells, over the 24 budget", stripANSI(line), w)
+			}
 		}
 	})
 
-	t.Run("wraps when over width", func(t *testing.T) {
-		langs := map[string]int{"alpha": 30, "bravo": 25, "charlie": 25, "delta": 20}
-		got := renderLangBar(langs, 12, 0)
-		if !strings.Contains(got, "\n") {
-			t.Errorf("expected wrapping (newline) in %q", got)
+	t.Run("empty returns nothing", func(t *testing.T) {
+		if got := renderLangList(ui.DefaultStyles(), nil, 40); got != nil {
+			t.Errorf("expected nil, got %q", got)
+		}
+	})
+}
+
+// TestRenderLangBand: the band is the card's only picture and it sits on the same
+// grid as the metrics plate above it, so its width has to be exact — a cell short
+// leaves a notch in the block, a cell over wraps the row and shifts every line
+// below it (which in [2] means every clickable card link).
+func TestRenderLangBand(t *testing.T) {
+	s := ui.DefaultStyles()
+	langs := map[string]int{"Go": 970, "Shell": 20, "Makefile": 10}
+
+	for _, w := range []int{3, 4, 10, 28, 57} {
+		got := renderLangBand(s, langs, w)
+		if lipgloss.Width(got) != w {
+			t.Errorf("renderLangBand(width=%d) = %d cells, want exactly %d", w, lipgloss.Width(got), w)
+		}
+		if strings.Contains(got, "\n") {
+			t.Errorf("renderLangBand(width=%d) wrapped: %q", w, stripANSI(got))
+		}
+	}
+
+	// Every language the list names above the band has to appear in it: a
+	// floor-then-remainder split would round a 1% language away entirely.
+	band := stripANSI(renderLangBand(s, langs, 28))
+	if n := strings.Count(band, langBandGlyph); n != 28 {
+		t.Errorf("band has %d glyphs, want 28", n)
+	}
+
+	t.Run("too narrow for every language drops the smallest", func(t *testing.T) {
+		if got := renderLangBand(s, langs, 2); lipgloss.Width(got) != 2 {
+			t.Errorf("width 2 = %d cells, want 2", lipgloss.Width(got))
 		}
 	})
 
 	t.Run("empty returns empty", func(t *testing.T) {
-		if got := renderLangBar(nil, 40, 0); got != "" {
+		if got := renderLangBand(s, nil, 40); got != "" {
 			t.Errorf("expected empty, got %q", got)
 		}
+		if got := renderLangBand(s, langs, 0); got != "" {
+			t.Errorf("expected empty at width 0, got %q", got)
+		}
 	})
+}
+
+// TestLanguageBandGlyphWidth pins the band's glyph as width-stable: the band is
+// measured in cells and a two-cell glyph under RUNEWIDTH_EASTASIAN=1 would
+// double its footprint and push the card past the panel. The dot beside a
+// language name is deliberately NOT in this class (it is Ambiguous, like the
+// list's ⏺/↑) — it rides in wrapped text, where an over-wide measurement can
+// only wrap a row early.
+func TestLanguageBandGlyphWidth(t *testing.T) {
+	for _, cond := range []bool{false, true} {
+		c := runewidth.NewCondition()
+		c.EastAsianWidth = cond
+		if got := c.StringWidth(langBandGlyph); got != 1 {
+			t.Errorf("langBandGlyph width = %d with EastAsianWidth=%v, want 1", got, cond)
+		}
+	}
 }
 
 func TestFindMatches(t *testing.T) {
@@ -505,21 +586,61 @@ func TestRenderStatusBarFocusTools(t *testing.T) {
 	}
 }
 
-func TestRenderStatusBarFocusBrief(t *testing.T) {
-	// Wide enough for the whole hint list: at 80 columns the bar degrades by
-	// dropping trailing cells (see TestStatusBarNeverWraps).
-	m := Model{width: 120, focus: focusBrief}
-	got := m.renderStatusBar()
+// TestStatusBarIsGlobal: the one line always on screen carries the tracker's
+// global verbs and does not rewrite itself as focus moves. What is panel-local
+// lives in that panel's footer, next to the thing it acts on.
+func TestStatusBarIsGlobal(t *testing.T) {
+	var bars []string
+	for _, focus := range []int{focusTools, focusBrief, focusHelp} {
+		m := Model{width: 120, focus: focus}
+		got := m.renderStatusBar()
+		for _, want := range []string{"enter run", "/ search", "t track", "u untrack", "R rename", "q quit"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("focus %d status bar = %q, missing %q", focus, got, want)
+			}
+		}
+		for _, absent := range []string{"open repo", "changelog", "scroll", "--help"} {
+			if strings.Contains(got, absent) {
+				t.Errorf("focus %d status bar = %q, should not carry a panel-local hint %q", focus, got, absent)
+			}
+		}
+		bars = append(bars, got)
+	}
+	if bars[0] != bars[1] || bars[1] != bars[2] {
+		t.Error("status bar differs between focuses, want one global line")
+	}
+}
 
-	for _, want := range []string{"[o]", "[c]", "[s]", "[e]", "[t]", "[q]"} {
+// TestBriefFooterActions: the card's own actions live on its footer, led by the
+// panel's primary action — which is installing the release when there is one.
+func TestBriefFooterActions(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 30})
+	mm := updated.(Model)
+
+	got := stripANSI(mm.renderBrief())
+	for _, want := range []string{"r refresh", "s status", "o repo", "c changelog"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("focusBrief status bar = %q, missing %q", got, want)
+			t.Errorf("brief panel = %q, missing footer hint %q", got, want)
 		}
 	}
-	for _, absent := range []string{"scroll", "help", "back"} {
-		if strings.Contains(got, absent) {
-			t.Errorf("focusBrief status bar = %q, should not contain %q", got, absent)
+	// e and # are offered in the meta line, beside the values they edit; a
+	// footer repeating them would spend the row on saying it twice.
+	for _, absent := range []string{"e note", "# tags"} {
+		if strings.Contains(stripANSI(mm.panelFooter(mm.briefW, nil, "")), absent) {
+			t.Errorf("brief footer repeats the meta line's %q hint", absent)
 		}
+	}
+	if strings.Contains(got, "enter update") {
+		t.Errorf("brief footer offers an update with none pending:\n%s", got)
+	}
+
+	mm.versions["gh"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	mm.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
+	mm.briefViewport.SetContent(mm.renderCard())
+	got = stripANSI(mm.renderBrief())
+	if !strings.Contains(got, "enter update to v2.0.0") {
+		t.Errorf("brief footer = %q, want the contextual update action", got)
 	}
 }
 
@@ -533,7 +654,7 @@ func TestRenderStatusBarSearch(t *testing.T) {
 	m = typeRunes(t, m, "rip")
 
 	got := m.renderStatusBar()
-	for _, want := range []string{"rip", "[enter]", "open", "[↑/↓]", "move", "[esc]", "cancel"} {
+	for _, want := range []string{"rip", "enter open", "↑/↓ move", "esc cancel"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("search status bar = %q, missing %q", got, want)
 		}
@@ -568,7 +689,7 @@ func TestRenderLeftContentSearchMarker(t *testing.T) {
 	m = updated.(Model)
 	m = typeRunes(t, m, "g") // matches git and ripgrep
 
-	lines := strings.Split(m.renderLeftContent(), "\n")
+	lines := toolRows(m.renderLeftContent())
 	if len(lines) < 2 {
 		t.Fatalf("renderLeftContent = %q, want at least 2 rows", lines)
 	}
@@ -578,7 +699,7 @@ func TestRenderLeftContentSearchMarker(t *testing.T) {
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
-	lines = strings.Split(m.renderLeftContent(), "\n")
+	lines = toolRows(m.renderLeftContent())
 	if strings.Contains(lines[0], "⏺") {
 		t.Errorf("first row = %q, marker should move away after down", lines[0])
 	}
@@ -604,7 +725,7 @@ func TestRenderLeftContentTagMatchSuffix(t *testing.T) {
 	m = updated.(Model)
 	m = typeRunes(t, m, "tui") // gitui matches by name, lazygit only by tag
 
-	lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
+	lines := toolRows(stripANSI(m.renderLeftContent()))
 	if !strings.Contains(lines[1], "lazygit") || !strings.Contains(lines[1], "#tui") {
 		t.Errorf("tag-only row = %q, want lazygit with #tui suffix", lines[1])
 	}
@@ -615,7 +736,7 @@ func TestRenderLeftContentTagMatchSuffix(t *testing.T) {
 	// A name column too narrow for the suffix drops it instead of wrapping
 	// the row.
 	m.toolsW = 8 // maxName = 3
-	lines = strings.Split(stripANSI(m.renderLeftContent()), "\n")
+	lines = toolRows(stripANSI(m.renderLeftContent()))
 	for i, line := range lines {
 		if strings.Contains(line, "#") {
 			t.Errorf("narrow row %d = %q, want tag suffix dropped", i, line)
@@ -633,8 +754,8 @@ func TestRenderLeftContentSearchHighlight(t *testing.T) {
 	m = updated.(Model)
 	m = typeRunes(t, m, "i") // matches git (selected) and ripgrep
 
-	lines := strings.Split(m.renderLeftContent(), "\n")
-	if want := ui.SelectedNameStyle.Render("i"); !strings.Contains(lines[1], want) {
+	lines := toolRows(m.renderLeftContent())
+	if want := ui.DefaultStyles().AccentBold.Render("i"); !strings.Contains(lines[1], want) {
 		t.Errorf("non-selected match row = %q, want highlighted substring %q", lines[1], want)
 	}
 	if !strings.Contains(stripANSI(lines[1]), "ripgrep") {
@@ -643,40 +764,44 @@ func TestRenderLeftContentSearchHighlight(t *testing.T) {
 }
 
 // TestHighlightNameMatch pins the helper: case-insensitive match, untouched
-// non-match, and per-line behavior (a match split across a wrap boundary is
-// left unhighlighted).
+// non-match, and the two-style contract — hit and rest both come from the
+// caller, so the unmatched halves of a name are styled rather than left bare
+// beside a styled hit.
 func TestHighlightNameMatch(t *testing.T) {
 	forceColorProfile(t)
-	styled := ui.SelectedNameStyle.Render("ip")
-	if got := highlightNameMatch("ripgrep", "ip"); got != "r"+styled+"grep" {
-		t.Errorf("highlightNameMatch(ripgrep, ip) = %q, want %q", got, "r"+styled+"grep")
+	s := ui.DefaultStyles()
+	hit, rest := s.AccentBold, s.Text
+	mark := func(pre, m, post string) string {
+		return rest.Render(pre) + hit.Render(m) + rest.Render(post)
 	}
-	if got := highlightNameMatch("RipGrep", "ipg"); got != "R"+ui.SelectedNameStyle.Render("ipG")+"rep" {
+	if got := highlightNameMatch(s, "ripgrep", "ip", hit, rest); got != mark("r", "ip", "grep") {
+		t.Errorf("highlightNameMatch(ripgrep, ip) = %q, want %q", got, mark("r", "ip", "grep"))
+	}
+	if got := highlightNameMatch(s, "RipGrep", "ipg", hit, rest); got != mark("R", "ipG", "rep") {
 		t.Errorf("highlightNameMatch(RipGrep, ipg) = %q, case-insensitive match expected", got)
 	}
-	if got := highlightNameMatch("ripgrep", "zz"); got != "ripgrep" {
-		t.Errorf("highlightNameMatch(ripgrep, zz) = %q, want untouched", got)
+	if got := highlightNameMatch(s, "ripgrep", "zz", hit, rest); got != rest.Render("ripgrep") {
+		t.Errorf("highlightNameMatch(ripgrep, zz) = %q, want it styled but unhighlighted", got)
 	}
-	if got := highlightNameMatch("ab\ncd", "bc"); got != "ab\ncd" {
-		t.Errorf("highlightNameMatch(ab\\ncd, bc) = %q, want untouched across the wrap boundary", got)
-	}
-	// Only the first occurrence per line is highlighted.
-	if got := highlightNameMatch("gogo", "go"); got != ui.SelectedNameStyle.Render("go")+"go" {
+	// Only the first occurrence is highlighted.
+	if got := highlightNameMatch(s, "gogo", "go", hit, rest); got != mark("", "go", "go") {
 		t.Errorf("highlightNameMatch(gogo, go) = %q, want only the first occurrence styled", got)
 	}
-	// Rune safety: Ⱥ (2 bytes) lowercases to ⱥ (3 bytes), so byte offsets
-	// found in strings.ToLower(line) would slice the original out of range.
-	if got := highlightNameMatch("Ⱥx", "x"); stripANSI(got) != "Ⱥx" || !utf8.ValidString(got) {
+	// Rune safety: Ⱥ (2 bytes) lowercases to ⱥ (3 bytes), so byte offsets found
+	// in strings.ToLower(line) would slice the original out of range.
+	if got := highlightNameMatch(s, "Ⱥx", "x", hit, rest); stripANSI(got) != "Ⱥx" || !utf8.ValidString(got) {
 		t.Errorf("highlightNameMatch(Ⱥx, x) = %q, want the name intact and valid UTF-8", got)
 	}
-	if got := highlightNameMatch("Ⱥx", "ⱥ"); stripANSI(got) != "Ⱥx" || !strings.Contains(got, "Ⱥ") {
+	if got := highlightNameMatch(s, "Ⱥx", "ⱥ", hit, rest); stripANSI(got) != "Ⱥx" || !strings.Contains(got, "Ⱥ") {
 		t.Errorf("highlightNameMatch(Ⱥx, ⱥ) = %q, want case-insensitive match on the original rune", got)
+	}
+	// Both halves carry the caller's styles — the unmatched text is never
+	// emitted bare beside a styled hit.
+	if got := highlightNameMatch(s, "ripgrep", "ip", hit, rest); strings.Count(got, "\x1b[0m") != 3 {
+		t.Errorf("highlight = %q, want all three segments styled", got)
 	}
 }
 
-// TestRenderLeftContentMarkerSurvivesFocus verifies the ⏺ marker on the
-// selected row does not disappear when focus moves to the brief/help panels
-// (it renders dim there, but stays in the output).
 func TestRenderLeftContentMarkerSurvivesFocus(t *testing.T) {
 	m := New([]loader.ToolMeta{
 		{Name: "fzf", Status: loader.StatusActive},
@@ -688,8 +813,8 @@ func TestRenderLeftContentMarkerSurvivesFocus(t *testing.T) {
 
 	for _, f := range []int{focusTools, focusBrief, focusHelp} {
 		m.focus = f
-		lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
-		if !strings.HasPrefix(lines[1], "⏺ git") {
+		lines := toolRows(stripANSI(m.renderLeftContent()))
+		if !strings.HasPrefix(lines[1], " ⏺ git") {
 			t.Errorf("focus %v: selected row = %q, want ⏺ marker on git", f, lines[1])
 		}
 		if strings.Contains(lines[0], "⏺") {
@@ -714,12 +839,12 @@ func TestRenderLeftContentMarkerColumn(t *testing.T) {
 	m.focus = focusTools
 	m.metaSelected = 0
 
-	lines := strings.Split(stripANSI(m.renderLeftContent()), "\n")
-	if !strings.HasPrefix(lines[0], "⏺ fzf") {
+	lines := toolRows(stripANSI(m.renderLeftContent()))
+	if !strings.HasPrefix(lines[0], " ⏺ fzf") {
 		t.Errorf("selected active row = %q, want ⏺ marker", lines[0])
 	}
 	for i, name := range []string{"git", "ripgrep", "yq"} {
-		if !strings.HasPrefix(lines[i+1], "  "+name) {
+		if !strings.HasPrefix(lines[i+1], "   "+name) {
 			t.Errorf("non-selected row = %q, want plain space in the marker column", lines[i+1])
 		}
 		if strings.Contains(lines[i+1], "⏺") {
@@ -730,18 +855,19 @@ func TestRenderLeftContentMarkerColumn(t *testing.T) {
 	// The ⏺ cursor takes priority on the selected row regardless of status, and
 	// the row it left behind falls back to a plain-space marker column.
 	m.metaSelected = 1
-	lines = strings.Split(stripANSI(m.renderLeftContent()), "\n")
-	if !strings.HasPrefix(lines[1], "⏺ git") {
+	lines = toolRows(stripANSI(m.renderLeftContent()))
+	if !strings.HasPrefix(lines[1], " ⏺ git") {
 		t.Errorf("selected trying row = %q, want ⏺ cursor", lines[1])
 	}
-	if !strings.HasPrefix(lines[0], "  fzf") {
+	if !strings.HasPrefix(lines[0], "   fzf") {
 		t.Errorf("active row = %q, want plain space in the marker column", lines[0])
 	}
 }
 
-// TestRenderLeftContentRowWidth verifies the marker column glyphs are all
-// single-cell, so every row keeps the same visible width prefix (1 marker
-// cell + 1 space) regardless of selection or status.
+// TestRenderLeftContentRowWidth verifies every row is exactly the list width:
+// the marker glyphs are all single-cell and the name column absorbs the slack
+// out to the version column, which is what lets the selected row's fill span
+// the panel instead of stopping at the last glyph.
 func TestRenderLeftContentRowWidth(t *testing.T) {
 	m := New([]loader.ToolMeta{
 		{Name: "aa", Status: loader.StatusActive},
@@ -754,9 +880,10 @@ func TestRenderLeftContentRowWidth(t *testing.T) {
 	m.focus = focusTools
 	m.metaSelected = 0
 
-	for i, line := range strings.Split(strings.TrimRight(stripANSI(m.renderLeftContent()), "\n"), "\n") {
-		if w := lipgloss.Width(line); w != 4 { // marker + space + 2-rune name
-			t.Errorf("row %d = %q, visible width = %d, want 4", i, line, w)
+	want := max(m.toolsW-1, 1)
+	for i, line := range toolRows(stripANSI(m.renderLeftContent())) {
+		if w := lipgloss.Width(line); w != want {
+			t.Errorf("row %d = %q, visible width = %d, want %d", i, line, w, want)
 		}
 	}
 }
@@ -809,7 +936,7 @@ func TestToolsListGrouping(t *testing.T) {
 		t.Errorf("m.meta order = %v, want %v (untouched)", got, want)
 	}
 	// The rendered rows follow the same order.
-	rows := strings.Split(strings.TrimRight(stripANSI(m.renderLeftContent()), "\n"), "\n")
+	rows := toolRows(stripANSI(m.renderLeftContent()))
 	for i, want := range []string{"bb", "dd", "aa", "cc"} {
 		if !strings.Contains(rows[i], want) {
 			t.Errorf("row %d = %q, want %s", i, rows[i], want)
@@ -929,38 +1056,45 @@ func TestMarkerGlyphWidth(t *testing.T) {
 }
 
 // TestRenderPanelTitles verifies every panel's top border carries its title
-// with the focus hotkey, that the help title follows m.helpMode, and that the
-// splice leaves the border's visible width alone.
+// with the focus hotkey, that the [3] title follows m.helpMode and names the
+// other two sources beside it, and that the splice leaves the border's visible
+// width alone.
 func TestRenderPanelTitles(t *testing.T) {
 	m := New([]loader.ToolMeta{{Name: "fzf", Status: loader.StatusActive}})
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = updated.(Model)
 
-	m.helpMode = helpModeHelp
-	top := stripANSI(strings.SplitN(m.renderHelp(), "\n", 2)[0])
-	if !strings.Contains(top, " [3] Help ") {
-		t.Errorf("help-mode top border = %q, want [3] Help title", top)
-	}
-
-	m.helpMode = helpModeReadme
-	topReadme := stripANSI(strings.SplitN(m.renderHelp(), "\n", 2)[0])
-	if !strings.Contains(topReadme, " [3] Readme ") {
-		t.Errorf("readme-mode top border = %q, want [3] Readme title", topReadme)
-	}
-
-	m.helpMode = helpModeMan
-	lines := strings.Split(m.renderHelp(), "\n")
-	topMan := stripANSI(lines[0])
-	if !strings.Contains(topMan, " [3] Man ") || strings.Contains(topMan, "Help") {
-		t.Errorf("man-mode top border = %q, want [3] Man title", topMan)
-	}
-	if bottom := stripANSI(lines[len(lines)-1]); lipgloss.Width(topMan) != lipgloss.Width(bottom) {
-		t.Errorf("top border width = %d, want %d (unchanged)", lipgloss.Width(topMan), lipgloss.Width(bottom))
+	// The two modes the panel is NOT in are named in its own frame: they switch
+	// what the panel *is*, which is a property of the panel rather than an
+	// action on its content.
+	for _, tt := range []struct {
+		mode int
+		want string
+		alts []string
+	}{
+		{helpModeHelp, " [3] help ", []string{"m man", "r readme"}},
+		{helpModeReadme, " [3] readme ", []string{"h help", "m man"}},
+		{helpModeMan, " [3] man ", []string{"h help", "r readme"}},
+	} {
+		m.helpMode = tt.mode
+		lines := strings.Split(m.renderHelp(), "\n")
+		top := stripANSI(lines[0])
+		if !strings.Contains(top, tt.want) {
+			t.Errorf("mode %d top border = %q, want %q", tt.mode, top, tt.want)
+		}
+		for _, alt := range tt.alts {
+			if !strings.Contains(top, alt) {
+				t.Errorf("mode %d top border = %q, missing the %q source hint", tt.mode, top, alt)
+			}
+		}
+		if bottom := stripANSI(lines[len(lines)-1]); lipgloss.Width(top) != lipgloss.Width(bottom) {
+			t.Errorf("mode %d top border width = %d, want %d (unchanged)", tt.mode, lipgloss.Width(top), lipgloss.Width(bottom))
+		}
 	}
 
 	for _, tt := range []struct{ name, panel, want string }{
-		{"tools", m.renderTools(), " [1] Tools "},
-		{"brief", m.renderBrief(), " [2] Brief "},
+		{"tools", m.renderTools(), " [1] tools "},
+		{"brief", m.renderBrief(), " [2] brief "},
 	} {
 		panelLines := strings.Split(tt.panel, "\n")
 		got := stripANSI(panelLines[0])
@@ -973,9 +1107,34 @@ func TestRenderPanelTitles(t *testing.T) {
 	}
 }
 
-// TestPanelTitleFollowsFocus verifies each panel's title is painted with the
-// focus-aware border color: same visible text, different styling, so the
-// focused branch of every panel renderer is exercised.
+// TestToolsPanelTitleCounts: the [1] title carries what is in the panel — how
+// many tools are tracked and how many are behind. The second number is the
+// tracker's whole point, so it appears only when there is one.
+func TestToolsPanelTitleCounts(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "fzf"}, {Name: "rg"}, {Name: "jq"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	mm := updated.(Model)
+
+	top := stripANSI(strings.SplitN(mm.renderTools(), "\n", 2)[0])
+	if !strings.Contains(top, "[1] tools 3") {
+		t.Errorf("title = %q, want the tracked count", top)
+	}
+	if strings.Contains(top, "↑") {
+		t.Errorf("title = %q, want no update count when nothing is behind", top)
+	}
+
+	mm.versions["rg"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	mm.versions["jq"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	top = stripANSI(strings.SplitN(mm.renderTools(), "\n", 2)[0])
+	if !strings.Contains(top, "[1] tools 3 2↑") {
+		t.Errorf("title = %q, want the tracked count and the update count", top)
+	}
+}
+
+// TestPanelTitleFollowsFocus verifies each panel's title marks focus twice: by
+// the border color and by the ▸ prefix. The second signal is deliberate — focus
+// has to survive a monochrome terminal and a reader who cannot separate the two
+// panel colors.
 func TestPanelTitleFollowsFocus(t *testing.T) {
 	forceColor(t)
 
@@ -1006,9 +1165,15 @@ func TestPanelTitleFollowsFocus(t *testing.T) {
 			if focused == blurred {
 				t.Errorf("%s top border identical focused and unfocused (%q), want a focus-aware color", tt.name, blurred)
 			}
-			if stripANSI(focused) != stripANSI(blurred) {
-				t.Errorf("%s visible top border changed with focus:\n focused = %q\n blurred = %q",
-					tt.name, stripANSI(focused), stripANSI(blurred))
+			if !strings.Contains(stripANSI(focused), "▸") {
+				t.Errorf("%s focused title = %q, want the ▸ marker", tt.name, stripANSI(focused))
+			}
+			if strings.Contains(stripANSI(blurred), "▸") {
+				t.Errorf("%s blurred title = %q, want no ▸ marker", tt.name, stripANSI(blurred))
+			}
+			if lipgloss.Width(focused) != lipgloss.Width(blurred) {
+				t.Errorf("%s top border width changed with focus: %d vs %d",
+					tt.name, lipgloss.Width(focused), lipgloss.Width(blurred))
 			}
 		})
 	}
@@ -1019,22 +1184,23 @@ func TestPanelTitleFollowsFocus(t *testing.T) {
 // dropped rather than truncated, and a fitting title is inset without
 // changing the top line's visible width.
 func TestInsetPanelTitle(t *testing.T) {
+	title := panelTitle{"--help", ui.DefaultStyles().Dim.Render("--help")}
 	narrow := "╭─╮\n│ │\n╰─╯"
-	if got := insetPanelTitle(narrow, "--help", false); got != narrow {
+	if got := insetPanelTitle(ui.DefaultStyles(), narrow, title, false); got != narrow {
 		t.Errorf("narrow panel = %q, want unchanged", got)
 	}
-	if got := insetPanelTitle("", "--help", false); got != "" {
+	if got := insetPanelTitle(ui.DefaultStyles(), "", title, false); got != "" {
 		t.Errorf("empty panel = %q, want unchanged", got)
 	}
 
 	// " --help " needs 8 cells; this top offers 3 — dropped whole, not chopped.
 	partial := "╭────╮\n│    │\n╰────╯"
-	if got := insetPanelTitle(partial, "--help", true); got != partial {
+	if got := insetPanelTitle(ui.DefaultStyles(), partial, title, true); got != partial {
 		t.Errorf("partial-fit panel = %q, want unchanged (title dropped whole)", got)
 	}
 
 	fits := "╭──────────╮\n│          │\n╰──────────╯"
-	top := stripANSI(strings.SplitN(insetPanelTitle(fits, "--help", true), "\n", 2)[0])
+	top := stripANSI(strings.SplitN(insetPanelTitle(ui.DefaultStyles(), fits, title, true), "\n", 2)[0])
 	if len([]rune(top)) != 12 {
 		t.Errorf("titled top = %q, visible width = %d, want 12", top, len([]rune(top)))
 	}
@@ -1050,45 +1216,51 @@ func TestRenderStatusBarGauge(t *testing.T) {
 		m := Model{width: 120, focus: focusTools}
 		m.rate = version.RateLimit{Known: false, Remaining: 0, Limit: 60}
 		got := m.renderStatusBar()
-		for _, absent := range []string{"GitHub API Usage", "GH ", "45/60"} {
-			if strings.Contains(got, absent) {
-				t.Errorf("unknown rate status bar = %q, should not contain %q", got, absent)
-			}
+		if strings.Contains(got, "/60") {
+			t.Errorf("unknown rate status bar = %q, should carry no gauge", got)
 		}
 	})
 
-	t.Run("wide width shows full gauge (pinned to focusTools)", func(t *testing.T) {
-		// The [enter] run cell widened the focusTools hints to 79 cols; the full
-		// gauge (50 cols) needs width >= hints+gauge+gap+border = 133.
+	t.Run("wide width shows the bar and the numbers", func(t *testing.T) {
 		m := Model{width: 135, focus: focusTools, rate: known}
 		got := m.renderStatusBar()
-		for _, want := range []string{"GitHub API Usage", "45/60", "[L]", "search"} {
+		for _, want := range []string{"api ", "45/60", gaugeFillGlyph, gaugeTrackGlyph, "search"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("wide status bar = %q, missing %q", got, want)
 			}
 		}
 	})
 
-	t.Run("medium width collapses to compact", func(t *testing.T) {
-		m := Model{width: 103, focus: focusTools, rate: known}
+	t.Run("medium width collapses to the numbers alone", func(t *testing.T) {
+		m := Model{width: 88, focus: focusTools, rate: known}
 		got := m.renderStatusBar()
-		if strings.Contains(got, "GitHub API Usage") {
+		if strings.Contains(got, gaugeFillGlyph) {
 			t.Errorf("medium status bar unexpectedly full: %q", got)
 		}
-		for _, want := range []string{"GH ", "45/60", "[L]"} {
+		for _, want := range []string{"api ", "45/60"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("medium status bar = %q, missing %q", got, want)
 			}
 		}
 	})
 
+	// At rest the gauge is not on screen at all — it is a reminder, and the
+	// room it costs belongs to the hints until the quota is worth acting on.
+	// A fresh window still shows the gauge: it is the only visible sign that
+	// keepkit talks to an API at all, and of the L overlay behind it.
+	t.Run("a fresh window still shows the gauge", func(t *testing.T) {
+		m := Model{width: 135, focus: focusTools,
+			rate: version.RateLimit{Known: true, Remaining: 4900, Limit: 5000}}
+		if got := m.renderStatusBar(); !strings.Contains(got, "100/5000") {
+			t.Errorf("status bar = %q, want the gauge on an untouched quota", got)
+		}
+	})
+
 	t.Run("narrow width hides gauge but keeps hints", func(t *testing.T) {
 		m := Model{width: 75, focus: focusTools, rate: known}
 		got := m.renderStatusBar()
-		for _, absent := range []string{"GitHub API Usage", "GH ", "45/60"} {
-			if strings.Contains(got, absent) {
-				t.Errorf("narrow status bar = %q, should not contain %q", got, absent)
-			}
+		if strings.Contains(got, "45/60") {
+			t.Errorf("narrow status bar = %q, should carry no gauge", got)
 		}
 		for _, want := range []string{"search", "track", "quit"} {
 			if !strings.Contains(got, want) {
@@ -1097,14 +1269,12 @@ func TestRenderStatusBarGauge(t *testing.T) {
 		}
 	})
 
-	t.Run("focusBrief also right-aligns the gauge", func(t *testing.T) {
-		// focusBrief hints are longer than focusTools, so a wider terminal is
-		// needed for the full form — exercises the per-focus downgrade threshold.
-		m := Model{width: 160, focus: focusBrief, rate: known}
-		got := m.renderStatusBar()
-		for _, want := range []string{"GitHub API Usage", "45/60", "[L]", "open repo"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("focusBrief status bar = %q, missing %q", got, want)
+	t.Run("the gauge is right-aligned in every focus", func(t *testing.T) {
+		for _, focus := range []int{focusTools, focusBrief, focusHelp} {
+			m := Model{width: 160, focus: focus, rate: known}
+			got := stripANSI(m.renderStatusBar())
+			if !strings.Contains(got, "45/60") {
+				t.Errorf("focus %d status bar = %q, missing the gauge", focus, got)
 			}
 		}
 	})
@@ -1118,8 +1288,7 @@ func TestRenderStatusBarGauge(t *testing.T) {
 			{width: 120, mode: modeEditTags, rate: known},
 			{width: 120, mode: modeAPIStatus, rate: known},
 		} {
-			got := m.renderStatusBar()
-			if strings.Contains(got, "GitHub API Usage") || strings.Contains(got, "GH ") {
+			if got := m.renderStatusBar(); strings.Contains(got, "45/60") {
 				t.Errorf("input/modal status bar leaked gauge: %q", got)
 			}
 		}
@@ -1141,8 +1310,8 @@ func TestRenderHintsBarAlignment(t *testing.T) {
 	if w := lipgloss.Width(out); w != inner {
 		t.Errorf("laid-out width = %d, want inner %d (gauge not right-aligned)", w, inner)
 	}
-	// Gauge sits at the far right (full form ends with " details").
-	if !strings.HasSuffix(plain, "details") {
+	// Gauge sits at the far right (the full form ends with used/limit).
+	if !strings.HasSuffix(plain, "45/60") {
 		t.Errorf("hints bar = %q, gauge not at the right end", plain)
 	}
 	// Hints stay on the left with a spacer before the gauge.
@@ -1243,7 +1412,7 @@ func TestTrackToolSavePath(t *testing.T) {
 func TestRenderStatusBarConfirmUntrack(t *testing.T) {
 	m := Model{width: 80, mode: modeConfirmUntrack, untrackTarget: "git"}
 	got := m.renderStatusBar()
-	for _, want := range []string{"Untrack", "git", "yes", "no"} {
+	for _, want := range []string{"untrack", "git", "yes", "no"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("confirm untrack status bar = %q, missing %q", got, want)
 		}
@@ -1357,22 +1526,29 @@ func TestGaugeFilled(t *testing.T) {
 }
 
 func TestRenderRateGauge(t *testing.T) {
-	t.Run("full form shows label, used/limit and [L]", func(t *testing.T) {
+	t.Run("full form shows the label, the bar and used/limit", func(t *testing.T) {
 		m := Model{rate: version.RateLimit{Known: true, Remaining: 15, Limit: 60}}
 		got := m.renderRateGauge(false)
-		for _, want := range []string{"GitHub API Usage", "45/60", "[L]"} {
+		for _, want := range []string{"api ", "45/60", gaugeFillGlyph, gaugeTrackGlyph} {
 			if !strings.Contains(got, want) {
 				t.Errorf("full gauge = %q, missing %q", got, want)
 			}
 		}
+		// The bar spends no columns advertising [L]: the [?] overlay documents it.
+		if strings.Contains(got, "details") {
+			t.Errorf("full gauge = %q, want no key hint on the bar", got)
+		}
 	})
 
-	t.Run("compact form is shorter and shows GH used/limit [L]", func(t *testing.T) {
+	t.Run("compact form drops the bar, keeps the numbers", func(t *testing.T) {
 		m := Model{rate: version.RateLimit{Known: true, Remaining: 15, Limit: 60}}
 		full := m.renderRateGauge(false)
 		compact := m.renderRateGauge(true)
-		if !strings.Contains(compact, "GH ") || !strings.Contains(compact, "45/60") || !strings.Contains(compact, "[L]") {
+		if !strings.Contains(compact, "api ") || !strings.Contains(compact, "45/60") {
 			t.Errorf("compact gauge = %q, missing parts", compact)
+		}
+		if strings.Contains(compact, gaugeFillGlyph) {
+			t.Errorf("compact gauge = %q, want no bar", compact)
 		}
 		if lipgloss.Width(compact) >= lipgloss.Width(full) {
 			t.Errorf("compact (%d) not shorter than full (%d)", lipgloss.Width(compact), lipgloss.Width(full))
@@ -1380,17 +1556,13 @@ func TestRenderRateGauge(t *testing.T) {
 	})
 
 	t.Run("exhausted shows 60/60 with a full bar", func(t *testing.T) {
-		// Constant-yellow-at-exhaustion is structural (renderRateGauge has no
-		// pressure branch); gaugeFilled(60,60)==gaugeCells is covered separately.
 		m := Model{rate: version.RateLimit{Known: true, Remaining: 0, Limit: 60}}
 		got := m.renderRateGauge(false)
 		if !strings.Contains(got, "60/60") {
 			t.Errorf("exhausted gauge = %q, want 60/60", got)
 		}
-		// Strip ANSI before checking the bar is a full gaugeCells-wide fill
-		// block between the brackets.
 		plain := ansiCSI.ReplaceAllString(got, "")
-		if !strings.Contains(plain, "["+strings.Repeat(gaugeFillGlyph, gaugeCells)+"]") {
+		if !strings.Contains(plain, strings.Repeat(gaugeFillGlyph, gaugeCells)) {
 			t.Errorf("exhausted gauge = %q, want a full %d-cell bar", plain, gaugeCells)
 		}
 	})
@@ -1400,7 +1572,7 @@ func TestRenderRateGauge(t *testing.T) {
 		// bar stays visible on degraded color profiles.
 		m := Model{rate: version.RateLimit{Known: true, Remaining: 30, Limit: 60}}
 		plain := ansiCSI.ReplaceAllString(m.renderRateGauge(false), "")
-		want := "[" + strings.Repeat(gaugeFillGlyph, gaugeCells/2) + strings.Repeat(gaugeTrackGlyph, gaugeCells/2) + "]"
+		want := strings.Repeat(gaugeFillGlyph, gaugeCells/2) + strings.Repeat(gaugeTrackGlyph, gaugeCells/2)
 		if !strings.Contains(plain, want) {
 			t.Errorf("half-used gauge = %q, want bar %q", plain, want)
 		}
@@ -1412,6 +1584,52 @@ func TestRenderRateGauge(t *testing.T) {
 			t.Errorf("unknown gauge = %q, want empty", got)
 		}
 	})
+}
+
+// TestGaugeVisible pins when the gauge is on screen at all: whenever there is a
+// known quota. It is also the only visible sign that keepkit has an API surface,
+// so hiding it at rest hid the [L] overlay along with it — the numbers are the
+// affordance.
+func TestGaugeVisible(t *testing.T) {
+	tests := []struct {
+		name string
+		rate version.RateLimit
+		want bool
+	}{
+		{"unknown", version.RateLimit{}, false},
+		{"fresh 5000 window", version.RateLimit{Known: true, Limit: 5000, Remaining: 4900}, true},
+		{"spent window", version.RateLimit{Known: true, Limit: 5000, Remaining: 4}, true},
+		{"token-less window", version.RateLimit{Known: true, Limit: 60, Remaining: 59}, true},
+		{"zero limit", version.RateLimit{Known: true, Limit: 0, Remaining: 0}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := gaugeVisible(tt.rate); got != tt.want {
+				t.Errorf("gaugeVisible(%+v) = %v, want %v", tt.rate, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGaugeFillTurnsDangerous: the fill recolors as the window runs out, and
+// the danger bound is proportional so a 60-request limit does not read as an
+// emergency from its first request.
+func TestGaugeFillTurnsDangerous(t *testing.T) {
+	forceColorProfile(t)
+	danger := themeSeq(ui.Default.Danger)
+	calm := Model{rate: version.RateLimit{Known: true, Limit: 5000, Remaining: 2000}}.renderRateGauge(false)
+	if strings.Contains(calm, danger) {
+		t.Errorf("gauge at 2000/5000 left = %q, want the calm fill", stripANSI(calm))
+	}
+	spent := Model{rate: version.RateLimit{Known: true, Limit: 5000, Remaining: 50}}.renderRateGauge(false)
+	if !strings.Contains(spent, danger) {
+		t.Errorf("gauge at 50/5000 left = %q, want the danger fill", stripANSI(spent))
+	}
+	// The same absolute number is most of a token-less window, not an alarm.
+	tokenless := Model{rate: version.RateLimit{Known: true, Limit: 60, Remaining: 50}}.renderRateGauge(false)
+	if strings.Contains(tokenless, danger) {
+		t.Errorf("gauge at 50/60 left = %q, want the calm fill", stripANSI(tokenless))
+	}
 }
 
 // TestRenderRateGaugeColors pins the gauge's fill/track color distinction. It
@@ -1427,9 +1645,9 @@ func TestRenderRateGaugeColors(t *testing.T) {
 	fgSeq := func(c lipgloss.Color) string {
 		return termenv.TrueColor.Color(string(c)).Sequence(false)
 	}
-	fillSeq, trackSeq := fgSeq(ui.ColorOrange), fgSeq(ui.ColorOrangeDim)
+	fillSeq, trackSeq := fgSeq(ui.Default.Signal), fgSeq(ui.Default.SignalDim)
 
-	fill := ui.RateGaugeFillStyle.Render(gaugeFillGlyph)
+	fill := ui.DefaultStyles().GaugeFill.Render(gaugeFillGlyph)
 	if !strings.Contains(fill, fillSeq) {
 		t.Errorf("fill = %q, missing foreground sequence %q", fill, fillSeq)
 	}
@@ -1437,7 +1655,7 @@ func TestRenderRateGaugeColors(t *testing.T) {
 		t.Errorf("fill = %q, must color the glyph, not paint a background", fill)
 	}
 
-	track := ui.RateGaugeTrackStyle.Render(gaugeTrackGlyph)
+	track := ui.DefaultStyles().GaugeTrack.Render(gaugeTrackGlyph)
 	if !strings.Contains(track, trackSeq) {
 		t.Errorf("track = %q, missing foreground sequence %q", track, trackSeq)
 	}
@@ -1758,7 +1976,7 @@ func TestScrollColumn(t *testing.T) {
 	t.Run("no thumb when content fits", func(t *testing.T) {
 		vp := viewport.New(10, 5)
 		vp.SetContent("one\ntwo")
-		if got := scrollColumn(vp, true); strings.Contains(got, thumb) {
+		if got := scrollColumn(ui.DefaultStyles(), vp, true); strings.Contains(got, thumb) {
 			t.Errorf("expected no thumb for non-scrollable content, got %q", got)
 		}
 	})
@@ -1766,7 +1984,7 @@ func TestScrollColumn(t *testing.T) {
 	t.Run("thumb when content overflows", func(t *testing.T) {
 		vp := viewport.New(10, 3)
 		vp.SetContent(strings.Repeat("line\n", 20))
-		if got := scrollColumn(vp, true); !strings.Contains(got, thumb) {
+		if got := scrollColumn(ui.DefaultStyles(), vp, true); !strings.Contains(got, thumb) {
 			t.Errorf("expected thumb for scrollable content, got %q", got)
 		}
 	})
@@ -1848,8 +2066,8 @@ func TestInstalledMsgCarriesPresence(t *testing.T) {
 		want    string
 		notWant string
 	}{
-		{"installed but version-less", true, cardLabel("installed:") + "✓ no version", "not installed"},
-		{"absent", false, cardLabel("installed:") + "✕ not installed", "no version"},
+		{"installed but version-less", true, "✓ present", "missing"},
+		{"absent", false, "✕ missing", "present"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2186,7 +2404,7 @@ func TestRemoteMsgRateLimitedHint(t *testing.T) {
 		t.Errorf("m.rate = %+v, want Known with Remaining 0", nm.rate)
 	}
 	// The card must actually render the hint, not just set the internal map.
-	if card := stripANSI(nm.renderCard()); !strings.Contains(card, "rate limited — press [L]") {
+	if card := stripANSI(nm.renderCard()); !strings.Contains(card, "rate limited — press L") {
 		t.Errorf("renderCard() missing rate-limit hint; got:\n%s", card)
 	}
 }
@@ -2241,7 +2459,7 @@ func TestRenderAPIStatusOverlay(t *testing.T) {
 	got := m.renderAPIStatus()
 
 	// Used/limit (not remaining): Remaining 0 of 60 → "60 / 60".
-	for _, want := range []string{"GitHub API status", "env", "ghp_••••••••3f2a", "Used: 60 / 60", "✕", "[e]", "[r]", "[esc]"} {
+	for _, want := range []string{"github api usage", "env", "ghp_••••••••3f2a", "used   60 / 60", "✕", "e set token", "r refresh", "esc close"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overlay = %q, missing %q", got, want)
 		}
@@ -2261,8 +2479,8 @@ func TestRenderAPIStatusUsedLimit(t *testing.T) {
 	m := Model{width: 80, height: 24, mode: modeAPIStatus}
 	m.rate = version.RateLimit{Known: true, Remaining: 15, Limit: 60}
 	got := m.renderAPIStatus()
-	if !strings.Contains(got, "Used: 45 / 60") {
-		t.Errorf("overlay = %q, want used/limit line 'Used: 45 / 60'", got)
+	if !strings.Contains(got, "used   45 / 60") {
+		t.Errorf("overlay = %q, want used/limit line 'used   45 / 60'", got)
 	}
 	if strings.Contains(got, "Limit: 15") {
 		t.Errorf("overlay = %q, should not show remaining as the count", got)
@@ -2468,7 +2686,7 @@ func TestRenderAPIStatusTokenEntry(t *testing.T) {
 	m := Model{width: 80, height: 24, mode: modeTokenInput, tokenInput: textinput.New()}
 	m.tokenError = "token invalid"
 	got := m.renderAPIStatus()
-	for _, want := range []string{"token:", "token invalid", "validate & save"} {
+	for _, want := range []string{"token ", "token invalid", "validate & save"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overlay = %q, missing %q", got, want)
 		}
@@ -2602,7 +2820,7 @@ func TestUpdateBriefRefresh(t *testing.T) {
 		}
 	})
 
-	t.Run("r in tool list still starts rename", func(t *testing.T) {
+	t.Run("R starts rename from the tool list", func(t *testing.T) {
 		m := Model{
 			meta:         []loader.ToolMeta{{Name: "tool-x"}},
 			metaSelected: 0,
@@ -2611,11 +2829,11 @@ func TestUpdateBriefRefresh(t *testing.T) {
 		}
 		m.tools = loader.ToolsFromMeta(m.meta)
 
-		updated, _ := m.Update(keyR)
+		updated, _ := m.Update(keyRunes("R"))
 		nm := updated.(Model)
 
 		if nm.mode != modeRename {
-			t.Error("renaming = false, want true (r in focusTools opens rename)")
+			t.Error("renaming = false, want true (R opens rename)")
 		}
 		if nm.refreshingFor != "" {
 			t.Errorf("refreshingFor = %q, want empty in focusTools", nm.refreshingFor)
@@ -2623,12 +2841,16 @@ func TestUpdateBriefRefresh(t *testing.T) {
 	})
 }
 
-// TestBriefHelpBarHasRefresh verifies the focusBrief help bar advertises [r] refresh.
-func TestBriefHelpBarHasRefresh(t *testing.T) {
-	m := Model{width: 120, focus: focusBrief}
-	bar := m.renderStatusBar()
-	if !strings.Contains(bar, "refresh") {
-		t.Errorf("focusBrief help bar = %q, want it to mention \"refresh\"", bar)
+// TestBriefFooterHasRefresh verifies [r] refresh is advertised where it acts —
+// the card's own footer, not the global status bar.
+func TestBriefFooterHasRefresh(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "git"}})
+	m = mustModel(m.Update(tea.WindowSizeMsg{Width: 140, Height: 30}))
+	if got := stripANSI(m.renderBrief()); !strings.Contains(got, "r refresh") {
+		t.Errorf("brief panel = %q, want it to advertise r refresh", got)
+	}
+	if bar := m.renderStatusBar(); strings.Contains(bar, "refresh") {
+		t.Errorf("status bar = %q, want the panel-local refresh hint kept off it", bar)
 	}
 }
 
@@ -2654,8 +2876,11 @@ func TestRenderCardSpinner(t *testing.T) {
 			t.Errorf("refreshing card = %q, want it to contain %q", withSpin, want)
 		}
 	}
-	if strings.Contains(withSpin, "a fine tool") {
-		t.Errorf("refreshing card = %q, want the about hidden while refreshing", withSpin)
+	// The tagline is its own line now rather than a suffix on the title, so it
+	// stays put while the title carries the spinner — the card no longer
+	// reflows under a refresh.
+	if !strings.Contains(withSpin, "a fine tool") {
+		t.Errorf("refreshing card = %q, want the tagline to stay put", withSpin)
 	}
 
 	m.refreshingFor = ""
@@ -2668,158 +2893,244 @@ func TestRenderCardSpinner(t *testing.T) {
 	}
 }
 
-// TestCardValuesShareOneColumn pins the card's single value column: every
-// "label: value" line the card can print — [info] and [notes] alike — starts
-// its value at cardLabelWidth. A line added with a hand-written label instead
-// of cardLabel fails here rather than shipping a card whose values step in and
-// out by a few cells each. The fixture fills every gated line, and the
-// completeness check below is what keeps it filling them.
-func TestCardValuesShareOneColumn(t *testing.T) {
-	m := New([]loader.ToolMeta{{
-		Name:   "gh",
-		GitHub: "cli/cli",
-		Status: loader.StatusActive,
-		Note:   strings.Repeat("a wordy note ", 8),
-		Tags:   []string{"git"},
-	}})
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
-	mm := updated.(Model)
-	mm.versions["gh"] = VersionInfo{
-		Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true, InstalledPresent: true,
-	}
-	mm.repoCards["gh"] = version.RepoCard{
-		Stars:       42123,
-		Latest:      "v2.0.0",
-		PublishedAt: "2026-01-02T15:04:05Z",
-		Languages:   map[string]int{"Go": 900, "Shell": 100},
-		RepoStatus:  "active",
-	}
-
-	// A label line is "<label>:" + padding + a value; wrapped continuations
-	// start with the padding itself and are skipped by the leading class.
-	labelLine := regexp.MustCompile(`^([a-z]+:)( +)(\S.*)$`)
-	seen := map[string]bool{}
-	for _, line := range strings.Split(stripANSI(mm.renderCard()), "\n") {
-		parts := labelLine.FindStringSubmatch(line)
-		if parts == nil {
+// metricValue reads a metric's value out of the card's strip: it finds the row
+// carrying the caption, works out which column of that row it sits in, and reads
+// the same column on the row `below` lines down. That is exactly the reading the
+// strip's layout promises — captions over values — so a value that drifted into
+// a neighbouring column fails here instead of passing a loose "card contains
+// v2.0.0" check.
+//
+// The column is identified by the rules between columns, not by the caption's
+// start offset: caption and value are each centered in their column, so the two
+// deliberately do not begin at the same cell.
+func metricValue(t *testing.T, card, label string, below int) string {
+	t.Helper()
+	lines := strings.Split(stripANSI(card), "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, label) || i+below >= len(lines) {
 			continue
 		}
-		seen[parts[1]] = true
-		col := utf8.RuneCountInString(parts[1]) + utf8.RuneCountInString(parts[2])
-		if col != cardLabelWidth {
-			t.Errorf("%q starts its value at column %d, want %d", line, col, cardLabelWidth)
+		cols := strings.Split(line, "│")
+		for c, col := range cols {
+			if !strings.Contains(col, label) {
+				continue
+			}
+			below := strings.Split(lines[i+below], "│")
+			if c >= len(below) {
+				t.Fatalf("row below %q has %d columns, want at least %d", label, len(below), c+1)
+			}
+			return strings.TrimSpace(below[c])
+		}
+	}
+	t.Fatalf("card has no %q metric; got:\n%s", label, stripANSI(card))
+	return ""
+}
+
+// metricColumnCentered reports whether a column's text sits centered in it, with
+// at most one cell more slack on the right than on the left. It is what says the
+// strip reads as a block of measurements rather than as text hanging off the
+// rules between them.
+func metricColumnCentered(col string) bool {
+	trimmed := strings.TrimSpace(col)
+	if trimmed == "" {
+		return true
+	}
+	left := utf8.RuneCountInString(col) - utf8.RuneCountInString(strings.TrimLeft(col, " "))
+	right := utf8.RuneCountInString(col) - utf8.RuneCountInString(strings.TrimRight(col, " "))
+	return right-left >= 0 && right-left <= 1
+}
+
+// TestMetricsStripLayout pins the block the card's [info] section became: every
+// row is exactly the panel's inner width (a short row would break the fill into
+// a ragged edge), captions sit above their values, and the grid re-flows onto
+// fewer columns rather than truncating when the panel is narrow — which is the
+// 80-column baseline, where four columns would leave seven cells each.
+func TestMetricsStripLayout(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	m.versions["gh"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	m.repoCards["gh"] = version.RepoCard{
+		Stars: 42123, Latest: "v2.0.0", PublishedAt: "2026-01-02T15:04:05Z", RepoStatus: "active",
+	}
+
+	for _, inner := range []int{58, 40, 30, 20, metricStripMinWidth} {
+		m.briefW = inner + 2
+		rows := m.metricsStrip(m.tools[0], inner)
+		if len(rows) == 0 {
+			t.Fatalf("inner=%d: no strip", inner)
+		}
+		for i, row := range rows {
+			if w := lipgloss.Width(row); w != inner {
+				t.Errorf("inner=%d: row %d is %d cells, want exactly %d (a ragged fill)", inner, i, w, inner)
+			}
+		}
+		// A caption is never cut. metricMinCol exists to guarantee that, but the
+		// column count has to be solved against the row the strip actually draws
+		// — a blank at each end plus a rule between every pair. Solved against
+		// inner alone it answered "three columns" at a 40-cell panel and then
+		// handed each of them 10 cells, printing MAINTENANC.
+		body := stripANSI(strings.Join(rows, "\n"))
+		for _, caption := range []string{"INSTALLED", "LATEST", "MAINTENANCE", "STARS"} {
+			if !strings.Contains(body, caption) {
+				t.Errorf("inner=%d: caption %q was cut instead of re-flowing:\n%s", inner, caption, body)
+			}
 		}
 	}
 
-	for _, label := range []string{
-		"repo:", "stars:", "installed:", "latest:", "languages:", "maintenance:",
-		"status:", "note:", "tags:",
+	// Wide: all four metrics on one row, captions over values.
+	m.briefW = 60
+	card := strings.Join(m.metricsStrip(m.tools[0], 58), "\n")
+	for label, want := range map[string]string{
+		"INSTALLED": "v1.0.0", "LATEST": "v2.0.0 ↑", "MAINTENANCE": "● active", "STARS": "42.1k",
 	} {
-		if !seen[label] {
-			t.Errorf("card has no %q line — the fixture stopped covering every labelled line", label)
+		if got := metricValue(t, card, label, 1); got != want {
+			t.Errorf("%s = %q, want %q", label, got, want)
+		}
+	}
+	// The release date is a second line under the version, not a suffix on it.
+	if got := metricValue(t, card, "LATEST", 2); got != "2026-01-02" {
+		t.Errorf("LATEST sub-line = %q, want the release date", got)
+	}
+
+	// Every cell is centered in its column. Only the last column of a row is
+	// exempt from the measurement: it absorbs the row's rounding fill, so its
+	// right margin says nothing about where its text sits.
+	for r, row := range m.metricsStrip(m.tools[0], 58) {
+		cols := strings.Split(stripANSI(row), "│")
+		for c, col := range cols[:max(len(cols)-1, 0)] {
+			if !metricColumnCentered(col) {
+				t.Errorf("row %d column %d = %q, want its text centered", r, c, col)
+			}
+		}
+	}
+
+	// Narrow: the same four metrics, still readable, on more rows.
+	narrow := m.metricsStrip(m.tools[0], 28)
+	if len(narrow) <= len(m.metricsStrip(m.tools[0], 58)) {
+		t.Error("narrow strip did not re-flow onto more rows")
+	}
+	for _, label := range []string{"INSTALLED", "LATEST", "MAINTENANCE", "STARS"} {
+		if !strings.Contains(stripANSI(strings.Join(narrow, "\n")), label) {
+			t.Errorf("narrow strip dropped %q instead of re-flowing", label)
 		}
 	}
 }
 
-// TestCardNoteWrapsUnderItsLabel covers the other half of the column: a value
-// wrapped to the full inner width used to run cardLabelWidth cells past the
-// panel edge, where the viewport (which truncates, it does not soft-wrap) cut
-// the first line, and its continuations fell back to column 0.
-//
-// The fixture is ASCII on purpose. The width check below measures display
-// cells, but wrapText counts runes, so a note of East-Asian-wide characters
-// still overflows the panel — a pre-existing wrapText limitation (the one
-// tagHeaderLine's truncateToWidth exists to avoid on the list side), not
-// something the value column introduced. A CJK row here would pin the bug
-// rather than the fix.
-func TestCardNoteWrapsUnderItsLabel(t *testing.T) {
+// TestMetricsStripOmitsUnknowns: a tool with no GitHub ref has no release, no
+// maintenance state and no stars, and the strip must leave those out rather
+// than print three empty captions.
+func TestMetricsStripOmitsUnknowns(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "local"}})
+	m.briefW = 60
+	m.versions["local"] = VersionInfo{Installed: "v1.0.0", InstalledKnown: true}
+	got := stripANSI(strings.Join(m.metricsStrip(m.tools[0], 58), "\n"))
+	if !strings.Contains(got, "INSTALLED") || !strings.Contains(got, "v1.0.0") {
+		t.Errorf("strip = %q, want the installed version", got)
+	}
+	for _, absent := range []string{"LATEST", "MAINTENANCE", "STARS"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("strip = %q, want no %q caption for a tool with no repo", got, absent)
+		}
+	}
+}
+
+// TestMetaLineFitsPanel: the meta line carries several cells on one wrapped
+// line, and wrapping happens between whole cells — a cell carries ANSI, so a
+// cut inside one would emit a broken escape into the viewport. Every line must
+// also stay inside the panel, which truncates rather than soft-wraps.
+func TestMetaLineFitsPanel(t *testing.T) {
+	forceColorProfile(t)
 	m := New([]loader.ToolMeta{{
 		Name:   "gh",
 		Status: loader.StatusActive,
-		Note:   strings.Repeat("a wordy note ", 12),
+		Note:   strings.Repeat("a wordy note ", 6),
+		Tags:   []string{"git"},
 	}})
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	mm := updated.(Model)
-
 	inner := max(mm.briefW-2, 1)
-	indent := strings.Repeat(" ", cardLabelWidth)
-	var noteLines []string
-	for _, line := range strings.Split(stripANSI(mm.renderCard()), "\n") {
-		if strings.HasPrefix(line, "note:") || (len(noteLines) > 0 && strings.HasPrefix(line, indent)) {
-			noteLines = append(noteLines, line)
-			continue
-		}
-		if len(noteLines) > 0 {
-			break
-		}
-	}
 
-	if len(noteLines) < 2 {
-		t.Fatalf("note rendered on %d line(s), want a wrapped block; card:\n%s", len(noteLines), stripANSI(mm.renderCard()))
+	line := mm.metaLine(mm.tools[0], inner)
+	for _, l := range strings.Split(line, "\n") {
+		if w := lipgloss.Width(l); w > inner {
+			t.Errorf("meta line %q is %d cells wide, past the %d-cell panel", stripANSI(l), w, inner)
+		}
 	}
-	for _, line := range noteLines {
-		if w := lipgloss.Width(strings.TrimRight(line, " ")); w > inner {
-			t.Errorf("note line %q is %d cells wide, past the %d-cell panel", line, w, inner)
+	plain := stripANSI(line)
+	for _, want := range []string{"status", "active", "tags", "git", "note"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("meta line = %q, missing %q", plain, want)
 		}
 	}
 }
 
-// TestRenderCardInstalledLatest covers the [info] version lines: installed:
-// renders whenever the section is open (muted "detecting…" while the local
-// probe is in flight, "✓ no version" / "✕ not installed" once it reported
-// empty, split by presence), the section
-// opens for a GitHub-less tool once an installed version is known, and
-// latest: gains the update highlight + ↑ only when the installed version is
-// older. The model goes through New + WindowSizeMsg so renderCard sees the
-// same initialized state (spinner, widths) as the running app.
+// TestMetaLineEmptyValuesOfferTheirKey: an empty note or tag does not get a
+// line of its own — it gets the key that fills it, which is the only thing an
+// empty field is good for.
+func TestMetaLineEmptyValuesOfferTheirKey(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", Status: loader.StatusTrying}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	mm := updated.(Model)
+	plain := stripANSI(mm.metaLine(mm.tools[0], max(mm.briefW-2, 1)))
+	for _, want := range []string{"tags — # add", "note — e write"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("meta line = %q, want the %q prompt", plain, want)
+		}
+	}
+}
+
+// TestRenderCardInstalledLatest covers the strip's two version metrics:
+// installed renders in all four states ("detecting…" while the local probe is
+// in flight, "✓ no version" / "✕ not installed" once it reported empty, split
+// by presence), and latest gains the ↑ only when the installed version is
+// older. The model goes through New + WindowSizeMsg so renderCard sees the same
+// initialized state (spinner, widths) as the running app.
 func TestRenderCardInstalledLatest(t *testing.T) {
 	newCardModel := func(github string) Model {
 		m := New([]loader.ToolMeta{{Name: "gh", GitHub: github}})
-		updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
 		return updated.(Model)
 	}
 
-	t.Run("up to date: both lines, no arrow", func(t *testing.T) {
+	t.Run("up to date: both metrics, no arrow", func(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Installed: "v2.0.0", Latest: "v2.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v2.0.0") {
-			t.Errorf("card missing installed line; got:\n%s", card)
+		card := m.renderCard()
+		if got := metricValue(t, card, "INSTALLED", 1); got != "v2.0.0" {
+			t.Errorf("INSTALLED = %q, want v2.0.0", got)
 		}
-		if !strings.Contains(card, cardLabel("latest:")+"\uf412 v2.0.0") {
-			t.Errorf("card missing latest line; got:\n%s", card)
+		if got := metricValue(t, card, "LATEST", 1); got != "v2.0.0" {
+			t.Errorf("LATEST = %q, want v2.0.0 with no arrow", got)
 		}
-		if strings.Contains(card, "↑") {
-			t.Errorf("up-to-date card shows update arrow; got:\n%s", card)
+		if strings.Contains(stripANSI(card), "↑") {
+			t.Errorf("up-to-date card shows update arrow; got:\n%s", stripANSI(card))
 		}
 	})
 
 	// A tool's --version prints a bare number where its release is tagged with
-	// a "v" — both lines go through version.DisplayVersion so the same binary
-	// does not read as two different things. Covers all three write sites: the
-	// installed line, the plain latest line and the highlighted one.
-	t.Run("bare version numbers gain the v on both lines", func(t *testing.T) {
+	// a "v" — both metrics go through version.DisplayVersion so the same binary
+	// does not read as two different things.
+	t.Run("bare version numbers gain the v on both metrics", func(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Installed: "1.10.2", Latest: "1.10.2", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "1.10.2"}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.10.2") {
-			t.Errorf("installed line kept the bare version; got:\n%s", card)
+		card := m.renderCard()
+		if got := metricValue(t, card, "INSTALLED", 1); got != "v1.10.2" {
+			t.Errorf("INSTALLED = %q, want v1.10.2", got)
 		}
-		if !strings.Contains(card, cardLabel("latest:")+"\uf412 v1.10.2") {
-			t.Errorf("latest line kept the bare version; got:\n%s", card)
+		if got := metricValue(t, card, "LATEST", 1); got != "v1.10.2" {
+			t.Errorf("LATEST = %q, want v1.10.2", got)
 		}
 
 		up := newCardModel("cli/cli")
 		up.versions["gh"] = VersionInfo{Installed: "1.9.0", Latest: "1.10.2", InstalledKnown: true}
 		up.repoCards["gh"] = version.RepoCard{Latest: "1.10.2"}
-		card = stripANSI(up.renderCard())
-		if !strings.Contains(card, cardLabel("latest:")+"\uf412 v1.10.2 ↑") {
-			t.Errorf("highlighted latest kept the bare version; got:\n%s", card)
+		card = up.renderCard()
+		if got := metricValue(t, card, "LATEST", 1); got != "v1.10.2 ↑" {
+			t.Errorf("highlighted LATEST = %q, want v1.10.2 ↑", got)
 		}
-		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.9.0") {
-			t.Errorf("installed line kept the bare version; got:\n%s", card)
+		if got := metricValue(t, card, "INSTALLED", 1); got != "v1.9.0" {
+			t.Errorf("INSTALLED = %q, want v1.9.0", got)
 		}
 	})
 
@@ -2828,22 +3139,24 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 	t.Run("non-semver version left as detected", func(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Installed: "nightly", InstalledKnown: true}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("installed:")+"\uf412 nightly") {
-			t.Errorf("installed line rewrote a non-version string; got:\n%s", card)
+		if got := metricValue(t, m.renderCard(), "INSTALLED", 1); got != "nightly" {
+			t.Errorf("INSTALLED = %q, want the string as detected", got)
 		}
 	})
 
-	t.Run("update available: arrow and date suffix", func(t *testing.T) {
+	t.Run("update available: arrow and date sub-line", func(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0", PublishedAt: "2026-01-02T15:04:05Z"}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("latest:")+"\uf412 v2.0.0 ↑ (2026-01-02)") {
-			t.Errorf("card missing highlighted latest with arrow; got:\n%s", card)
+		card := m.renderCard()
+		if got := metricValue(t, card, "LATEST", 1); got != "v2.0.0 ↑" {
+			t.Errorf("LATEST = %q, want the arrow", got)
 		}
-		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.0.0") {
-			t.Errorf("card missing installed line; got:\n%s", card)
+		if got := metricValue(t, card, "LATEST", 2); got != "2026-01-02" {
+			t.Errorf("LATEST sub-line = %q, want the release date", got)
+		}
+		if got := metricValue(t, card, "INSTALLED", 1); got != "v1.0.0" {
+			t.Errorf("INSTALLED = %q, want v1.0.0", got)
 		}
 	})
 
@@ -2851,24 +3164,23 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0", InstalledKnown: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("installed:")+"✕ not installed") {
-			t.Errorf("card missing installed fallback with ✕ marker; got:\n%s", card)
+		if got := metricValue(t, m.renderCard(), "INSTALLED", 1); got != "✕ missing" {
+			t.Errorf("INSTALLED = %q, want the ✕ marker", got)
 		}
 	})
 
 	// A tool that is installed but won't name its version (a TUI app ignoring
-	// --version) must not read as missing: same empty Installed, different line.
+	// --version) must not read as missing: same empty Installed, different value.
 	t.Run("detection reported empty but present: no version", func(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0", InstalledKnown: true, InstalledPresent: true}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("installed:")+"✓ no version") {
-			t.Errorf("card missing present-but-version-less line; got:\n%s", card)
+		card := m.renderCard()
+		if got := metricValue(t, card, "INSTALLED", 1); got != "✓ present" {
+			t.Errorf("INSTALLED = %q, want the present-but-version-less value", got)
 		}
-		if strings.Contains(card, "not installed") {
-			t.Errorf("an installed tool must not read as missing; got:\n%s", card)
+		if strings.Contains(stripANSI(card), "missing") {
+			t.Errorf("an installed tool must not read as missing; got:\n%s", stripANSI(card))
 		}
 	})
 
@@ -2876,60 +3188,12 @@ func TestRenderCardInstalledLatest(t *testing.T) {
 		m := newCardModel("cli/cli")
 		m.versions["gh"] = VersionInfo{Latest: "v2.0.0"}
 		m.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0"}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("installed:")+"detecting…") {
-			t.Errorf("card missing pending installed line; got:\n%s", card)
+		card := m.renderCard()
+		if got := metricValue(t, card, "INSTALLED", 1); got != "detecting…" {
+			t.Errorf("INSTALLED = %q, want the pending value", got)
 		}
-		if strings.Contains(card, "not installed") || strings.Contains(card, "✕") {
-			t.Errorf("card claims not installed before detection finished; got:\n%s", card)
-		}
-	})
-
-	t.Run("no version data at all: detecting, no latest", func(t *testing.T) {
-		m := newCardModel("cli/cli")
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("installed:")+"detecting…") {
-			t.Errorf("card missing pending installed line; got:\n%s", card)
-		}
-		if strings.Contains(card, "latest:") {
-			t.Errorf("card shows latest with no card data; got:\n%s", card)
-		}
-	})
-
-	// A repo card can exist with no release at all (repo info + stars fetched,
-	// no tagged release): the latest: line is gated on card.Latest != "", so it
-	// may not appear — and with it gone the U+F412 glyph may show up exactly
-	// once, on the installed: line it now also marks.
-	t.Run("card without a release: no latest line, one version glyph", func(t *testing.T) {
-		m := newCardModel("cli/cli")
-		m.versions["gh"] = VersionInfo{Installed: "v1.0.0", InstalledKnown: true}
-		m.repoCards["gh"] = version.RepoCard{Stars: 42}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.0.0") {
-			t.Errorf("card missing installed line; got:\n%s", card)
-		}
-		if strings.Contains(card, "latest:") {
-			t.Errorf("card shows latest line with no release; got:\n%s", card)
-		}
-		if n := strings.Count(card, "\uf412"); n != 1 {
-			t.Errorf("card shows the version glyph %d times, want 1 (installed only); got:\n%s", n, card)
-		}
-	})
-
-	t.Run("no github with installed: info section opens", func(t *testing.T) {
-		m := newCardModel("")
-		m.versions["gh"] = VersionInfo{Installed: "v1.0.0", InstalledKnown: true}
-		card := stripANSI(m.renderCard())
-		if !strings.Contains(card, "[info]") || !strings.Contains(card, cardLabel("installed:")+"\uf412 v1.0.0") {
-			t.Errorf("card missing [info]/installed for GitHub-less tool; got:\n%s", card)
-		}
-	})
-
-	t.Run("no github no installed: no info section", func(t *testing.T) {
-		m := newCardModel("")
-		card := stripANSI(m.renderCard())
-		if strings.Contains(card, "[info]") || strings.Contains(card, "installed:") {
-			t.Errorf("card renders [info] with nothing to show; got:\n%s", card)
+		if strings.Contains(stripANSI(card), "missing") || strings.Contains(stripANSI(card), "✕") {
+			t.Errorf("card claims not installed before detection finished; got:\n%s", stripANSI(card))
 		}
 	})
 }
@@ -2973,14 +3237,14 @@ func TestUpdateLogPanelTitle(t *testing.T) {
 	m.metaSelected = 0 // rg — the updating tool
 	m.helpViewport.SetContent(m.renderHelpContent())
 	top := stripANSI(strings.SplitN(m.renderHelp(), "\n", 2)[0])
-	if !strings.Contains(top, " [3] Update ") {
-		t.Errorf("updating-tool top border = %q, want [3] Update title", top)
+	if !strings.Contains(top, " [3] update ") {
+		t.Errorf("updating-tool top border = %q, want the [3] update title", top)
 	}
 
 	m.metaSelected = 1 // fzf — not updating
 	topOther := stripANSI(strings.SplitN(m.renderHelp(), "\n", 2)[0])
-	if !strings.Contains(topOther, " [3] Help ") || strings.Contains(topOther, "Update") {
-		t.Errorf("other-tool top border = %q, want [3] Help title", topOther)
+	if !strings.Contains(topOther, " [3] help ") || strings.Contains(topOther, "update") {
+		t.Errorf("other-tool top border = %q, want the [3] help title", topOther)
 	}
 }
 
@@ -3057,7 +3321,7 @@ func TestUpdateLogPersistsAfterDone(t *testing.T) {
 // the entry's lines keep the full colorizeHelp styling.
 func TestApplySpotlight(t *testing.T) {
 	forceColorProfile(t)
-	const dimSeq = "38;2;136;136;136" // ui.ColorDim #888888 in truecolor
+	dimSeq := themeSeq(ui.Default.Dim)
 
 	m := helpNavModel()
 	if len(m.helpEntries) != 2 {
@@ -3083,7 +3347,7 @@ func TestApplySpotlight(t *testing.T) {
 		}
 	}
 	// The spotlighted flag line keeps its HelpFlagStyle color (ColorPrimary).
-	const flagSeq = "38;2;218;119;86" // ui.ColorPrimary #DA7756
+	flagSeq := themeSeq(ui.Default.Accent)
 	if !strings.Contains(lines[e.start], flagSeq) {
 		t.Errorf("entry start line lost its flag styling: %q", lines[e.start])
 	}
@@ -3108,7 +3372,7 @@ func TestApplySpotlightStaleIndex(t *testing.T) {
 // repaints the viewport undimmed — stale dimming must not survive setFocus.
 func TestSpotlightClearedOnFocusAway(t *testing.T) {
 	forceColorProfile(t)
-	const dimSeq = "38;2;136;136;136"
+	dimSeq := themeSeq(ui.Default.Dim)
 
 	m := helpNavModel()
 	m.helpViewport = viewport.New(60, 10)
@@ -3283,40 +3547,42 @@ func TestHelpNavEmptyEntriesScrolls(t *testing.T) {
 	}
 }
 
-// TestRenderStatusBarFocusHelp: the [3] bar advertises navigation when the
-// entry index is non-empty, adds the exit hint while the cursor is active,
-// and falls back to the scroll label when there is nothing to navigate.
-func TestRenderStatusBarFocusHelp(t *testing.T) {
-	stripBar := func(m Model) string {
-		return stripANSI(m.renderStatusBar())
-	}
-
-	t.Run("no entries: scroll label", func(t *testing.T) {
+// TestHelpPanelFooter: the [3] footer says which source is showing and where in
+// it the reader is, and advertises the entry cursor only while there is an entry
+// index to walk. Those hints appear and disappear with the content, which is why
+// they live beside it rather than in the global status bar.
+func TestHelpPanelFooter(t *testing.T) {
+	t.Run("no entries: position only", func(t *testing.T) {
 		m := newTestModel(focusHelp)
-		m.width = 120
-		bar := stripBar(m)
-		if !strings.Contains(bar, "scroll") || strings.Contains(bar, "navigate") {
-			t.Errorf("bar = %q, want scroll hint and no navigate hint", bar)
+		m.width, m.height, m.helpW = 120, 30, 60
+		m.helpViewport = viewport.New(59, 20)
+		foot := stripANSI(m.renderHelp())
+		if !strings.Contains(foot, "ctrl+d/u page") {
+			t.Errorf("footer = %q, want the paging hint", foot)
+		}
+		if strings.Contains(foot, "navigate") {
+			t.Errorf("footer = %q, want no navigate hint without entries", foot)
 		}
 	})
 	t.Run("entries present: navigate hint", func(t *testing.T) {
 		m := helpNavModel()
-		m.width = 120
-		bar := stripBar(m)
-		if !strings.Contains(bar, "[j/k] navigate") {
-			t.Errorf("bar = %q, want j/k navigate hint", bar)
-		}
-		if strings.Contains(bar, "exit nav") {
-			t.Errorf("bar = %q, exit-nav hint must be absent while the cursor is off", bar)
+		m.width, m.height = 120, 30
+		m.helpViewport = viewport.New(61, 20)
+		if got := stripANSI(m.renderHelp()); !strings.Contains(got, "j/k navigate") {
+			t.Errorf("footer = %q, want the j/k navigate hint", got)
 		}
 	})
 	t.Run("cursor active: exit-nav hint", func(t *testing.T) {
 		m := helpNavModel()
-		m.width = 120
-		m.helpNavIdx = 0
-		bar := stripBar(m)
-		if !strings.Contains(bar, "[esc] exit nav") {
-			t.Errorf("bar = %q, want esc exit-nav hint", bar)
+		m.width, m.height = 120, 30
+		m.helpViewport = viewport.New(61, 20)
+		updated, _ := m.Update(keyRunes("j"))
+		nm := updated.(Model)
+		if nm.helpNavIdx < 0 {
+			t.Fatal("precondition: cursor should be active")
+		}
+		if got := stripANSI(nm.renderHelp()); !strings.Contains(got, "esc exit nav") {
+			t.Errorf("footer = %q, want the exit-nav hint", got)
 		}
 	})
 }
@@ -3494,18 +3760,24 @@ func TestResizeHeightOnlyKeepsCursor(t *testing.T) {
 }
 
 // TestHelpBaseCache: setHelpContent caches the colorized base and the normal
-// render path serves it; the spotlight is applied over the cache.
+// render path serves it; the spotlight is applied over the cache. The comparison
+// is against helpContent, not renderHelpContent — the latter is the same text
+// stepped in by the panel gutter, which is applied at the single point every
+// branch lands on and is not part of what the cache holds.
 func TestHelpBaseCache(t *testing.T) {
 	forceColorProfile(t)
 	m := helpNavModel()
 	if m.helpBase == "" {
 		t.Fatalf("helpBase empty after setHelpContent")
 	}
-	if got := m.renderHelpContent(); got != m.helpBase {
+	if got := m.helpContent(); got != m.helpBase {
 		t.Errorf("cursor-off render differs from cached base")
 	}
+	if got := m.renderHelpContent(); got != indentLines(m.helpBase) {
+		t.Errorf("panel render is not the base stepped in by the gutter")
+	}
 	m.helpNavIdx = 0
-	if got := m.renderHelpContent(); got == m.helpBase || !strings.Contains(got, "38;2;136;136;136") {
+	if got := m.helpContent(); got == m.helpBase || !strings.Contains(got, themeSeq(ui.Default.Dim)) {
 		t.Errorf("spotlight render did not dim over the cached base")
 	}
 }
@@ -3529,17 +3801,16 @@ func TestRenderHotkeysOverlayContent(t *testing.T) {
 	m := hotkeysViewModel(selfOffered)
 	view := m.View()
 	for _, want := range []string{
-		"Keyboard shortcuts",
-		"Global", "[1] Tools", "[2] Brief", "Self", "[3] Help / Man / Readme", "Scrolling",
-		"focus panel", // Global
-		"select tool", // [1] Tools
-		"open repo",   // [2] Brief
-		"self-update", // Self
-		"entry nav",   // [3] Help / Man / Readme
-		"readme",      // [3] the third panel source
-		"3 lines",     // Scrolling
-		"run in tab",  // [1] Tools enter row
-		"close",       // title close hint
+		"keys",
+		"global", "[1] tools", "[2] brief", "self", "[3] readme",
+		"focus panel",       // global
+		"move selection",    // [1] tools
+		"repo / releases",   // [2] brief
+		"self-update",       // self
+		"navigate / scroll", // [3] readme
+		"half page",         // [3] readme
+		"run in a tab",      // [1] tools enter row
+		"close",             // title close hint
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("hotkeys View missing %q", want)
@@ -3557,11 +3828,11 @@ func TestRenderHotkeysSelfGroupFollowsState(t *testing.T) {
 		want   []string
 		absent []string
 	}{
-		{state: selfNone, absent: []string{"Self", "self-update", "restart"}},
-		{state: selfOffered, want: []string{"Self", "self-update", "dismiss"}, absent: []string{"restart"}},
-		{state: selfDismissed, want: []string{"Self", "self-update", "dismiss"}},
-		{state: selfUpdated, want: []string{"Self", "restart", "later"}, absent: []string{"self-update"}},
-		{state: selfUpdatedLater, want: []string{"Self", "restart", "later"}},
+		{state: selfNone, absent: []string{"self-update", "restart"}},
+		{state: selfOffered, want: []string{"self", "self-update", "dismiss"}, absent: []string{"restart"}},
+		{state: selfDismissed, want: []string{"self", "self-update", "dismiss"}},
+		{state: selfUpdated, want: []string{"self", "restart", "later"}, absent: []string{"self-update"}},
+		{state: selfUpdatedLater, want: []string{"self", "restart", "later"}},
 	}
 	for _, tt := range tests {
 		view := hotkeysViewModel(tt.state).renderHotkeys()
@@ -3582,7 +3853,7 @@ func TestRenderHotkeysSelfGroupFollowsState(t *testing.T) {
 // mirroring the [L] overlay.
 func TestRenderHotkeysDimsBackground(t *testing.T) {
 	forceColorProfile(t)
-	const dimSeq = "38;2;136;136;136" // ui.ColorDim #888888
+	dimSeq := themeSeq(ui.Default.Dim)
 	m := hotkeysViewModel(selfNone)
 	if !strings.Contains(m.View(), dimSeq) {
 		t.Errorf("hotkeys overlay did not dim the background")
@@ -3601,19 +3872,14 @@ func TestRenderHotkeysSizeBudget(t *testing.T) {
 	if !strings.Contains(view, "close") {
 		t.Errorf("size budget: title close hint clipped off the top")
 	}
-	// Bottom-most, right-most row: [g/G] top / bottom (last Scrolling row in the
-	// last column) — its trailing word survives only if nothing was clipped off
-	// the bottom or the right edge.
-	if !strings.Contains(view, "top / bottom") {
-		t.Errorf("size budget: last Scrolling row clipped (bottom/right overflow)")
+	// Bottom-most row of the left column — its trailing word survives only if
+	// nothing was clipped off the bottom or the right edge.
+	if !strings.Contains(view, "run in a tab") {
+		t.Errorf("size budget: last [1] tools row clipped (bottom/right overflow)")
 	}
-	// The readme row lives in the same (tallest) column, above Scrolling.
-	if !strings.Contains(view, "readme") {
-		t.Errorf("size budget: [3] readme row clipped")
-	}
-	// Last row of the Self group — the newest addition, in the shortest column.
+	// Bottom-most row of the right column, in the widest state.
 	if !strings.Contains(view, "dismiss") {
-		t.Errorf("size budget: Self group's last row clipped")
+		t.Errorf("size budget: self group's last row clipped")
 	}
 	// The framed overlay must be <= the 20-row background height — in every self
 	// state, since the Self group's wording (and presence) varies with it.
@@ -3637,41 +3903,38 @@ func TestHotkeysHintInFocusBars(t *testing.T) {
 		m = updated.(Model)
 		m.focus = focus
 		bar := m.renderStatusBar()
-		if !strings.Contains(bar, "[?]") || !strings.Contains(bar, "keys") {
+		if !strings.Contains(bar, "? keys") || !strings.Contains(bar, "keys") {
 			t.Errorf("focus %d bar missing [?] keys hint: %q", focus, bar)
 		}
 	}
 }
 
-// TestReadmeHintInHelpBar: the focusHelp bar advertises [r] readme next to the
-// [h]/[m] source switches, in every help mode (the key is always live there).
-func TestReadmeHintInHelpBar(t *testing.T) {
-	for _, mode := range []int{helpModeHelp, helpModeMan, helpModeReadme} {
+// TestHelpSourceHintsInPanelTitle: the two sources the [3] panel is NOT showing
+// are named in its own frame, in every mode — they switch what the panel is,
+// which is a property of the panel rather than an action on its content, and
+// the global status bar stays out of it.
+func TestHelpSourceHintsInPanelTitle(t *testing.T) {
+	for _, tt := range []struct {
+		mode int
+		alts []string
+	}{
+		{helpModeHelp, []string{"m man", "r readme"}},
+		{helpModeMan, []string{"h help", "r readme"}},
+		{helpModeReadme, []string{"h help", "m man"}},
+	} {
 		m := New([]loader.ToolMeta{{Name: "git"}})
-		m = mustModel(m.Update(tea.WindowSizeMsg{Width: 120, Height: 24}))
+		m = mustModel(m.Update(tea.WindowSizeMsg{Width: 140, Height: 30}))
 		m.focus = focusHelp
-		m.helpMode = mode
-		bar := m.renderStatusBar()
-		if !strings.Contains(bar, "[r]") || !strings.Contains(bar, "readme") {
-			t.Errorf("mode %d focusHelp bar missing [r] readme hint: %q", mode, bar)
-		}
-		for _, want := range []string{"--help", "man"} {
-			if !strings.Contains(bar, want) {
-				t.Errorf("mode %d focusHelp bar lost %q hint: %q", mode, want, bar)
+		m.helpMode = tt.mode
+		top := stripANSI(strings.SplitN(m.renderHelp(), "\n", 2)[0])
+		for _, alt := range tt.alts {
+			if !strings.Contains(top, alt) {
+				t.Errorf("mode %d title = %q, missing the %q source hint", tt.mode, top, alt)
 			}
 		}
-		// [/] is a no-op in readme mode (the help search would tear glamour's
-		// ANSI apart), so the bar must not advertise it there.
-		if hasSearch := strings.Contains(bar, "search"); hasSearch != (mode != helpModeReadme) {
-			t.Errorf("mode %d focusHelp bar search hint = %v, want %v: %q", mode, hasSearch, mode != helpModeReadme, bar)
+		if bar := m.renderStatusBar(); strings.Contains(bar, "readme") || strings.Contains(bar, "--help") {
+			t.Errorf("mode %d status bar = %q, want the source hints kept off it", tt.mode, bar)
 		}
-	}
-	// The other focus bars keep their own r binding (rename / refresh).
-	m := New([]loader.ToolMeta{{Name: "git"}})
-	m = mustModel(m.Update(tea.WindowSizeMsg{Width: 120, Height: 24}))
-	m.focus = focusTools
-	if bar := m.renderStatusBar(); strings.Contains(bar, "readme") {
-		t.Errorf("focusTools bar leaked readme hint: %q", bar)
 	}
 }
 
@@ -3715,7 +3978,7 @@ func TestReadmePlaceholders(t *testing.T) {
 	t.Run("rate limited", func(t *testing.T) {
 		m := readmePanelModel(t, repo)
 		m = mustModel(m.Update(readmeMsg{toolName: "rg", err: version.ErrRateLimited}))
-		if got := stripANSI(m.renderHelpContent()); !strings.Contains(got, "rate limited — press [L]") {
+		if got := stripANSI(m.renderHelpContent()); !strings.Contains(got, "rate limited — press L") {
 			t.Errorf("panel = %q, want the rate-limit placeholder", got)
 		}
 	})
@@ -4044,7 +4307,7 @@ func TestRenderStatusBarRunInput(t *testing.T) {
 	m.runInput.SetValue("yazi /tmp")
 
 	got := m.renderStatusBar()
-	for _, want := range []string{"run yazi:", "yazi /tmp", "[enter]", "run", "[esc]", "cancel"} {
+	for _, want := range []string{"run yazi:", "yazi /tmp", "enter run", "esc cancel"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("run input status bar = %q, missing %q", got, want)
 		}
@@ -4057,7 +4320,7 @@ func TestRenderStatusBarRunInput(t *testing.T) {
 func TestRenderStatusBarFocusToolsRunHint(t *testing.T) {
 	m := Model{width: 80, focus: focusTools}
 	got := m.renderStatusBar()
-	if !strings.Contains(got, "[enter] run") {
+	if !strings.Contains(got, "enter run") {
 		t.Errorf("focusTools status bar missing the [enter] run cell: %q", got)
 	}
 
@@ -4066,10 +4329,10 @@ func TestRenderStatusBarFocusToolsRunHint(t *testing.T) {
 	// (inner 22) fits exactly one cell.
 	m.width = 24
 	got = m.renderStatusBar()
-	if !strings.Contains(got, "[enter] run") {
+	if !strings.Contains(got, "enter run") {
 		t.Errorf("narrow focusTools bar dropped the [enter] run cell: %q", got)
 	}
-	if strings.Contains(got, "[q] quit") || strings.Contains(got, "[?] keys") {
+	if strings.Contains(got, "q quit") || strings.Contains(got, "? keys") {
 		t.Errorf("narrow focusTools bar kept right-side cells that should drop first: %q", got)
 	}
 }
@@ -4109,5 +4372,513 @@ func TestChangelogRenderCache(t *testing.T) {
 func TestNewSeedsChangelogCache(t *testing.T) {
 	if New(nil).changelogRender == nil {
 		t.Error("New() left changelogRender nil — the memo is never used")
+	}
+}
+
+// TestChangelogBlockIndentAndCodePlate: the release notes are stepped in under
+// their heading (so the block reads as belonging to it rather than as the next
+// section of the card), and a fenced sample lands on the same plate the metrics
+// strip uses — a command in a release note is something to run, not more prose.
+func TestChangelogBlockIndentAndCodePlate(t *testing.T) {
+	forceColorProfile(t)
+	m := changelogBlockModel()
+	got := m.renderChangelogBlock(changelogMsg{
+		body: "## What's Changed\n\nRun this first:\n\n```sh\nkeepkit migrate --all\n```\n",
+	})
+
+	for _, line := range strings.Split(strings.TrimRight(stripANSI(got), "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, changelogIndent) {
+			t.Errorf("line %q is not indented under the heading", line)
+		}
+	}
+
+	// The plate is a background, and it must run to the block's full width:
+	// a background that stopped at the last glyph would be a ragged highlight.
+	bg := strings.Replace(themeSeq(ui.Default.Surface), "38;", "48;", 1)
+	var plated string
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(stripANSI(line), "keepkit migrate --all") {
+			plated = line
+		}
+	}
+	if plated == "" {
+		t.Fatal("the fenced sample did not survive the conversion")
+	}
+	if !strings.Contains(plated, bg) {
+		t.Errorf("code line = %q, want the surface plate", plated)
+	}
+	inner := max(m.briefW-2, 10)
+	if w := lipgloss.Width(plated); w != inner {
+		t.Errorf("code line is %d cells wide, want the block's full %d", w, inner)
+	}
+	// Prose beside it must not be plated, or the whole block would read as code.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(stripANSI(line), "Run this first") && strings.Contains(line, bg) {
+			t.Errorf("prose line %q was plated like code", line)
+		}
+	}
+}
+
+// TestHintLabelStepsBack: a hint is a colored key and a muted word — the key is
+// the only part the eye needs to find, so the word beside it must not compete at
+// reading brightness. One helper, so no surface can drift from the rest.
+func TestHintLabelStepsBack(t *testing.T) {
+	forceColorProfile(t)
+	m := Model{}
+	got := m.hint("enter", "run")
+	if want := ui.DefaultStyles().Accent.Render("enter"); !strings.HasPrefix(got, want) {
+		t.Errorf("hint = %q, want the key in the accent", got)
+	}
+	if want := ui.DefaultStyles().Dim.Render("run"); !strings.HasSuffix(got, want) {
+		t.Errorf("hint = %q, want the label dimmed", got)
+	}
+}
+
+// TestGroupedListHasAirBetweenSections: without a blank row above each section
+// the last tool of one group and the header of the next sit on adjacent lines
+// and the list reads as one dense column. The row is a real screen line, so it
+// has to be non-selectable in the line map like the header itself.
+func TestGroupedListHasAirBetweenSections(t *testing.T) {
+	m := groupTestModel(t)
+	m.groupByTag = true
+	content, _, lineTool := m.buildToolRows()
+	lines := strings.Split(strings.TrimRight(stripANSI(content), "\n"), "\n")
+
+	// The row the list opens with is padding, not a section gap.
+	if strings.TrimSpace(lines[0]) != "" {
+		t.Error("the list does not open with its blank top row")
+	}
+	blanks := 0
+	for i, line := range lines[1:] {
+		i++ // lines[0] is the top padding, counted above
+		if strings.TrimSpace(line) != "" {
+			continue
+		}
+		blanks++
+		if lineTool[i] != -1 {
+			t.Errorf("blank line %d maps to tool %d, want -1", i, lineTool[i])
+		}
+		if i+1 >= len(lines) || lineTool[i+1] != -1 {
+			t.Errorf("blank line %d does not sit above a section header", i)
+		}
+	}
+	// Three groups in the fixture (cli, scm, untagged) → two gaps, and none
+	// above the first section.
+	if blanks != 2 {
+		t.Errorf("%d blank rows below the top padding, want one above every section but the first", blanks)
+	}
+}
+
+// TestChangelogHeadingTransitionOnlyWhenBehind: the version transition is what
+// the changelog block is about, so it prints only when there is one. It is gated
+// on hasUpdate rather than on the two strings differing, because both are shown
+// through DisplayVersion: a tool whose --version prints "1.10.2" against a
+// "v1.10.2" tag is up to date, and the raw compare printed it a "v1.10.2 →
+// v1.10.2" arrow to nowhere on the one card with nothing to report.
+func TestChangelogHeadingTransitionOnlyWhenBehind(t *testing.T) {
+	newCard := func(installed, latest string) Model {
+		m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+		mm := updated.(Model)
+		mm.versions["gh"] = VersionInfo{Installed: installed, Latest: latest, InstalledKnown: true}
+		mm.repoCards["gh"] = version.RepoCard{Latest: latest}
+		return mm
+	}
+
+	tests := []struct {
+		name              string
+		installed, latest string
+		want              string
+	}{
+		{"behind", "v0.3.2", "v1.0.2", "v0.3.2 → v1.0.2"},
+		{"behind, bare installed", "0.3.2", "v1.0.2", "v0.3.2 → v1.0.2"},
+		{"up to date", "v1.10.2", "v1.10.2", ""},
+		{"up to date, spelled differently", "1.10.2", "v1.10.2", ""},
+		{"nothing detected yet", "", "v1.0.2", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newCard(tt.installed, tt.latest)
+			head, _ := m.changelogHeading(m.tools[0], 60, true)
+			got := stripANSI(head)
+			if !strings.Contains(got, "changelog") {
+				t.Fatalf("heading = %q, want the word", got)
+			}
+			if tt.want == "" {
+				if strings.Contains(got, "→") {
+					t.Errorf("heading = %q, want no transition for an up-to-date tool", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("heading = %q, want the %q transition", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMetricsStripValuesAreNeverCut: the column is sized from its widest value
+// as well as its widest caption. Sizing on captions alone cut "not installed"
+// to "not insta" at the 80x24 baseline — the default terminal, and the exact
+// state (tracked, not yet installed) a tracker is opened in.
+func TestMetricsStripValuesAreNeverCut(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{InstalledKnown: true} // probed, absent
+	mm.repoCards["gh"] = version.RepoCard{
+		Latest: "v2.0.0", Stars: 219, RepoStatus: "active", PublishedAt: "2026-01-02T00:00:00Z",
+	}
+
+	inner := max(mm.briefW-2, 1)
+	strip := stripANSI(strings.Join(mm.metricsStrip(mm.tools[0], inner), "\n"))
+	for _, want := range []string{"✕ missing", "v2.0.0", "● active", "219", "2026-01-02"} {
+		if !strings.Contains(strip, want) {
+			t.Errorf("strip at the 80-column baseline lost %q:\n%s", want, strip)
+		}
+	}
+
+	// A value wider than any caption costs columns, not legibility.
+	mm.versions["gh"] = VersionInfo{Installed: "v2024.01.15-beta.1", InstalledKnown: true}
+	wide := mm.metricsStrip(mm.tools[0], inner)
+	if !strings.Contains(stripANSI(strings.Join(wide, "\n")), "v2024.01.15-beta.1") {
+		t.Errorf("a long version was cut instead of re-flowing:\n%s", stripANSI(strings.Join(wide, "\n")))
+	}
+	for i, row := range wide {
+		if w := lipgloss.Width(row); w != inner {
+			t.Errorf("re-flowed row %d is %d cells, want exactly %d", i, w, inner)
+		}
+	}
+}
+
+// TestMetaLineShape pins what the meta block is: the language stack — a
+// distribution, so it gets named shares and a band under them holding those
+// shares — and then status, tags and note sharing one wrapped line under it.
+// Wrapping is by whole cells, because a cell carries ANSI and a cut inside one
+// would emit a broken escape into the viewport.
+func TestMetaLineShape(t *testing.T) {
+	m := New([]loader.ToolMeta{{
+		Name: "gh", GitHub: "cli/cli", Status: loader.StatusActive, Note: "n", Tags: []string{"cli"},
+	}})
+	// Wide enough that the three fields share a line — the narrow case, where
+	// they wrap between whole cells, is TestMetaLineFieldsWrapByWholeCells.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 24})
+	mm := updated.(Model)
+	mm.repoCards["gh"] = version.RepoCard{Languages: map[string]int{
+		"Go": 800, "Shell": 90, "Makefile": 40, "Dockerfile": 30, "TypeScript": 25,
+	}}
+
+	inner := mm.cardWidth()
+	lines := strings.Split(stripANSI(mm.metaLine(mm.tools[0], inner)), "\n")
+
+	for _, l := range lines {
+		if w := lipgloss.Width(l); w > inner {
+			t.Errorf("meta line %q is %d cells, past the %d-cell panel", l, w, inner)
+		}
+	}
+	if !strings.HasPrefix(lines[0], "languages · ") {
+		t.Errorf("meta block opens with %q, want the languages label", lines[0])
+	}
+
+	// The band is the row of langBandGlyph and it fills the panel exactly: it is
+	// the card's one full-width element, so a cell short leaves a notch and a
+	// cell over wraps the row and shifts every clickable line below it.
+	band := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, langBandGlyph) {
+			band = i
+			break
+		}
+	}
+	if band < 0 {
+		t.Fatalf("meta block has no language band:\n%s", strings.Join(lines, "\n"))
+	}
+	if w := lipgloss.Width(lines[band]); w != inner {
+		t.Errorf("band is %d cells, want exactly the %d-cell panel", w, inner)
+	}
+	if strings.Trim(lines[band], langBandGlyph) != "" {
+		t.Errorf("band row = %q, want nothing but band glyphs", lines[band])
+	}
+
+	// Every named language appears above the band, and every field below it, in
+	// order, one per line.
+	named := strings.Join(lines[:band], " ")
+	for _, lang := range []string{"go", "shell", "makefile", "dockerfile", "typescript"} {
+		if !strings.Contains(named, langDot+" "+lang+" ") {
+			t.Errorf("languages = %q, want a dotted %q entry", named, lang)
+		}
+	}
+	// The band closes the language block with a blank row: it runs the full width
+	// of the panel, so without one the field line reads as a caption hanging off
+	// the bar rather than as the next thing.
+	if lines[band+1] != "" {
+		t.Errorf("row under the band = %q, want it blank", lines[band+1])
+	}
+
+	// status/tags/note share one line under that, in that order, joined by the
+	// same middot that groups the languages above.
+	fields := lines[band+2:]
+	if len(fields) != 1 {
+		t.Fatalf("got %d field lines, want the three fields on one:\n%s", len(fields), strings.Join(fields, "\n"))
+	}
+	if want := "status ● active · tags cli · note n"; fields[0] != want {
+		t.Errorf("field line = %q, want %q", fields[0], want)
+	}
+}
+
+// TestMetaLineFieldsWrapByWholeCells: the three fields share a line until they
+// no longer fit, and the break falls between two cells — never inside one. A
+// cell carries ANSI, so a cut inside it would emit a broken escape into the
+// viewport, which re-emits its content to the terminal verbatim.
+func TestMetaLineFieldsWrapByWholeCells(t *testing.T) {
+	m := New([]loader.ToolMeta{{
+		Name:   "gh",
+		Status: loader.StatusActive,
+		Tags:   []string{"command-line"},
+		Note:   "the official GitHub client",
+	}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	mm := updated.(Model)
+
+	inner := mm.cardWidth()
+	lines := strings.Split(stripANSI(mm.metaLine(mm.tools[0], inner)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected the fields to wrap at %d cells, got one line: %q", inner, lines)
+	}
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w > inner {
+			t.Errorf("line %d = %q is %d cells, past the %d-cell panel", i, l, w, inner)
+		}
+		// A cell was never split: every line still opens with a whole label.
+		if !strings.HasPrefix(l, "status ") && !strings.HasPrefix(l, "tags ") && !strings.HasPrefix(l, "note ") {
+			t.Errorf("line %d = %q does not start on a cell boundary", i, l)
+		}
+	}
+}
+
+// TestCardHeadHasOneTypographicPeak: a terminal has a single font size, so the
+// three sizes the design draws in the card's head are three steps of weight and
+// brightness here — and there is room for exactly one peak. The tool's name
+// takes it; the metric values sit a step below it and a step above their own
+// captions, because spending the brightest role on four measurements leaves the
+// name nothing to be the peak of.
+func TestCardHeadHasOneTypographicPeak(t *testing.T) {
+	forceColorProfile(t)
+	s := ui.DefaultStyles()
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{Installed: "v2.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	mm.repoCards["gh"] = version.RepoCard{Latest: "v2.0.0", Stars: 219, RepoStatus: "active"}
+	card := mm.renderCard()
+
+	// [0] is the card's blank top row; every row then opens with the panel
+	// gutter, which is where the name starts.
+	title := strings.SplitN(card, "\n", 3)[1]
+	if want := strings.Repeat(" ", panelGutter) + s.EmphasisBold.Render("gh"); !strings.HasPrefix(title, want) {
+		t.Errorf("card does not open with the name at the emphasis peak: %q", title)
+	}
+	// No metric value may share that role — the strip renders them on the plate,
+	// so compare the foreground sequence rather than a whole rendered string.
+	peak := themeSeq(ui.Default.Emphasis)
+	strip := mm.metricsStrip(mm.tools[0], mm.cardWidth())
+	for i, row := range strip {
+		if strings.Contains(row, peak) {
+			t.Errorf("strip row %d (%q) uses the name's emphasis role", i, stripANSI(row))
+		}
+	}
+	// The captions still step below the values, so the strip keeps its own
+	// two-level reading.
+	body := strings.Join(strip, "\n")
+	if !strings.Contains(body, themeSeq(ui.Default.Dim)) || !strings.Contains(body, themeSeq(ui.Default.Text)) {
+		t.Errorf("strip lost the caption/value contrast:\n%s", stripANSI(body))
+	}
+}
+
+// TestCardHeadGapIsOneRow: the block under the tool's name is separated by a
+// single blank row. The strip's own padding row is filled with the plate colour
+// and already reads as air, so a second plain row on top of it reads as a hole.
+func TestCardHeadGapIsOneRow(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{Installed: "v2.0.0", InstalledKnown: true}
+	mm.repoCards["gh"] = version.RepoCard{About: "a tool", Stars: 219}
+
+	lines := strings.Split(stripANSI(mm.renderCard()), "\n")
+	var plain int
+	for _, line := range lines[1:] {
+		if strings.Contains(line, "INSTALLED") {
+			break
+		}
+		if strings.TrimSpace(line) == "" {
+			plain++
+		}
+	}
+	// One plain row plus the plate's padding row — both blank once ANSI is
+	// stripped, which is exactly why this counts them rather than eyeballing.
+	if plain != 2 {
+		t.Errorf("%d blank rows between the tagline and the strip's captions, want 2 (one plain, one plate):\n%s",
+			plain, strings.Join(lines, "\n"))
+	}
+}
+
+// TestDisplayVersion pins the [?] overlay's version label. A release passes
+// through; a working copy is stamped by Go with a 44-character pseudo-version
+// whose leading number is a release that does not exist yet, and both facts a
+// reader wants — the last release and the commit — are recovered from it.
+// The + and the commit are what keep it from reading as the release itself.
+func TestDisplayVersion(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"release", "v0.1.0", "v0.1.0"},
+		{"release with metadata", "v0.1.0+dirty", "v0.1.0+dirty"},
+		{"no version at all", "dev", "dev"},
+		{"unset", "", ""},
+		{
+			"commit after a release",
+			"v0.1.1-0.20260728221642-0b86a47f4f05", "v0.1.0+0b86a47",
+		},
+		{
+			// The case a developer actually looks at: their own working copy.
+			"commit after a release, uncommitted changes",
+			"v0.1.1-0.20260728221642-0b86a47f4f05+dirty", "v0.1.0+0b86a47-dirty",
+		},
+		{
+			"commit after a pre-release",
+			"v0.2.0-rc.1.0.20260728221642-0b86a47f4f05", "v0.2.0-rc.1+0b86a47",
+		},
+		{
+			// No tag in the repository at all: the separator before the
+			// timestamp is a dash, and reading the base's own tail instead
+			// would take the "0" of v0.0.0 for the pre-release marker.
+			"no tag behind the commit",
+			"v0.0.0-20260728221642-0b86a47f4f05", "dev+0b86a47",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := displayVersion(tt.in); got != tt.want {
+				t.Errorf("displayVersion(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHotkeysOverlayNamesTheBuild: the overlay is where "what am I running" is
+// asked, so it carries the version — short enough to sit beside the title, and
+// never claiming to be a release the build is only descended from. The raw
+// value stays in m.appVersion, because the self-update gate reads it and has to
+// keep seeing a working copy.
+func TestHotkeysOverlayNamesTheBuild(t *testing.T) {
+	m := hotkeysViewModel(selfNone)
+	m.appVersion = "v0.1.1-0.20260728221642-0b86a47f4f05"
+	title := stripANSI(strings.SplitN(m.renderHotkeys(), "\n", 3)[1])
+
+	if !strings.Contains(title, "keepkit v0.1.0+0b86a47") {
+		t.Errorf("overlay title = %q, want the short build name", title)
+	}
+	if strings.Contains(title, "20260728221642") {
+		t.Errorf("overlay title = %q, want the pseudo-version's timestamp dropped", title)
+	}
+	if m.isDevBuild() != true {
+		t.Error("the raw appVersion stopped reading as a working copy")
+	}
+
+	// No version injected at all: no label rather than an empty one.
+	bare := hotkeysViewModel(selfNone)
+	bare.appVersion = ""
+	if got := stripANSI(strings.SplitN(bare.renderHotkeys(), "\n", 3)[1]); strings.Contains(got, "keepkit") {
+		t.Errorf("overlay title = %q, want no build name when none was injected", got)
+	}
+}
+
+// TestPanelsKeepTheirGutter: [2] and [3] hold one blank column between their
+// frame and everything they draw. Content that touches the border it lives in
+// reads as having overflowed it, and in [3] the right-hand column is also what
+// keeps the text off the scrollbar thumb. The two panels reach it differently —
+// [2] sizes itself to cardWidth and steps the finished card in, [3] wraps to
+// helpWrapWidth and steps that in — so both are checked on the rendered result
+// rather than on the arithmetic.
+func TestPanelsKeepTheirGutter(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "gh", GitHub: "cli/cli", Note: "a note", Tags: []string{"cli"}}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	mm := updated.(Model)
+	mm.versions["gh"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	mm.repoCards["gh"] = version.RepoCard{
+		About: "the GitHub CLI", Latest: "v2.0.0", Stars: 219, RepoStatus: "active",
+		Languages: map[string]int{"Go": 900, "Shell": 100},
+	}
+	mm.helpCache["gh"] = [2]string{helpModeHelp: "usage: gh <command>\n\n  --flag   does a thing"}
+	mm.helpMode = helpModeHelp
+	mm.setHelpContent()
+
+	panels := map[string]struct {
+		content string
+		budget  int
+	}{
+		"[2]": {mm.renderCard(), mm.briefW - 1},
+		"[3]": {mm.renderHelpContent(), mm.helpW - 1},
+	}
+	for name, p := range panels {
+		for i, line := range strings.Split(stripANSI(p.content), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if !strings.HasPrefix(line, strings.Repeat(" ", panelGutter)) {
+				t.Errorf("%s line %d = %q, want it to open with the gutter", name, i, line)
+			}
+			if w := lipgloss.Width(line); w > p.budget-panelGutter {
+				t.Errorf("%s line %d is %d cells, past the %d the gutter leaves", name, i, w, p.budget-panelGutter)
+			}
+		}
+	}
+}
+
+// TestPanelFooterSeparatorIsDim: the middot between two footer hints is painted,
+// like the one between two languages on the card. Left unpainted it renders at
+// the terminal's default brightness — louder than the hint labels it is there to
+// separate, which is the one thing a separator may not be.
+func TestPanelFooterSeparatorIsDim(t *testing.T) {
+	forceColorProfile(t)
+	m := New([]loader.ToolMeta{{Name: "gh"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	mm := updated.(Model)
+
+	footer := mm.panelFooter(mm.briefW, []string{mm.hint("r", "refresh"), mm.hint("s", "status")}, "")
+	if !strings.Contains(footer, mm.sty().Dim.Render(footerSep)) {
+		t.Errorf("footer = %q, want the separator rendered in the dim role", stripANSI(footer))
+	}
+	if strings.Contains(footer, "\x1b[0m"+footerSep) {
+		t.Errorf("footer = %q, want no unpainted separator", stripANSI(footer))
+	}
+}
+
+// TestFormatShare: a language's percentage is spelled the way GitHub spells it —
+// one decimal, a whole number left whole. Rounding to integers printed
+// "makefile 0%" for a language with a visible segment in the band right below
+// it, a share the card both draws and denies.
+func TestFormatShare(t *testing.T) {
+	tests := []struct {
+		pct  float64
+		want string
+	}{
+		{100, "100%"},
+		{94, "94%"},
+		{93.94, "93.9%"},
+		{4.26, "4.3%"},
+		{1, "1%"},
+		{0.94, "0.9%"},
+		{0.09, "<0.1%"},
+		{0, "<0.1%"},
+	}
+	for _, tt := range tests {
+		if got := formatShare(tt.pct); got != tt.want {
+			t.Errorf("formatShare(%v) = %q, want %q", tt.pct, got, tt.want)
+		}
 	}
 }

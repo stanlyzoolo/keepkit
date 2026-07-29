@@ -53,7 +53,7 @@ graph TD
 | `internal/logx` | Session error journal: errors only, one lazily created file per session, imports only the stdlib-only `configdir` leaf. Package-level state — any package can log without threading a logger through |
 | `internal/model` | The entire Bubble Tea model: TUI state, key handling, rendering |
 | `internal/proc` | `DetachTTY` — run probes without a controlling terminal; `KillGroup` — process-group SIGKILL (plain `Kill` on Windows) |
-| `internal/ui` | Lip Gloss styles, `PlaceOverlay`, `StripANSI` |
+| `internal/ui` | `Theme` — the app's ten semantic color roles — and `Styles`, the whole style set built from one theme by `NewStyles`; `PlaceOverlay`, `StripANSI` |
 | `internal/updater` | Detect the package manager that owns an installed binary and produce an update `Plan{Manager, Argv, Display}` |
 | `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`) and the card's version spelling (`DisplayVersion`); keepkit's own release check (`SelfRepo`, `SelfLatest`) |
 
@@ -72,8 +72,8 @@ The `model` package is split across files within a single package:
 | `commands.go` | All `tea.Cmd` constructors (fetch commands, update streaming) and re-fetch predicates |
 | `render.go` | `View`, panel/card/status-bar/gauge/overlay renderers, mouse handling. The two list/card builders return their line index alongside the text: `buildCard` → clickable lines, `buildToolRows` → the tool-index ↔ screen-line maps. Carries the single-entry `changelogRenderCache` — the card is rebuilt on every spinner frame, so the release-notes conversion must not repeat |
 | `readme.go` | `renderReadme` — panel `[3]`'s pipeline: sanitize → preprocess → glamour, with a single-entry render cache |
-| `readme_clean.go` | `cleanReadmeMarkdown` — the pure README preprocessor. Fenced blocks and inline spans are segmented out first (code is never rewritten), then badges, hrefs, HTML and emoji are removed from what is left |
-| `readme_style.go` | `keepkitStyle(dark)` — panel `[3]`'s glamour theme: the standard config cloned, its accents replaced from `internal/ui`'s palette |
+| `readme_clean.go` | `cleanReadmeMarkdown(text, about)` — the pure README preprocessor. Fenced blocks and inline spans are segmented out first (code is never rewritten), then badges, hrefs, HTML and emoji are removed from what is left, and finally the leading H1 (plus a slogan under it that repeats `about`) is dropped as a title page the card already shows |
+| `readme_style.go` | `keepkitStyle(theme, dark)` — panel `[3]`'s glamour theme: the standard config cloned, its accents replaced from the `ui.Theme` it is handed |
 | `textutil.go` | Pure text helpers (`wrapText`, `stripANSI`, `colorizeHelp`, `parseHelpEntries`, `markdownToLines` — the card's release-notes markdown → pre-wrapped tagged lines, …) |
 | `browser.go` | Opening URLs per `GOOS` |
 
@@ -157,8 +157,8 @@ pointer instead of writing through a shared one.
 
 ## TUI state machine
 
-Three panels with cycling focus: `[1] Tools` (the list), `[2] Brief` (the card),
-`[3] Readme` (the README/`--help`/`man`/update-log view, switched by `r`/`h`/`m` —
+Three panels with cycling focus: `[1] tools` (the list), `[2] brief` (the card),
+`[3] readme` (the README/`--help`/`man`/update-log view, switched by `r`/`h`/`m` —
 `m.helpMode` is global, not per tool, and defaults to the README). Focus moves with `→`/`←`, the digits
 `1`/`2`/`3`, or a mouse click; everything goes through `setFocus(f)`, which repaints
 the tools list — the only viewport whose content depends on focus.
@@ -173,13 +173,14 @@ Key invariants:
 
 - **A single list projection.** Row order (the "has update" group on top, then
   `meta.yaml` order; during search — the name/tag filter; with `space` pressed —
-  grouped by tag instead, untagged last, which replaces the update partition rather
-  than nesting inside it) lives only in `searchMatches()`. The renderer, the
-  selection index and the mouse row mapping all look through it — desync is
-  impossible. `meta.yaml` on disk is never reordered. Tag groups are keyed
-  case-insensitively, matching the search predicate.
+  grouped into sections instead, led by everything with a pending update, then each
+  tag, untagged last) lives only in `searchMatches()`. The renderer, the selection
+  index and the mouse row mapping all look through it — desync is impossible.
+  `meta.yaml` on disk is never reordered. Sections are keyed case-insensitively,
+  matching the search predicate; the updates section cuts across the tags because a
+  tag says what a tool *is* while an update says what it *needs*.
 - **The selection is a tool index, never a screen row.** The tag view inserts
-  non-selectable divider header rows (`────… <tag> ────…`), so the two units diverge — but only inside the
+  non-selectable divider header rows (`<tag> ─────…`), so the two units diverge — but only inside the
   maps `buildToolRows()` returns beside the content (`toolLine`, `lineTool`; the
   identity when grouping is off) and their consumers: `syncToolsViewport`, the mouse
   row mapping, and the page/half-page keys, whose step is a count of viewport rows.
@@ -190,15 +191,51 @@ Key invariants:
   name before the change and remap the index afterwards (`indexOfMeta`).
 - **Search is a transaction.** `/` remembers `searchPrevName`; `enter` commits the
   selection (focus moves to the card), `esc` rolls the cursor back to the previous tool.
-- **The card has one value column.** Every `label: value` line in `[info]` and `[notes]`
-  pads its label through `cardLabel` to `cardLabelWidth` (the widest label the card can
-  print), the single definition of that column — `ui.MetaDetailLabelStyle` carries no
-  `Width`, or the two sections would drift apart again. Wrapped values (`note`, `tags`)
-  wrap to `inner - cardLabelWidth` and hang under the column via `hangIndent`.
+- **The card is a strip, not a column of labels.** `metricsStrip` lays installed /
+  latest / maintenance / stars out as captioned columns on the `Surface` background,
+  each cell centered in its column, re-flowing onto fewer columns as the panel narrows
+  and standing down entirely below one column's worth of room. Every row it emits is
+  exactly the panel's inner width, because a short row would break the fill into a
+  ragged edge — and every segment of a filled row carries the background itself, since
+  a lipgloss style applied *around* already-styled text cannot repaint what is inside
+  it. The same rule governs the language band under it.
+- **The language stack is a picture; the fields below it are not.** A distribution
+  gets `languages · ● go 99% · ● shell 1%` and a full-width band under it holding the
+  same shares in GitHub's own colors (`ui.LanguageColor`, the one palette a theme
+  switch must not repaint), closed by a blank row so the band reads as an edge rather
+  than an underline. `status`, `tags` and `note` share one wrapped line under
+  it, broken between whole cells — a cell carries ANSI, so a cut inside one would emit
+  a broken escape into a viewport that re-emits its content verbatim.
+- **Colors are a value, not a package.** `ui.Theme` holds ten semantic roles;
+  `ui.NewStyles(theme)` is the only function allowed to turn one into a style, and the
+  model carries the result in `m.styles`, read through `m.sty()`. No file below
+  `internal/ui` carries a hex literal, and `ui.DefaultStyles()` exists only as the
+  fallback for a `Model{}` literal — a renderer that reached for it directly would keep
+  painting the default palette after a theme switch. The one deliberate exception is
+  `ui.LanguageColor`: those are linguist's brand marks rather than keepkit's meanings,
+  so they live in the same package but outside `Theme` and never follow a switch.
 - **Card links are indexed, not parsed.** `buildCard()` returns the card text plus a
-  `line → URL` map recorded while writing (line heights vary with wrapping), so a
-  click on the `repo:` line (shown as the bare `owner/repo`, linked as the full ref) or the changelog release URL opens the browser. `handleMouse`
-  rebuilds the map per click, which is why it can never describe stale content.
+  `line → URL` map recorded while writing (line heights vary with wrapping), so a click
+  on the title line (which carries the bare `owner/repo` beside the name, linked as the
+  full ref) or on the changelog heading opens the browser. The changelog line is
+  registered only when its `release notes ↗` affordance actually fit — a heading that
+  looks like plain text must not open a browser. `handleMouse` rebuilds the map per
+  click, which is why it can never describe stale content.
+- **The status bar is global; each panel owns its footer.** One key list in every
+  focus instead of three that rewrite themselves as focus moves — what is panel-local
+  (the card's actions, `[3]`'s paging and entry cursor, `[1]`'s filter and grouping)
+  sits in that panel's own footer, next to the thing it acts on. All three panels
+  reserve the same `panelFooterRows` and keep the same `panelGutter` — one blank
+  column between the frame and everything the panel draws, which in `[2]` and `[3]` is
+  *all* content: `cardWidth()` and `helpWrapWidth()` are the single definitions of the
+  two budgets, and `indentLines` applies the indent last, to whole finished lines, so
+  it can never split an escape sequence or shift a card link's row.
+  `calcListHeight()` is the single definition both the `WindowSizeMsg` handler
+  and the renderers use, so a drift there cannot push the status bar off screen.
+  The status bar's right corner carries keepkit's own name and version
+  (`appVersionCell`), marked with the same ` ↑` as an outdated tool row when a newer
+  release is waiting — the app announces its own update in the vocabulary it announces
+  everyone else's.
 - **A click's X picks the panel, `panelRow` decides whether it is on one at all.**
   The outer margin, the borders and the status bars share the panels' columns; with a
   scrolled viewport an unbounded row would map that chrome onto a list row or a card
@@ -219,7 +256,7 @@ Key invariants:
   the help fetch, so they cannot disagree. Releasing a *completed* self-update's claim
   is `dismissSelfLog()`.
 
-## Updating a tool (`u`)
+## Updating a tool (`enter` in `[2]`)
 
 `updater.Detect` identifies the manager from the installed binary — the chain is
 brew → go → cargo → pipx → uv → pnpm → bun → npm. Order matters twice: brew before
@@ -298,13 +335,13 @@ derived from the pipeline itself (`selfUpdating()`), so the two cannot drift. Ev
 site that asks "is this keepkit's own update?" asks one predicate,
 `isSelfUpdate(name)` = the target name *and* the version gate — the name says which
 kind of update it is, the gate says whether that kind exists on this build, and a
-name-only test would switch the entire feature on for a dev build through `u` on a
+name-only test would switch the entire feature on for a dev build through `enter` on a
 tracked `keepkit` row. `U` acts
 (detect, or restart once updated), `X` folds the banner into a compact cell next to the
 quota gauge — a fold, not a cancel, since `U` stays reachable there for the rest of the
 session, and the cell outranks both the gauge and the trailing hints so it survives the
 80-column baseline. Nothing is written to disk. One update runs at a time in both
-directions: `U` and `u` both refuse — with a status message, not silently — while any
+directions: `U` and `enter` both refuse — with a status message, not silently — while any
 update is running. `U` checks the banner state *before* that refusal, though: with no
 banner up the key is unbound, and since `selfNone` is the only state a dev build ever
 reaches, answering there would give a build with the feature off one audible piece of
@@ -316,7 +353,7 @@ carries the target, the handler stores it as `updateTarget`, and everything down
 the confirm dialog, its status bar, the log's claim on panel `[3]`, the completion
 handler — keys off that name instead of `selectedMeta()`, which an untracked keepkit (or
 an empty tracker) cannot answer. So an update of keepkit is a self-update whichever key
-started it, `u` on a tracked keepkit row included — on a build where the feature is
+started it, `enter` on a tracked keepkit row included — on a build where the feature is
 live; with it gated off that same keypress stays a plain tool update end to end (no
 panel-owning log, no banner, no restart to offer). Two gates still differ: a landed
 detection must match the selection only on the tool path (`acceptsUpdateDetect`; both

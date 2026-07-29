@@ -30,17 +30,17 @@ func TestKeepkitStyleOverrides(t *testing.T) {
 			name = "dark"
 		}
 		t.Run(name, func(t *testing.T) {
-			cfg := keepkitStyle(dark)
+			cfg := keepkitStyle(ui.Default, dark)
 
-			if got := deref(t, "H1.Color", cfg.H1.Color); got != string(ui.ColorPrimary) {
-				t.Errorf("H1.Color = %q, want %q", got, string(ui.ColorPrimary))
+			if got := deref(t, "H1.Color", cfg.H1.Color); got != string(ui.Default.Accent) {
+				t.Errorf("H1.Color = %q, want %q", got, string(ui.Default.Accent))
 			}
 			// The bright plate is the main thing this theme exists to remove.
 			if cfg.H1.BackgroundColor != nil {
 				t.Errorf("H1.BackgroundColor = %q, want none", *cfg.H1.BackgroundColor)
 			}
-			if got := deref(t, "H2.Color", cfg.H2.Color); got != string(ui.ColorCategory) {
-				t.Errorf("H2.Color = %q, want %q", got, string(ui.ColorCategory))
+			if got := deref(t, "H2.Color", cfg.H2.Color); got != string(ui.Default.Emphasis) {
+				t.Errorf("H2.Color = %q, want %q", got, string(ui.Default.Emphasis))
 			}
 			if cfg.Document.Margin == nil || *cfg.Document.Margin != 0 {
 				t.Errorf("Document.Margin = %v, want 0 — the panel frame is the margin", cfg.Document.Margin)
@@ -60,28 +60,49 @@ func TestKeepkitStyleOverrides(t *testing.T) {
 // The palette's text and border tints are chosen against a dark panel; on white
 // the standard light colors stay.
 func TestKeepkitStyleDarkOnlyOverrides(t *testing.T) {
-	dark, light := keepkitStyle(true), keepkitStyle(false)
+	dark, light := keepkitStyle(ui.Default, true), keepkitStyle(ui.Default, false)
 
-	if got := deref(t, "dark Heading.Color", dark.Heading.Color); got != string(ui.ColorText) {
-		t.Errorf("dark Heading.Color = %q, want %q", got, string(ui.ColorText))
+	if got := deref(t, "dark Heading.Color", dark.Heading.Color); got != string(ui.Default.Text) {
+		t.Errorf("dark Heading.Color = %q, want %q", got, string(ui.Default.Text))
 	}
-	if got := deref(t, "dark H6.Color", dark.H6.Color); got != string(ui.ColorText) {
-		t.Errorf("dark H6.Color = %q, want %q", got, string(ui.ColorText))
+	if got := deref(t, "dark H6.Color", dark.H6.Color); got != string(ui.Default.Text) {
+		t.Errorf("dark H6.Color = %q, want %q", got, string(ui.Default.Text))
 	}
-	if got := deref(t, "dark LinkText.Color", dark.LinkText.Color); got != string(ui.ColorMeta) {
-		t.Errorf("dark LinkText.Color = %q, want %q", got, string(ui.ColorMeta))
+	if got := deref(t, "dark LinkText.Color", dark.LinkText.Color); got != string(ui.Default.Link) {
+		t.Errorf("dark LinkText.Color = %q, want %q", got, string(ui.Default.Link))
 	}
-	if got := deref(t, "dark HorizontalRule.Color", dark.HorizontalRule.Color); got != string(ui.ColorBorder) {
-		t.Errorf("dark HorizontalRule.Color = %q, want %q", got, string(ui.ColorBorder))
+	if got := deref(t, "dark HorizontalRule.Color", dark.HorizontalRule.Color); got != string(ui.Default.Border) {
+		t.Errorf("dark HorizontalRule.Color = %q, want %q", got, string(ui.Default.Border))
 	}
-	if got := deref(t, "dark BlockQuote.Color", dark.BlockQuote.Color); got != string(ui.ColorDim) {
-		t.Errorf("dark BlockQuote.Color = %q, want %q", got, string(ui.ColorDim))
+	if got := deref(t, "dark BlockQuote.Color", dark.BlockQuote.Color); got != string(ui.Default.Dim) {
+		t.Errorf("dark BlockQuote.Color = %q, want %q", got, string(ui.Default.Dim))
 	}
 
-	if got := deref(t, "light Heading.Color", light.Heading.Color); got == string(ui.ColorText) {
+	// Document is the base every block cascades onto, so this is the panel's
+	// body-text rule: the same Text role the card's changelog notes render in.
+	// The two sitting side by side at slightly different grays was the last
+	// thing that read as "this panel came from another app".
+	if got := deref(t, "dark Document.Color", dark.Document.Color); got != string(ui.Default.Text) {
+		t.Errorf("dark Document.Color = %q, want the card's body text %q", got, string(ui.Default.Text))
+	}
+
+	// Inline code reads exactly like a code span in the card's changelog:
+	// Emphasis on the Surface plate. Not Danger — red is the card's one alarm
+	// color and a README spends it a dozen times a screen.
+	if got := deref(t, "dark Code.Color", dark.Code.Color); got != string(ui.Default.Emphasis) {
+		t.Errorf("dark Code.Color = %q, want %q", got, string(ui.Default.Emphasis))
+	}
+	if got := deref(t, "dark Code.BackgroundColor", dark.Code.BackgroundColor); got != string(ui.Default.Surface) {
+		t.Errorf("dark Code.BackgroundColor = %q, want the %q plate", got, string(ui.Default.Surface))
+	}
+	if got := deref(t, "dark Code.Color", dark.Code.Color); got == string(ui.Default.Danger) {
+		t.Errorf("dark Code.Color is still the alarm role %q", got)
+	}
+
+	if got := deref(t, "light Heading.Color", light.Heading.Color); got == string(ui.Default.Text) {
 		t.Errorf("light Heading.Color = %q — the dark body tint is unreadable on white", got)
 	}
-	if got := deref(t, "light Document.Color", light.Document.Color); got == string(ui.ColorText) {
+	if got := deref(t, "light Document.Color", light.Document.Color); got == string(ui.Default.Text) {
 		t.Errorf("light Document.Color = %q — the dark body tint is unreadable on white", got)
 	}
 }
@@ -105,7 +126,7 @@ func TestKeepkitStyleLeavesGlobalsUntouched(t *testing.T) {
 	}
 
 	wantDark, wantLight := snapshot(t)
-	_, _ = keepkitStyle(true), keepkitStyle(false)
+	_, _ = keepkitStyle(ui.Default, true), keepkitStyle(ui.Default, false)
 	gotDark, gotLight := snapshot(t)
 
 	if gotDark != wantDark {
@@ -163,10 +184,12 @@ func TestRenderReadmeHouseStyle(t *testing.T) {
 			want: []string{"https://example.com/docs"},
 		},
 		{
-			name:   "badge header vanishes, prose survives",
+			// The title goes with the badges: the card beside this panel already
+			// prints the tool's name as the largest thing on the screen.
+			name:   "badge header and title vanish, prose survives",
 			raw:    "# keepkit\n\n[![Build](https://b.svg)](https://ci.example.com) ![License](https://l.svg)\n\nA tracker for CLI tools.\n",
-			want:   []string{"keepkit", "A tracker for CLI tools."},
-			absent: []string{"b.svg", "l.svg", "ci.example.com", "Image:"},
+			want:   []string{"A tracker for CLI tools."},
+			absent: []string{"b.svg", "l.svg", "ci.example.com", "Image:", "keepkit"},
 		},
 		{
 			name:   "emoji heading keeps its words",
@@ -186,7 +209,7 @@ func TestRenderReadmeHouseStyle(t *testing.T) {
 		// spaces of its own, which is layout, not residue. It is also
 		// background-independent, so it runs once rather than per variant.
 		t.Run(tt.name+"/no removal residue", func(t *testing.T) {
-			for _, line := range strings.Split(cleanReadmeMarkdown(cleanTerminalOutput(tt.raw)), "\n") {
+			for _, line := range strings.Split(cleanReadmeMarkdown(cleanTerminalOutput(tt.raw), ""), "\n") {
 				if strings.Contains(strings.TrimSpace(line), "  ") {
 					t.Errorf("removal left a double space: %q", line)
 				}
@@ -198,7 +221,7 @@ func TestRenderReadmeHouseStyle(t *testing.T) {
 				name = tt.name + "/dark"
 			}
 			t.Run(name, func(t *testing.T) {
-				plain := stripANSI(renderReadme(tt.raw, 100, dark))
+				plain := stripANSI(renderReadme(tt.raw, 100, dark, ui.Default, ""))
 				for _, w := range tt.want {
 					if !strings.Contains(plain, w) {
 						t.Errorf("missing %q\n--- rendered ---\n%s", w, plain)
@@ -233,7 +256,7 @@ func sharesLine(s, a, b string) bool {
 func TestRenderReadmeBadgeOnlyIsEmpty(t *testing.T) {
 	raw := "<p align=\"center\">\n  <img src=\"logo.png\">\n</p>\n\n[![Build](https://b.svg)](https://ci.example.com)\n![License](https://l.svg)\n\n<!-- nothing to see -->\n\n[badge]: https://b.svg\n"
 	for _, dark := range []bool{true, false} {
-		if got := renderReadme(raw, 60, dark); got != "" {
+		if got := renderReadme(raw, 60, dark, ui.Default, ""); got != "" {
 			t.Errorf("dark=%v: renderReadme = %q, want empty", dark, got)
 		}
 	}

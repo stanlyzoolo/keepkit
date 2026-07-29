@@ -11,6 +11,7 @@ import (
 
 	"github.com/stanlyzoolo/keepkit/internal/loader"
 	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/ui"
 	"github.com/stanlyzoolo/keepkit/internal/updater"
 	"github.com/stanlyzoolo/keepkit/internal/version"
 )
@@ -43,6 +44,61 @@ func selfModel(t *testing.T, meta []loader.ToolMeta, width int, state selfState)
 	m.selfState = state
 	m.selfLatest = selfTestLatest
 	return m
+}
+
+// TestAppVersionCell pins the status bar's identity cell: which build this is,
+// dim, on every frame — and the same ↑ an outdated tool row carries once a newer
+// keepkit release is known and still uninstalled. The version shown stays the
+// *running* one: the offer is that this build is behind, not a preview of what
+// it would become.
+func TestAppVersionCell(t *testing.T) {
+	forceColorProfile(t)
+
+	tests := []struct {
+		state     selfState
+		latest    string
+		wantArrow bool
+	}{
+		{state: selfNone, latest: "", wantArrow: false},
+		{state: selfOffered, latest: selfTestLatest, wantArrow: true},
+		{state: selfDismissed, latest: selfTestLatest, wantArrow: true},
+		// Installed already: the pending action is a restart, which the compact
+		// cell says. An ↑ here would advertise an update the user has taken.
+		{state: selfUpdated, latest: selfTestLatest, wantArrow: false},
+		{state: selfUpdatedLater, latest: selfTestLatest, wantArrow: false},
+		// Offered with nothing behind it: the failed-update path can leave the
+		// state set with no tag, and "keepkit v0.4.2 ↑" would then point nowhere.
+		{state: selfOffered, latest: "", wantArrow: false},
+	}
+	if len(tests) != int(selfStateCount)+1 {
+		t.Fatalf("table has %d rows, want one per selfState (%d) plus the tagless offer",
+			len(tests), selfStateCount)
+	}
+
+	for _, tt := range tests {
+		m := selfModel(t, selfBarTools(), 120, tt.state)
+		m.selfLatest = tt.latest
+
+		cell := m.appVersionCell()
+		if got, want := stripANSI(cell), selfToolName+" "+selfTestVersion; !strings.HasPrefix(got, want) {
+			t.Errorf("state %v: cell = %q, want it to lead with %q", tt.state, got, want)
+		}
+		if got := strings.Contains(cell, "↑"); got != tt.wantArrow {
+			t.Errorf("state %v latest=%q: arrow = %v, want %v (cell %q)", tt.state, tt.latest, got, tt.wantArrow, stripANSI(cell))
+		}
+		// The version takes the signal role exactly when it carries the arrow;
+		// the rest of the time the whole cell steps back to dim.
+		if got := strings.Contains(cell, themeSeq(ui.Default.Signal)); got != tt.wantArrow {
+			t.Errorf("state %v: signal role = %v, want %v", tt.state, got, tt.wantArrow)
+		}
+	}
+
+	// A model that was never handed a version renders no cell at all rather than
+	// a bare "keepkit" naming nothing.
+	plain := New(selfBarTools())
+	if got := plain.appVersionCell(); got != "" {
+		t.Errorf("cell without an injected version = %q, want empty", got)
+	}
 }
 
 // selfBarTools is the tracker the status-bar tests run against: exactly one
@@ -328,7 +384,7 @@ func TestSelfCheckMsgKeepsActedOnState(t *testing.T) {
 
 // ---- the selfState machine and what it renders ----
 
-// TestSelfStateSitesAreExhaustive walks every selfState through the five sites
+// TestSelfStateSitesAreExhaustive walks every selfState through the six sites
 // that switch on it. .golangci.yml carries no exhaustiveness linter, so a sixth
 // member would otherwise compile with some of those sites silently missing it —
 // the row-count check against selfStateCount is what makes adding one fail here
@@ -340,15 +396,16 @@ func TestSelfStateSitesAreExhaustive(t *testing.T) {
 		wantCompact bool // selfCompactCell renders the folded right-group cell
 		wantHotkeys bool // the [?] overlay carries a Self group
 		wantU       bool // [U] is bound (a command, or the restart flag)
+		wantArrow   bool // selfUpdateAvailable marks the identity cell's version
 	}{
 		{state: selfNone},
-		{state: selfOffered, wantBanner: true, wantHotkeys: true, wantU: true},
-		{state: selfDismissed, wantCompact: true, wantHotkeys: true, wantU: true},
+		{state: selfOffered, wantBanner: true, wantHotkeys: true, wantU: true, wantArrow: true},
+		{state: selfDismissed, wantCompact: true, wantHotkeys: true, wantU: true, wantArrow: true},
 		{state: selfUpdated, wantBanner: true, wantHotkeys: true, wantU: true},
 		{state: selfUpdatedLater, wantCompact: true, wantHotkeys: true, wantU: true},
 	}
 	if len(tests) != int(selfStateCount) {
-		t.Fatalf("table has %d rows, want one per selfState (%d): a new state must be decided at all five sites",
+		t.Fatalf("table has %d rows, want one per selfState (%d): a new state must be decided at all six sites",
 			len(tests), selfStateCount)
 	}
 
@@ -361,9 +418,17 @@ func TestSelfStateSitesAreExhaustive(t *testing.T) {
 			if got := m.selfCompactCell() != ""; got != tt.wantCompact {
 				t.Errorf("selfCompactCell present = %v, want %v", got, tt.wantCompact)
 			}
+			if got := m.selfUpdateAvailable(); got != tt.wantArrow {
+				t.Errorf("selfUpdateAvailable = %v, want %v", got, tt.wantArrow)
+			}
 			hk := mustModel(m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}}))
-			if got := strings.Contains(hk.renderHotkeys(), "Self"); got != tt.wantHotkeys {
-				t.Errorf("[?] Self group present = %v, want %v", got, tt.wantHotkeys)
+			// The group header is lowercase like every other one, so match on a
+			// row only it can produce rather than on the word "self", which the
+			// version line in the title also carries.
+			overlay := hk.renderHotkeys()
+			hasGroup := strings.Contains(overlay, "self-update") || strings.Contains(overlay, "restart")
+			if hasGroup != tt.wantHotkeys {
+				t.Errorf("[?] self group present = %v, want %v", hasGroup, tt.wantHotkeys)
 			}
 			u := m
 			cmd := u.selfUpdateKey()
@@ -426,44 +491,49 @@ func TestSelfBannerInStatusBar(t *testing.T) {
 		wantCell string
 	}{
 		{
+			// The identity cell says "keepkit v0.4.2" on every frame, so the
+			// absence being checked here is of a self-update *surface*: no offer,
+			// no [U], and no ↑ on the version.
 			name:   "no banner",
 			state:  selfNone,
-			want:   []string{"[t] track"},
-			absent: []string{"keepkit"},
+			want:   []string{"t track", "keepkit v0.4.2"},
+			absent: []string{"available", "U update", "U restart", "↑"},
 		},
 		{
 			name:   "offer replaces the hints",
 			state:  selfOffered,
-			want:   []string{"keepkit v0.5.0 available", "[U] update", "[X] dismiss"},
-			absent: []string{"[t] track"},
+			want:   []string{"keepkit v0.5.0 available", "U update", "X dismiss"},
+			absent: []string{"t track"},
 		},
 		{
+			// The fold keeps [U] reachable; the subject and the ↑ come from the
+			// identity cell beside it, which is why the fold itself is two words.
 			name:     "dismissed keeps the hints and folds to a cell",
 			state:    selfDismissed,
-			want:     []string{"[t] track", "keepkit ↑ [U]"},
+			want:     []string{"t track", "keepkit v0.4.2 ↑", "U update"},
 			absent:   []string{"available", "dismiss"},
-			wantCell: "keepkit ↑ [U]",
+			wantCell: "U update",
 		},
 		{
 			name:   "updated offers the restart",
 			state:  selfUpdated,
-			want:   []string{"keepkit updated", "[U] restart", "[X] later"},
-			absent: []string{"[t] track", "available"},
+			want:   []string{"keepkit updated", "U restart", "X later"},
+			absent: []string{"t track", "available"},
 		},
 		{
 			name:     "restart later folds to a cell",
 			state:    selfUpdatedLater,
-			want:     []string{"[t] track", "keepkit [U] restart"},
-			absent:   []string{"later", "available"},
-			wantCell: "keepkit [U] restart",
+			want:     []string{"t track", "keepkit v0.4.2", "U restart"},
+			absent:   []string{"later", "available", "↑"},
+			wantCell: "U restart",
 		},
 		{
 			name:     "in flight shows neither banner",
 			state:    selfOffered,
 			updating: true,
-			want:     []string{"[t] track", "keepkit updating…"},
-			absent:   []string{"available", "[X] dismiss"},
-			wantCell: "keepkit updating…",
+			want:     []string{"t track", "keepkit v0.4.2", "updating…"},
+			absent:   []string{"available", "X dismiss"},
+			wantCell: "updating…",
 		},
 	}
 	for _, tt := range tests {
@@ -498,7 +568,7 @@ func TestSelfBannerInEveryNormalFocus(t *testing.T) {
 		m := selfModel(t, selfBarTools(), 120, selfOffered)
 		m.focus = focus
 		bar := stripANSI(m.renderStatusBar())
-		if !strings.Contains(bar, "keepkit v0.5.0 available") || !strings.Contains(bar, "[U] update") {
+		if !strings.Contains(bar, "keepkit v0.5.0 available") || !strings.Contains(bar, "U update") {
 			t.Errorf("focus %d bar = %q, want the self-update banner", focus, bar)
 		}
 	}
@@ -528,17 +598,20 @@ func TestSelfCompactCellRightGroupDegradation(t *testing.T) {
 	wide := selfModel(t, selfBarTools(), 160, selfDismissed)
 	wide.rate = rate
 	bar := stripANSI(wide.renderStatusBar())
-	if !strings.Contains(bar, "GitHub API Usage") || !strings.Contains(bar, "keepkit ↑ [U]") {
-		t.Errorf("wide status bar = %q, want the full gauge and the self cell", bar)
+	if !strings.Contains(bar, gaugeFillGlyph) || !strings.Contains(bar, "keepkit v0.4.2 ↑  U update") {
+		t.Errorf("wide status bar = %q, want the full gauge, the identity cell and the self cell", bar)
 	}
 
-	tight := selfModel(t, selfBarTools(), 100, selfDismissed)
+	// Wide enough for the hints plus the cell, too narrow for even the compact
+	// gauge beside it. The exact number tracks the hint bar's width, which
+	// shrank when the key hints dropped their brackets.
+	tight := selfModel(t, selfBarTools(), 88, selfDismissed)
 	tight.rate = rate
 	bar = stripANSI(tight.renderStatusBar())
-	if !strings.Contains(bar, "keepkit ↑ [U]") {
+	if !strings.Contains(bar, "U update") {
 		t.Errorf("tight status bar = %q, want the self cell to outrank the gauge", bar)
 	}
-	if strings.Contains(bar, "GitHub API Usage") || strings.Contains(bar, "GH 18/60") {
+	if strings.Contains(bar, "18/60") {
 		t.Errorf("tight status bar = %q, want no gauge next to the self cell", bar)
 	}
 }
@@ -554,8 +627,8 @@ func TestSelfCompactCellFitsBaselineTerminal(t *testing.T) {
 		m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
 
 		bar := stripANSI(m.renderStatusBar())
-		if !strings.Contains(bar, "keepkit ↑ [U]") {
-			t.Errorf("focus %d: 80-col bar = %q, want the collapsed self cell", focus, bar)
+		if !strings.Contains(bar, "keepkit v0.4.2 ↑  U update") {
+			t.Errorf("focus %d: 80-col bar = %q, want the identity cell and the collapsed self cell", focus, bar)
 		}
 		// A dropped hint cell is the price; the leading one must survive.
 		if lines := strings.Count(bar, "\n"); lines > 2 {
@@ -569,14 +642,21 @@ func TestSelfCompactCellFitsBaselineTerminal(t *testing.T) {
 func TestRateGaugeUnaffectedWithoutSelfCell(t *testing.T) {
 	m := selfModel(t, selfBarTools(), 160, selfNone)
 	m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
-	if bar := stripANSI(m.renderStatusBar()); !strings.Contains(bar, "GitHub API Usage") {
+	if bar := stripANSI(m.renderStatusBar()); !strings.Contains(bar, gaugeFillGlyph) {
 		t.Errorf("status bar = %q, want the full gauge", bar)
 	}
 
-	m = selfModel(t, selfBarTools(), 100, selfNone)
+	// Narrow enough that the bar no longer fits beside the hints, wide enough
+	// for the numbers — and for the identity cell, which outranks the gauge and
+	// is on screen in every state.
+	m = selfModel(t, selfBarTools(), 106, selfNone)
 	m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
-	if bar := stripANSI(m.renderStatusBar()); !strings.Contains(bar, "GH 18/60") {
+	bar := stripANSI(m.renderStatusBar())
+	if !strings.Contains(bar, "api 18/60") {
 		t.Errorf("status bar = %q, want the compact gauge", bar)
+	}
+	if strings.Contains(bar, gaugeFillGlyph) {
+		t.Errorf("status bar = %q, want the bar dropped at this width", bar)
 	}
 }
 
@@ -791,7 +871,7 @@ func TestToolUpdateKeyBlockedBySelfUpdate(t *testing.T) {
 		t.Fatal("fixture: rg must have a pending update for [u] to be live")
 	}
 
-	updated, cmd := m.Update(keyRunes("u"))
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if got.statusMsg != updateBusyStatus {
 		t.Errorf("statusMsg = %q, want %q", got.statusMsg, updateBusyStatus)
@@ -1212,11 +1292,13 @@ func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 		wantContains string
 		wantAbsent   string
 	}{
-		{name: "never offered", state: selfNone, wantAbsent: "keepkit"},
+		// The identity cell says "keepkit v0.4.2" in every state, so what must be
+		// absent here is the self-update surface: no offer, no [U], no ↑.
+		{name: "never offered", state: selfNone, wantAbsent: "U update"},
 		{name: "offered", state: selfOffered, latest: "v0.5.0", wantContains: "v0.5.0 available"},
-		{name: "folded offer", state: selfDismissed, latest: "v0.5.0", wantContains: "keepkit ↑"},
+		{name: "folded offer", state: selfDismissed, latest: "v0.5.0", wantContains: "keepkit v0.4.2 ↑  U update"},
 		{name: "restart pending", state: selfUpdated, wantContains: "keepkit updated"},
-		{name: "restart folded", state: selfUpdatedLater, wantContains: "keepkit [U] restart"},
+		{name: "restart folded", state: selfUpdatedLater, wantContains: "keepkit v0.4.2  U restart"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1310,10 +1392,10 @@ func TestKeepkitUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 				}
 				return
 			}
-			if strings.Contains(bar, "keepkit updated") || strings.Contains(bar, "[U]") {
+			if strings.Contains(bar, "keepkit updated") || strings.Contains(bar, "U restart") {
 				t.Errorf("status bar = %q, want no self-update surface on a dev build", bar)
 			}
-			if strings.Contains(overlay, "Self") {
+			if strings.Contains(overlay, "self-update") || strings.Contains(overlay, "U  restart") {
 				t.Errorf("[?] overlay = %q, want no Self group on a dev build", overlay)
 			}
 			if m.RestartRequested() {
@@ -1385,8 +1467,8 @@ func TestSelfUpdateLogOwnsHelpPanel(t *testing.T) {
 		if content := stripANSI(m.renderHelpContent()); !strings.Contains(content, "==> Upgrading keepkit") {
 			t.Errorf("tracker %v: [3] = %q, want the self-update log", meta, content)
 		}
-		if panel := stripANSI(m.renderHelp()); !strings.Contains(panel, "[3] Update") {
-			t.Errorf("tracker %v: panel title missing [3] Update", meta)
+		if panel := stripANSI(m.renderHelp()); !strings.Contains(panel, "[3] update") {
+			t.Errorf("tracker %v: panel title missing [3] update", meta)
 		}
 	}
 }
