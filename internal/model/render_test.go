@@ -574,12 +574,14 @@ func TestRenderStatusBarFocusTools(t *testing.T) {
 	m := Model{width: 80, focus: focusTools}
 	got := m.renderStatusBar()
 
-	for _, want := range []string{"search", "track", "quit"} {
+	for _, want := range []string{"t track", "u untrack", "m rename", "a api", "? keys", "q quit"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("focusTools status bar = %q, missing %q", got, want)
 		}
 	}
-	for _, absent := range []string{"filter", "github", "check", "navigate"} {
+	// enter and / are panel-local (see globalHints) and live in [1]'s footer;
+	// the rest never belonged to the bar at all.
+	for _, absent := range []string{"enter run", "/ search", "filter", "github", "check", "navigate"} {
 		if strings.Contains(got, absent) {
 			t.Errorf("focusTools status bar = %q, should not contain %q", got, absent)
 		}
@@ -594,12 +596,15 @@ func TestStatusBarIsGlobal(t *testing.T) {
 	for _, focus := range []int{focusTools, focusBrief, focusHelp} {
 		m := Model{width: 120, focus: focus}
 		got := m.renderStatusBar()
-		for _, want := range []string{"enter run", "/ search", "t track", "u untrack", "R rename", "q quit"} {
+		for _, want := range []string{"t track", "u untrack", "m rename", "a api", "? keys", "q quit"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("focus %d status bar = %q, missing %q", focus, got, want)
 			}
 		}
-		for _, absent := range []string{"open repo", "changelog", "scroll", "--help"} {
+		// enter means three different things across the three panels and / two,
+		// so neither can be advertised by a line that never changes: both moved
+		// to [1]'s footer, where their meaning is fixed.
+		for _, absent := range []string{"enter run", "/ search", "open repo", "changelog", "scroll", "--help"} {
 			if strings.Contains(got, absent) {
 				t.Errorf("focus %d status bar = %q, should not carry a panel-local hint %q", focus, got, absent)
 			}
@@ -1072,9 +1077,9 @@ func TestRenderPanelTitles(t *testing.T) {
 		want string
 		alts []string
 	}{
-		{helpModeHelp, " [3] help ", []string{"m man", "r readme"}},
-		{helpModeReadme, " [3] readme ", []string{"h help", "m man"}},
-		{helpModeMan, " [3] man ", []string{"h help", "r readme"}},
+		{helpModeHelp, " [3] help ", []string{"M man", "R readme"}},
+		{helpModeReadme, " [3] readme ", []string{"H help", "M man"}},
+		{helpModeMan, " [3] man ", []string{"H help", "R readme"}},
 	} {
 		m.helpMode = tt.mode
 		lines := strings.Split(m.renderHelp(), "\n")
@@ -1224,7 +1229,7 @@ func TestRenderStatusBarGauge(t *testing.T) {
 	t.Run("wide width shows the bar and the numbers", func(t *testing.T) {
 		m := Model{width: 135, focus: focusTools, rate: known}
 		got := m.renderStatusBar()
-		for _, want := range []string{"api ", "45/60", gaugeFillGlyph, gaugeTrackGlyph, "search"} {
+		for _, want := range []string{"api ", "45/60", gaugeFillGlyph, gaugeTrackGlyph, "t track"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("wide status bar = %q, missing %q", got, want)
 			}
@@ -1232,7 +1237,9 @@ func TestRenderStatusBarGauge(t *testing.T) {
 	})
 
 	t.Run("medium width collapses to the numbers alone", func(t *testing.T) {
-		m := Model{width: 88, focus: focusTools, rate: known}
+		// Wide enough for the six global hints plus "api 45/60" (62 cells of
+		// inner), too narrow for the 12-cell bar that would make it 75.
+		m := Model{width: 70, focus: focusTools, rate: known}
 		got := m.renderStatusBar()
 		if strings.Contains(got, gaugeFillGlyph) {
 			t.Errorf("medium status bar unexpectedly full: %q", got)
@@ -1257,12 +1264,14 @@ func TestRenderStatusBarGauge(t *testing.T) {
 	})
 
 	t.Run("narrow width hides gauge but keeps hints", func(t *testing.T) {
-		m := Model{width: 75, focus: focusTools, rate: known}
+		// Below the 62 cells even the compact gauge needs beside the hints, the
+		// gauge goes and the whole global list stays: it is the actionable half.
+		m := Model{width: 60, focus: focusTools, rate: known}
 		got := m.renderStatusBar()
 		if strings.Contains(got, "45/60") {
 			t.Errorf("narrow status bar = %q, should carry no gauge", got)
 		}
-		for _, want := range []string{"search", "track", "quit"} {
+		for _, want := range []string{"t track", "m rename", "q quit"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("narrow status bar = %q, missing hint %q", got, want)
 			}
@@ -1295,12 +1304,17 @@ func TestRenderStatusBarGauge(t *testing.T) {
 	})
 }
 
+// TestRenderHintsBarAlignment pins the bar's three zones: keepkit's identity on
+// the left edge, the hint cells centered on the bar, the API gauge on the right
+// edge. Centering is measured against the whole bar rather than against the
+// leftover band between the two edges — the block has to read as centered on
+// screen, and the edges are rarely the same width.
 func TestRenderHintsBarAlignment(t *testing.T) {
 	known := version.RateLimit{Known: true, Remaining: 15, Limit: 60} // used 45/60
-	m := Model{width: 120, rate: known}
+	m := Model{width: 120, rate: known, appVersion: "v0.1.0"}
 	hints := []string{"abc"}
 
-	// A plain (border-less) style isolates the laid-out content; the gap logic
+	// A plain (border-less) style isolates the laid-out content; the layout
 	// inside renderHintsBar uses m.width-2 regardless of the style passed.
 	out := m.renderHintsBar(lipgloss.NewStyle(), hints)
 	plain := ansiCSI.ReplaceAllString(out, "")
@@ -1310,13 +1324,30 @@ func TestRenderHintsBarAlignment(t *testing.T) {
 	if w := lipgloss.Width(out); w != inner {
 		t.Errorf("laid-out width = %d, want inner %d (gauge not right-aligned)", w, inner)
 	}
-	// Gauge sits at the far right (the full form ends with used/limit).
+	if !strings.HasPrefix(plain, "keepkit v0.1.0") {
+		t.Errorf("hints bar = %q, want the version cell on the left edge", plain)
+	}
 	if !strings.HasSuffix(plain, "45/60") {
 		t.Errorf("hints bar = %q, gauge not at the right end", plain)
 	}
-	// Hints stay on the left with a spacer before the gauge.
-	if !strings.HasPrefix(plain, "abc  ") {
-		t.Errorf("hints bar = %q, want hints then a spacer on the left", plain)
+
+	// The hint block is centered: its midpoint lands on the bar's midpoint,
+	// within the one cell odd slack can cost.
+	start := strings.Index(plain, "abc")
+	if start < 0 {
+		t.Fatalf("hints bar = %q, missing the hint cell", plain)
+	}
+	mid, want := start+len("abc")/2, inner/2
+	if mid < want-1 || mid > want+1 {
+		t.Errorf("hint block midpoint = %d, want %d±1 (centered on the bar): %q", mid, want, plain)
+	}
+
+	// With no room to center, the block is pushed right up against the left
+	// edge rather than overlapping it.
+	narrow := Model{width: 34, rate: known, appVersion: "v0.1.0"}
+	tight := ansiCSI.ReplaceAllString(narrow.renderHintsBar(lipgloss.NewStyle(), hints), "")
+	if !strings.HasPrefix(tight, "keepkit v0.1.0  abc") {
+		t.Errorf("narrow hints bar = %q, want the hints clamped beside the version cell", tight)
 	}
 }
 
@@ -1761,26 +1792,26 @@ func TestHelpMissingSourceMessages(t *testing.T) {
 		return m
 	}
 
-	t.Run("man mode with no page names the tool and points to [h]", func(t *testing.T) {
+	t.Run("man mode with no page names the tool and points to [H]", func(t *testing.T) {
 		m := base(helpModeMan)
 		nm := mustModel(m.Update(helpOutputMsg{toolName: "agterm", mode: helpModeMan, err: errBoom}))
 		plain := ansiCSI.ReplaceAllString(nm.renderHelpContent(), "")
 		if !strings.Contains(plain, "No man page for agterm") {
 			t.Errorf("man message = %q, want explicit no-man-page", plain)
 		}
-		if !strings.Contains(plain, "[h]") {
+		if !strings.Contains(plain, "[H]") {
 			t.Errorf("man message = %q, want cross-hint to --help", plain)
 		}
 	})
 
-	t.Run("help mode with no output names the tool and points to [m]", func(t *testing.T) {
+	t.Run("help mode with no output names the tool and points to [M]", func(t *testing.T) {
 		m := base(helpModeHelp)
 		nm := mustModel(m.Update(helpOutputMsg{toolName: "agterm", mode: helpModeHelp, err: errBoom}))
 		plain := ansiCSI.ReplaceAllString(nm.renderHelpContent(), "")
 		if !strings.Contains(plain, "No --help output for agterm") {
 			t.Errorf("help message = %q, want explicit no-help", plain)
 		}
-		if !strings.Contains(plain, "[m]") {
+		if !strings.Contains(plain, "[M]") {
 			t.Errorf("help message = %q, want cross-hint to man", plain)
 		}
 	})
@@ -2404,7 +2435,7 @@ func TestRemoteMsgRateLimitedHint(t *testing.T) {
 		t.Errorf("m.rate = %+v, want Known with Remaining 0", nm.rate)
 	}
 	// The card must actually render the hint, not just set the internal map.
-	if card := stripANSI(nm.renderCard()); !strings.Contains(card, "rate limited — press L") {
+	if card := stripANSI(nm.renderCard()); !strings.Contains(card, "rate limited — press a") {
 		t.Errorf("renderCard() missing rate-limit hint; got:\n%s", card)
 	}
 }
@@ -2554,13 +2585,13 @@ func TestRenderAPIStatusWarnIcon(t *testing.T) {
 
 func TestAPIStatusOverlayToggle(t *testing.T) {
 	m := Model{width: 80, height: 24, focus: focusTools, ready: true}
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("L")})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	nm := updated.(Model)
 	if nm.mode != modeAPIStatus {
-		t.Fatalf("pressing L did not open the API-status overlay")
+		t.Fatalf("pressing a did not open the API-status overlay")
 	}
 	if cmd == nil {
-		t.Errorf("pressing L should fire a rate fetch cmd")
+		t.Errorf("pressing a should fire a rate fetch cmd")
 	}
 	// esc closes it.
 	updated2, _ := nm.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -2732,7 +2763,8 @@ func TestSpinnerTickGateWhenIdle(t *testing.T) {
 // TestUpdateBriefRefresh covers the [r] refresh action in the brief panel: it
 // starts a refresh (sets refreshingFor + status) for a repo-backed tool, the
 // remoteMsg completion clears it, a no-repo tool only reports status, a repeat
-// press is a no-op guard, and [r] in the tool list still starts a rename.
+// press is a no-op guard, and [m] in the tool list starts a rename without
+// touching the refresh state.
 func TestUpdateBriefRefresh(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	keyR := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")}
@@ -2820,7 +2852,7 @@ func TestUpdateBriefRefresh(t *testing.T) {
 		}
 	})
 
-	t.Run("R starts rename from the tool list", func(t *testing.T) {
+	t.Run("m starts rename from the tool list", func(t *testing.T) {
 		m := Model{
 			meta:         []loader.ToolMeta{{Name: "tool-x"}},
 			metaSelected: 0,
@@ -2829,11 +2861,11 @@ func TestUpdateBriefRefresh(t *testing.T) {
 		}
 		m.tools = loader.ToolsFromMeta(m.meta)
 
-		updated, _ := m.Update(keyRunes("R"))
+		updated, _ := m.Update(keyRunes("m"))
 		nm := updated.(Model)
 
 		if nm.mode != modeRename {
-			t.Error("renaming = false, want true (R opens rename)")
+			t.Error("renaming = false, want true (m opens rename)")
 		}
 		if nm.refreshingFor != "" {
 			t.Errorf("refreshingFor = %q, want empty in focusTools", nm.refreshingFor)
@@ -3918,9 +3950,9 @@ func TestHelpSourceHintsInPanelTitle(t *testing.T) {
 		mode int
 		alts []string
 	}{
-		{helpModeHelp, []string{"m man", "r readme"}},
-		{helpModeMan, []string{"h help", "r readme"}},
-		{helpModeReadme, []string{"h help", "m man"}},
+		{helpModeHelp, []string{"M man", "R readme"}},
+		{helpModeMan, []string{"H help", "R readme"}},
+		{helpModeReadme, []string{"H help", "M man"}},
 	} {
 		m := New([]loader.ToolMeta{{Name: "git"}})
 		m = mustModel(m.Update(tea.WindowSizeMsg{Width: 140, Height: 30}))
@@ -3971,14 +4003,14 @@ func TestReadmePlaceholders(t *testing.T) {
 		m := readmePanelModel(t, repo)
 		m = mustModel(m.Update(readmeMsg{toolName: "rg", err: version.ErrNoReadme}))
 		got := stripANSI(m.renderHelpContent())
-		if !strings.Contains(got, "No README in BurntSushi/ripgrep.") || !strings.Contains(got, "[h]") {
+		if !strings.Contains(got, "No README in BurntSushi/ripgrep.") || !strings.Contains(got, "[H]") {
 			t.Errorf("panel = %q, want the 404 placeholder naming the repo", got)
 		}
 	})
 	t.Run("rate limited", func(t *testing.T) {
 		m := readmePanelModel(t, repo)
 		m = mustModel(m.Update(readmeMsg{toolName: "rg", err: version.ErrRateLimited}))
-		if got := stripANSI(m.renderHelpContent()); !strings.Contains(got, "rate limited — press L") {
+		if got := stripANSI(m.renderHelpContent()); !strings.Contains(got, "rate limited — press a") {
 			t.Errorf("panel = %q, want the rate-limit placeholder", got)
 		}
 	})
@@ -3997,7 +4029,7 @@ func TestReadmePlaceholders(t *testing.T) {
 		if strings.TrimSpace(got) == "" {
 			t.Fatal("panel is blank, want a placeholder")
 		}
-		if !strings.Contains(got, "No README for rg.") || !strings.Contains(got, "[h]") {
+		if !strings.Contains(got, "No README for rg.") || !strings.Contains(got, "[H]") {
 			t.Errorf("panel = %q, want the generic placeholder with a way out", got)
 		}
 	})
@@ -4005,7 +4037,7 @@ func TestReadmePlaceholders(t *testing.T) {
 		m := readmePanelModel(t, repo)
 		m = mustModel(m.Update(readmeMsg{toolName: "rg", err: errors.New("dial tcp: no route to host")}))
 		got := stripANSI(m.renderHelpContent())
-		if !strings.Contains(got, "No README for rg.") || !strings.Contains(got, "[h]") {
+		if !strings.Contains(got, "No README for rg.") || !strings.Contains(got, "[H]") {
 			t.Errorf("panel = %q, want the generic placeholder", got)
 		}
 	})
@@ -4314,26 +4346,49 @@ func TestRenderStatusBarRunInput(t *testing.T) {
 	}
 }
 
-// TestRenderStatusBarFocusToolsRunHint: the focusTools normal-mode bar carries
-// the [enter] run hint (first cell — it must survive narrow-terminal cell
-// dropping, which trims from the right).
-func TestRenderStatusBarFocusToolsRunHint(t *testing.T) {
-	m := Model{width: 80, focus: focusTools}
-	got := m.renderStatusBar()
-	if !strings.Contains(got, "enter run") {
-		t.Errorf("focusTools status bar missing the [enter] run cell: %q", got)
+// TestRunHintLivesInToolsFooter: enter is [1]'s primary action and only [1]'s —
+// it installs a release in [2] and does nothing in [3] — so it is advertised in
+// that panel's footer and NOT by the global bar, which would have to pick one of
+// the three meanings and be wrong in two panels.
+func TestRunHintLivesInToolsFooter(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "git"}})
+	m = mustModel(m.Update(tea.WindowSizeMsg{Width: 160, Height: 30}))
+
+	if got := stripANSI(m.renderTools()); !strings.Contains(got, "enter run") {
+		t.Errorf("tools panel = %q, want the enter run cell in its footer", got)
+	}
+	for _, focus := range []int{focusTools, focusBrief, focusHelp} {
+		m.focus = focus
+		if bar := stripANSI(m.renderStatusBar()); strings.Contains(bar, "enter run") {
+			t.Errorf("focus %d status bar = %q, want enter left to [1]'s footer", focus, bar)
+		}
+	}
+}
+
+// TestToolsFooterCellOrder: the three [1] cells are ordered most-important-first
+// because panelFooter drops from the right, and on a narrow list "run" is worth
+// more than "group".
+func TestToolsFooterCellOrder(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "git"}})
+	m = mustModel(m.Update(tea.WindowSizeMsg{Width: 200, Height: 30}))
+	got := stripANSI(m.renderTools())
+	iFilter, iRun, iGroup := strings.Index(got, "/ filter"), strings.Index(got, "enter run"), strings.Index(got, "space group")
+	if iFilter < 0 || iRun < 0 || iGroup < 0 {
+		t.Fatalf("tools footer = %q, want all three cells at this width", got)
+	}
+	if iFilter >= iRun || iRun >= iGroup {
+		t.Errorf("tools footer cell order = (%d,%d,%d), want / filter, enter run, space group", iFilter, iRun, iGroup)
 	}
 
-	// Narrow terminal: renderHintsBar drops cells from the right, so the
-	// first-placed [enter] run must outlive the right-side reminders. Width 24
-	// (inner 22) fits exactly one cell.
-	m.width = 24
-	got = m.renderStatusBar()
-	if !strings.Contains(got, "enter run") {
-		t.Errorf("narrow focusTools bar dropped the [enter] run cell: %q", got)
+	// Narrower: cells go from the right, so group is the first to leave and
+	// filter the last.
+	m = mustModel(m.Update(tea.WindowSizeMsg{Width: 120, Height: 30}))
+	got = stripANSI(m.renderTools())
+	if strings.Contains(got, "space group") {
+		t.Errorf("tools footer = %q, want the trailing cell dropped at this width", got)
 	}
-	if strings.Contains(got, "q quit") || strings.Contains(got, "? keys") {
-		t.Errorf("narrow focusTools bar kept right-side cells that should drop first: %q", got)
+	if !strings.Contains(got, "/ filter") || !strings.Contains(got, "enter run") {
+		t.Errorf("tools footer = %q, want the two leading cells kept", got)
 	}
 }
 

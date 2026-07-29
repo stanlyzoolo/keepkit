@@ -102,7 +102,7 @@ Each tool has five data sources, split so local detection never waits on the net
   `helpMode == helpModeReadme`, so the request is spent per *visited* tool rather than
   per tracked tool. The whole `readmeMsg` (content or error) lands in `m.readmeData`, so
   a 404 or a rate limit is a session-cached negative; `[r]` in `[2]` clears the entry,
-  and a token added in the `[L]` overlay drops the rate-limited ones so they can retry.
+  and a token added in the `[a]` overlay drops the rate-limited ones so they can retry.
   The entry appears only when the response lands, so an in-flight request is tracked
   separately in `m.readmeLoading` — without it a `j`/`k` bounce back onto the same tool
   would spend a second request inside that window.
@@ -158,8 +158,10 @@ pointer instead of writing through a shared one.
 ## TUI state machine
 
 Three panels with cycling focus: `[1] tools` (the list), `[2] brief` (the card),
-`[3] readme` (the README/`--help`/`man`/update-log view, switched by `r`/`h`/`m` —
-`m.helpMode` is global, not per tool, and defaults to the README). Focus moves with `→`/`←`, the digits
+`[3] readme` (the README/`--help`/`man`/update-log view, switched by `R`/`H`/`M` —
+capitals as a set, so none of them collides with `r` refresh or the lowercase tracker
+verbs, and all three fire from `[2]` as well as `[3]`; `m.helpMode` is global, not per
+tool, and defaults to the README). Focus moves with `→`/`←`, the digits
 `1`/`2`/`3`, or a mouse click; everything goes through `setFocus(f)`, which repaints
 the tools list — the only viewport whose content depends on focus.
 
@@ -221,21 +223,29 @@ Key invariants:
   registered only when its `release notes ↗` affordance actually fit — a heading that
   looks like plain text must not open a browser. `handleMouse` rebuilds the map per
   click, which is why it can never describe stale content.
-- **The status bar is global; each panel owns its footer.** One key list in every
-  focus instead of three that rewrite themselves as focus moves — what is panel-local
-  (the card's actions, `[3]`'s paging and entry cursor, `[1]`'s filter and grouping)
-  sits in that panel's own footer, next to the thing it acts on. All three panels
-  reserve the same `panelFooterRows` and keep the same `panelGutter` — one blank
-  column between the frame and everything the panel draws, which in `[2]` and `[3]` is
-  *all* content: `cardWidth()` and `helpWrapWidth()` are the single definitions of the
-  two budgets, and `indentLines` applies the indent last, to whole finished lines, so
-  it can never split an escape sequence or shift a card link's row.
+- **The status bar is global; each panel owns its footer.** A key belongs on the bar
+  exactly when it does the same thing in every focus, and six do: `t` track, `u`
+  untrack, `m` rename, `a` api, `?` keys, `q` quit (`globalHints`). `enter` and `/`
+  failed that test — `enter` runs a tool in `[1]`, installs a release in `[2]` and does
+  nothing in `[3]`; `/` filters the list in `[1]` but searches `[3]`'s text from `[2]`
+  — so both sit in `[1]`'s footer with `space` group, next to the panel where their
+  meaning is fixed. Everything else panel-local (the card's actions, `[3]`'s paging and
+  entry cursor) sits in that panel's footer for the same reason.
+  The bar lays those six out in **three zones**: keepkit's own name and version
+  (`appVersionCell`) pinned to the left edge, marked with the same ` ↑` as an outdated
+  tool row when a newer release is waiting; the hints centered on the bar; the API
+  quota gauge pinned to the right edge. The collapsed self-update cell rides with the
+  version, because it carries its action alone (`U update`) and the version cell is the
+  subject that names what is being updated. Under pressure the bar sheds in order of
+  how actionable a thing is: trailing hints, then the gauge, then the version, then the
+  self cell — and the leading hint is truncated rather than allowed to wrap.
+  All three panels reserve the same `panelFooterRows` and keep the same `panelGutter` —
+  one blank column between the frame and everything the panel draws, which in `[2]` and
+  `[3]` is *all* content: `cardWidth()` and `helpWrapWidth()` are the single definitions
+  of the two budgets, and `indentLines` applies the indent last, to whole finished
+  lines, so it can never split an escape sequence or shift a card link's row.
   `calcListHeight()` is the single definition both the `WindowSizeMsg` handler
   and the renderers use, so a drift there cannot push the status bar off screen.
-  The status bar's right corner carries keepkit's own name and version
-  (`appVersionCell`), marked with the same ` ↑` as an outdated tool row when a newer
-  release is waiting — the app announces its own update in the vocabulary it announces
-  everyone else's.
 - **A click's X picks the panel, `panelRow` decides whether it is on one at all.**
   The outer margin, the borders and the status bars share the panels' columns; with a
   scrolled viewport an unbounded row would map that chrome onto a list row or a card
@@ -426,7 +436,7 @@ makes the check free. Token: `GITHUB_TOKEN` from the environment always wins ove
   "optimistic" observation from `/rate_limit` cannot roll back the per-request
   header readings within the same window.
 - **`ErrRateLimited`** — a typed error for 403/429 with `X-RateLimit-Remaining: 0`
-  from the response's own headers; the card shows "rate limited — press [L]",
+  from the response's own headers; the card shows "rate limited — press [a]",
   already-loaded data is not erased.
 - **The cache** (`cache.json`, 24h TTL): every read-modify-write goes through
   `updateCacheEntry(repo, mutate)` — under a mutex, re-read from disk, merge, write

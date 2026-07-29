@@ -25,13 +25,13 @@ const (
 	modeSearch                   // "/" in focusTools: filter the tool list
 	modeHelpSearch               // "/" in focusBrief/focusHelp: search the help viewport
 	modeEditNote                 // "e" in focusBrief
-	modeEditTags                 // "t" in focusBrief
-	modeTrack                    // "t" in focusTools
-	modeConfirmUntrack           // "u" in focusTools
-	modeRename                   // "r" in focusTools
+	modeEditTags                 // "#" in focusBrief
+	modeTrack                    // "t", global
+	modeConfirmUntrack           // "u", global
+	modeRename                   // "m", global
 	modeRunInput                 // enter in focusTools: run the tool in a new terminal tab
-	modeConfirmUpdate            // "u" in focusBrief: confirm the detected update command
-	modeAPIStatus                // "L": rate-limit / token overlay
+	modeConfirmUpdate            // enter in focusBrief (or "U"): confirm the detected update command
+	modeAPIStatus                // "a": rate-limit / token overlay
 	modeTokenInput               // "e" inside the overlay: masked token entry
 	modeHotkeys                  // "?": static hotkeys-help overlay
 )
@@ -43,7 +43,7 @@ func (m Model) apiOverlayVisible() bool {
 }
 
 // overlayVisible reports whether any modal overlay is composited over the
-// layout — the [L] API-status overlay (incl. token entry) or the [?] hotkeys
+// layout — the [a] API-status overlay (incl. token entry) or the [?] hotkeys
 // overlay. It is the single "modal on screen" predicate for View() and the
 // mouse gate, so a new overlay only has to extend this one helper.
 func (m Model) overlayVisible() bool {

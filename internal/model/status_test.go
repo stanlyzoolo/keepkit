@@ -177,7 +177,7 @@ func TestStatusBarReturnsHintsAfterExpiry(t *testing.T) {
 	if strings.Contains(bar, "grouped by tag") {
 		t.Errorf("status bar still shows the expired message: %q", bar)
 	}
-	if !strings.Contains(bar, "enter run") {
+	if !strings.Contains(bar, "t track") {
 		t.Errorf("status bar = %q, want the global hints back", bar)
 	}
 }

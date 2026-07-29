@@ -706,7 +706,7 @@ func (m *Model) startToolUpdate() tea.Cmd {
 // dismissSelfLog releases a *completed* self-update log's claim on panel [3],
 // reporting whether it did. A live self-update keeps the panel — the log is the
 // only place its output is visible. Called from the paths that mean "show me
-// something else": an explicit [h]/[m]/[r] and a selection move.
+// something else": an explicit [H]/[M]/[R] and a selection move.
 //
 // Only the override is dropped, not updateLogFor: a tracked keepkit keeps the
 // same per-tool stickiness every other tool has.
@@ -1079,9 +1079,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil && msg.output != "" {
 			cached[msg.mode] = msg.output
 		} else if msg.mode == helpModeHelp {
-			cached[msg.mode] = "No --help output for " + msg.toolName + ".\nPress [m] for the man page."
+			cached[msg.mode] = "No --help output for " + msg.toolName + ".\nPress [M] for the man page."
 		} else {
-			cached[msg.mode] = "No man page for " + msg.toolName + ".\nPress [h] for --help."
+			cached[msg.mode] = "No man page for " + msg.toolName + ".\nPress [H] for --help."
 		}
 		m.helpCache[msg.toolName] = cached
 		// Recompute only when the arrival changes the text on screen: the
@@ -1642,16 +1642,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.search.Focus()
 			return m, textinput.Blink
 
-		case "h":
+		// The three sources of panel [3] are capitals as a set, so none of them
+		// can collide with a lowercase verb — m is the global rename now and r
+		// stays [2]'s refresh. They also fire uniformly from [2] and from [3],
+		// unlike the old h/m/r trio where readme was reachable only from [3]
+		// while the [3] title advertised it from both, so pressing it in [2]
+		// silently ran a network refresh instead.
+		case "H":
 			if m.focus == focusBrief || m.focus == focusHelp {
 				m.focus = focusHelp
 				return m, m.switchHelpMode(helpModeHelp)
 			}
 
-		case "m":
+		case "M":
 			if m.focus == focusBrief || m.focus == focusHelp {
 				m.focus = focusHelp
 				return m, m.switchHelpMode(helpModeMan)
+			}
+
+		case "R":
+			if m.focus == focusBrief || m.focus == focusHelp {
+				m.focus = focusHelp
+				return m, m.switchHelpMode(helpModeReadme)
 			}
 
 		case "e":
@@ -1665,12 +1677,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		// t / u / R are the tracker's own verbs and fire in every focus. They
-		// used to be [1]-only because each collided with a [2] action (t tags,
-		// u update, r refresh); the redesign moved those onto keys of their own
-		// (# tags, enter update) and freed all three to mean one thing
-		// everywhere, which is what lets the status bar advertise a single
-		// global key list instead of three per-focus ones.
+		// t / u / m are the tracker's own verbs and fire in every focus — three
+		// of the six keys the status bar now advertises as global (with a, ?
+		// and q). They used to be [1]-only because each collided with a [2]
+		// action (t tags, u update, r refresh); the redesign moved those onto
+		// keys of their own (# tags, enter update) and freed all three to mean
+		// one thing everywhere, which is what lets the bar carry a single
+		// focus-independent list instead of three per-focus ones.
 		case "t":
 			m.mode = modeTrack
 			m.trackInput.SetValue("")
@@ -1684,7 +1697,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-		case "R":
+		// Rename is m, not R: R is panel [3]'s readme source now, and the
+		// tracker's verbs are the lowercase set.
+		case "m":
 			if mt, ok := m.selectedMeta(); ok {
 				m.mode = modeRename
 				m.nameInput.SetValue(mt.Name)
@@ -1705,16 +1720,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		// r is [2]'s refresh and nothing else. It used to double as [3]'s readme
+		// switch, which made the same key mean "spend three requests" or "swap
+		// the panel's source" depending on a focus the [3] title did not
+		// mention; that source moved to R with the rest of the trio.
 		case "r":
 			if m.focus == focusBrief {
 				if t, ok := m.selectedTool(); ok {
 					return m, m.refreshSelectedCmd(t)
 				}
-			} else if m.focus == focusHelp {
-				// Third source of [3]: back to the README. r means refresh in
-				// [2] and readme in [3]; rename moved to R, so [1] leaves it
-				// unbound rather than inventing a third meaning.
-				return m, m.switchHelpMode(helpModeReadme)
 			}
 
 		case "o":
@@ -1748,7 +1762,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "L":
+		case "a":
 			// Open the API-status overlay and refresh the rate numbers on demand
 			// (GET /rate_limit does not spend quota). Reached only in modeNormal —
 			// every other mode's handler returns earlier.
@@ -1766,7 +1780,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "U":
 			// The self-update banner's action key, live in every focus and in
 			// both the full banner and its collapsed cell. Reached only in
-			// modeNormal — like L, every input mode's handler returns earlier,
+			// modeNormal — like a, every input mode's handler returns earlier,
 			// so a capital U typed into a search/note/token field stays text.
 			return m, m.selfUpdateKey()
 
@@ -1933,7 +1947,7 @@ func (m *Model) toggleGroupByTag() tea.Cmd {
 	// instead. Turning it *off* is never refused, so a tracker whose last tag
 	// was just removed cannot get stuck in the tag view.
 	if !m.groupByTag && !m.hasTaggedTool() {
-		return m.setStatus("no tags to group by — press [t] on a tool")
+		return m.setStatus("no tags to group by — press [#] on a tool")
 	}
 	name := ""
 	if mt, ok := m.selectedMeta(); ok {
@@ -2113,7 +2127,7 @@ func (m Model) helpWrapWidth() int {
 }
 
 // setHelpContent is the single recompute point for the help panel: whenever
-// the underlying text changes (selection move, [h]/[m], fetched help output,
+// the underlying text changes (selection move, [H]/[M], fetched help output,
 // resize, update-log transitions) it re-derives the navigable entry index and
 // resets the spotlight cursor before repainting the viewport. Style-only
 // repaints (search-highlight keystrokes, cursor moves, per-chunk log appends)
@@ -2153,10 +2167,10 @@ func (m *Model) setHelpContent() {
 }
 
 // switchHelpMode points panel [3] at one of its three sources and returns the
-// fetch command for that source when it is not cached yet. Shared by [h], [m]
-// and [r] — the three keys differ only in which source they select, so the
+// fetch command for that source when it is not cached yet. Shared by [H], [M]
+// and [R] — the three keys differ only in which source they select, so the
 // log dismissal, repaint and scroll-to-top live here once. Focus stays with the
-// caller: [h]/[m] fire from [2] as well and move focus, [r] is focusHelp-only.
+// caller: all three fire from [2] as well as [3] and move focus with them.
 func (m *Model) switchHelpMode(mode int) tea.Cmd {
 	m.helpMode = mode
 	// An explicit mode switch is intent to leave a completed update log
@@ -2178,7 +2192,7 @@ func (m *Model) switchHelpMode(mode int) tea.Cmd {
 		m.updateLogFor = ""
 	}
 	// README first: helpCache is a [2]string and mode 2 would index it out of
-	// range. Its source is readmeData, and a selection moved while [h]/[m] was
+	// range. Its source is readmeData, and a selection moved while [H]/[M] was
 	// showing never fetched it (autoFetchCmdsForSelected only fetches in readme
 	// mode), so the switch has to cover that gap.
 	if mode == helpModeReadme {

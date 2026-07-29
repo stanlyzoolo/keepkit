@@ -649,7 +649,7 @@ func TestRateGaugeUnaffectedWithoutSelfCell(t *testing.T) {
 	// Narrow enough that the bar no longer fits beside the hints, wide enough
 	// for the numbers — and for the identity cell, which outranks the gauge and
 	// is on screen in every state.
-	m = selfModel(t, selfBarTools(), 106, selfNone)
+	m = selfModel(t, selfBarTools(), 88, selfNone)
 	m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
 	bar := stripANSI(m.renderStatusBar())
 	if !strings.Contains(bar, "api 18/60") {
@@ -1490,7 +1490,7 @@ func TestSelfUpdateChunkRepaintsUnderForeignSelection(t *testing.T) {
 }
 
 // TestSelfUpdateLogReleasedWhenDone: the self log is selection-independent, so
-// something has to hand [3] back — a selection move or an explicit [h]/[m]/[r],
+// something has to hand [3] back — a selection move or an explicit [H]/[M]/[R],
 // but only once the update has finished.
 func TestSelfUpdateLogReleasedWhenDone(t *testing.T) {
 	// A selection move after completion returns the panel to the tool's help.
@@ -1515,15 +1515,15 @@ func TestSelfUpdateLogReleasedWhenDone(t *testing.T) {
 		t.Error("selfUpdateLog = false during a live update, want the log kept")
 	}
 
-	// [h] releases it too, including with an empty tracker, where switchHelpMode
+	// [H] releases it too, including with an empty tracker, where switchHelpMode
 	// returns early on the missing selection.
 	empty := startedSelfUpdate(t, nil, selfOffered)
 	empty.updateLog = []string{"installed"}
 	empty.updatingFor = ""
 	empty.focus = focusBrief
-	empty = mustModel(empty.Update(keyRunes("h")))
+	empty = mustModel(empty.Update(keyRunes("H")))
 	if empty.selfUpdateLog {
-		t.Error("selfUpdateLog = true after [h] with an empty tracker, want it released")
+		t.Error("selfUpdateLog = true after [H] with an empty tracker, want it released")
 	}
 }
 

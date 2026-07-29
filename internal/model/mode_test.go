@@ -48,8 +48,17 @@ func TestModeEnterAndEsc(t *testing.T) {
 		{"# in brief opens tags edit", focusBrief, keyRunes("#"), modeEditTags},
 		{"t in tools opens track", focusTools, keyRunes("t"), modeTrack},
 		{"u in tools opens untrack confirm", focusTools, keyRunes("u"), modeConfirmUntrack},
-		{"R opens rename", focusTools, keyRunes("R"), modeRename},
-		{"L opens api status", focusTools, keyRunes("L"), modeAPIStatus},
+		{"m opens rename", focusTools, keyRunes("m"), modeRename},
+		{"a opens api status", focusTools, keyRunes("a"), modeAPIStatus},
+		// The four tracker verbs are what globalHints calls global, so each one
+		// must open its mode from a panel other than [1] as well — that is the
+		// whole claim the status bar makes by staying identical in every focus.
+		{"t is global in brief", focusBrief, keyRunes("t"), modeTrack},
+		{"u is global in help", focusHelp, keyRunes("u"), modeConfirmUntrack},
+		{"m is global in brief", focusBrief, keyRunes("m"), modeRename},
+		{"m is global in help", focusHelp, keyRunes("m"), modeRename},
+		{"a is global in brief", focusBrief, keyRunes("a"), modeAPIStatus},
+		{"a is global in help", focusHelp, keyRunes("a"), modeAPIStatus},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1391,10 +1400,10 @@ func TestHelpNavIdxResetTriggers(t *testing.T) {
 	t.Run("help/man switch", func(t *testing.T) {
 		m := helpNavModel()
 		m.helpNavIdx = 0
-		updated, _ := m.Update(keyRunes("m"))
+		updated, _ := m.Update(keyRunes("M"))
 		nm := updated.(Model)
 		if nm.helpNavIdx != -1 {
-			t.Errorf("helpNavIdx = %d, want -1 after [m]", nm.helpNavIdx)
+			t.Errorf("helpNavIdx = %d, want -1 after [M]", nm.helpNavIdx)
 		}
 	})
 	t.Run("resize", func(t *testing.T) {
@@ -1465,39 +1474,50 @@ func TestReadmeIsDefaultHelpMode(t *testing.T) {
 	}
 }
 
-// TestReadmeKeyBranches: [r] is the third panel-[3] source switch and fires
-// only in focusHelp — rename in [1] and refresh in [2] keep the key.
+// TestReadmeKeyBranches: [R] is the third panel-[3] source switch. It fires from
+// [2] as well as [3], exactly like [H] and [M] — the asymmetry it used to have
+// (readme reachable only from [3], while the [3] title advertised it from both)
+// is what let the same keystroke run a network refresh instead. Lowercase r is
+// now [2]'s refresh and nothing else, and rename moved off R onto m.
 func TestReadmeKeyBranches(t *testing.T) {
-	t.Run("help focus switches to readme", func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
-		m := newTestModel(focusHelp)
-		// Size the viewport and give it enough content to actually scroll:
-		// on a 0x0 viewport SetYOffset clamps to 0 and the GotoTop assertion
-		// below would pass no matter what the [r] branch does.
-		m = mustModel(m.Update(tea.WindowSizeMsg{Width: 100, Height: 30}))
-		m.focus = focusHelp
-		m.helpMode = helpModeHelp
-		m.helpCache["git"] = [2]string{helpModeHelp: strings.Repeat("--flag  does a thing\n", 200)}
-		m.setHelpContent()
-		m.helpViewport.SetYOffset(3)
-		if m.helpViewport.YOffset != 3 {
-			t.Fatalf("setup: YOffset = %d, want 3 (the viewport must be scrollable)", m.helpViewport.YOffset)
-		}
-		nm := mustModel(m.Update(keyRunes("r")))
-		if nm.helpMode != helpModeReadme {
-			t.Errorf("helpMode = %d, want helpModeReadme", nm.helpMode)
-		}
-		if nm.mode != modeNormal {
-			t.Errorf("mode = %d, want modeNormal (r is not rename in [3])", nm.mode)
-		}
-		if nm.helpViewport.YOffset != 0 {
-			t.Errorf("YOffset = %d, want 0 (GotoTop on the mode switch)", nm.helpViewport.YOffset)
-		}
-	})
-	t.Run("R renames from the tool list", func(t *testing.T) {
+	for _, focus := range []struct {
+		name string
+		f    int
+	}{{"help focus", focusHelp}, {"brief focus", focusBrief}} {
+		t.Run(focus.name+" switches to readme", func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			m := newTestModel(focus.f)
+			// Size the viewport and give it enough content to actually scroll:
+			// on a 0x0 viewport SetYOffset clamps to 0 and the GotoTop assertion
+			// below would pass no matter what the [R] branch does.
+			m = mustModel(m.Update(tea.WindowSizeMsg{Width: 100, Height: 30}))
+			m.focus = focus.f
+			m.helpMode = helpModeHelp
+			m.helpCache["git"] = [2]string{helpModeHelp: strings.Repeat("--flag  does a thing\n", 200)}
+			m.setHelpContent()
+			m.helpViewport.SetYOffset(3)
+			if m.helpViewport.YOffset != 3 {
+				t.Fatalf("setup: YOffset = %d, want 3 (the viewport must be scrollable)", m.helpViewport.YOffset)
+			}
+			nm := mustModel(m.Update(keyRunes("R")))
+			if nm.helpMode != helpModeReadme {
+				t.Errorf("helpMode = %d, want helpModeReadme", nm.helpMode)
+			}
+			if nm.focus != focusHelp {
+				t.Errorf("focus = %d, want focusHelp (the source switch moves focus with it)", nm.focus)
+			}
+			if nm.mode != modeNormal {
+				t.Errorf("mode = %d, want modeNormal (R is not rename any more)", nm.mode)
+			}
+			if nm.helpViewport.YOffset != 0 {
+				t.Errorf("YOffset = %d, want 0 (GotoTop on the mode switch)", nm.helpViewport.YOffset)
+			}
+		})
+	}
+	t.Run("m renames from the tool list", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		m := newTestModel(focusTools)
-		nm := mustModel(m.Update(keyRunes("R")))
+		nm := mustModel(m.Update(keyRunes("m")))
 		if nm.mode != modeRename {
 			t.Errorf("mode = %d, want modeRename", nm.mode)
 		}
@@ -1516,12 +1536,24 @@ func TestReadmeKeyBranches(t *testing.T) {
 			t.Errorf("statusMsg = %q, want the refresh branch's message", nm.statusMsg)
 		}
 	})
+	t.Run("lowercase r no longer switches the source in help", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		m := newTestModel(focusHelp)
+		m.helpMode = helpModeHelp
+		nm := mustModel(m.Update(keyRunes("r")))
+		if nm.helpMode != helpModeHelp {
+			t.Errorf("helpMode = %d, want it unchanged: r is [2]'s refresh, not [3]'s readme", nm.helpMode)
+		}
+		if nm.statusMsg != "" {
+			t.Errorf("statusMsg = %q, want none (r is unbound in [3])", nm.statusMsg)
+		}
+	})
 	t.Run("readme fetch fires when the tool was never fetched", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		m := New([]loader.ToolMeta{{Name: "rg", GitHub: "BurntSushi/ripgrep"}})
 		m.width, m.height = 80, 24
 		m.helpMode, m.focus = helpModeMan, focusHelp
-		updated, cmd := m.Update(keyRunes("r"))
+		updated, cmd := m.Update(keyRunes("R"))
 		if updated.(Model).helpMode != helpModeReadme {
 			t.Fatalf("helpMode = %d, want helpModeReadme", updated.(Model).helpMode)
 		}
@@ -1531,7 +1563,7 @@ func TestReadmeKeyBranches(t *testing.T) {
 	})
 }
 
-// TestReadmeKeyUpdateLogPriority mirrors [h]/[m]: an explicit [r] dismisses a
+// TestReadmeKeyUpdateLogPriority mirrors [H]/[M]: an explicit [R] dismisses a
 // finished update log, but a live one keeps panel [3].
 func TestReadmeKeyUpdateLogPriority(t *testing.T) {
 	t.Run("live log survives", func(t *testing.T) {
@@ -1539,7 +1571,7 @@ func TestReadmeKeyUpdateLogPriority(t *testing.T) {
 		m := newTestModel(focusHelp)
 		m.updateLogFor, m.updatingFor = "git", "git"
 		m.updateLog = []string{"==> brew upgrade"}
-		nm := mustModel(m.Update(keyRunes("r")))
+		nm := mustModel(m.Update(keyRunes("R")))
 		if nm.updateLogFor != "git" {
 			t.Fatalf("updateLogFor = %q, want the live log kept", nm.updateLogFor)
 		}
@@ -1552,7 +1584,7 @@ func TestReadmeKeyUpdateLogPriority(t *testing.T) {
 		m := newTestModel(focusHelp)
 		m.updateLogFor = "git"
 		m.updateLog = []string{"==> brew upgrade"}
-		nm := mustModel(m.Update(keyRunes("r")))
+		nm := mustModel(m.Update(keyRunes("R")))
 		if nm.updateLogFor != "" {
 			t.Errorf("updateLogFor = %q, want the completed log dismissed", nm.updateLogFor)
 		}
