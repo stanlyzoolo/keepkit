@@ -208,10 +208,13 @@ type updateChunkMsg struct {
 
 // updateDoneMsg signals the update subprocess finished (err is the exit error,
 // nil on success). The handler clears updatingFor and, on success, re-detects
-// the installed version so the ↑ marker clears.
+// the installed version so the ↑ marker clears. elapsed is how long the process
+// ran, measured by startUpdateCmd; it is zero when the run never started (empty
+// argv, a StdoutPipe or Start error), and the block in [3] then omits the cell.
 type updateDoneMsg struct {
-	tool string
-	err  error
+	tool    string
+	err     error
+	elapsed time.Duration
 }
 
 type Model struct {

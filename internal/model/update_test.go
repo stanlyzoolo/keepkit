@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -195,11 +196,11 @@ func TestStreamLines(t *testing.T) {
 
 // TestWaitForChunkCmd: a normal item becomes updateChunkMsg (carrying the same
 // channel for re-subscribe); the done item and a closed channel both become
-// updateDoneMsg with the exit error.
+// updateDoneMsg with the exit error and the measured duration.
 func TestWaitForChunkCmd(t *testing.T) {
 	ch := make(chan updateLine, 3)
 	ch <- updateLine{text: "hello", replace: false}
-	ch <- updateLine{done: true, err: nil}
+	ch <- updateLine{done: true, err: nil, elapsed: 3 * time.Second}
 
 	msg := waitForChunkCmd("git", ch)()
 	chunk, ok := msg.(updateChunkMsg)
@@ -214,8 +215,14 @@ func TestWaitForChunkCmd(t *testing.T) {
 	}
 
 	msg = waitForChunkCmd("git", ch)()
-	if done, ok := msg.(updateDoneMsg); !ok || done.err != nil {
+	done, ok := msg.(updateDoneMsg)
+	if !ok || done.err != nil {
 		t.Fatalf("done item: got %#v, want updateDoneMsg{err:nil}", msg)
+	}
+	// The duration rides the same item as the exit error — dropping it here
+	// would leave the block in [3] unable to say how long the update took.
+	if done.elapsed != 3*time.Second {
+		t.Errorf("elapsed = %v, want it carried through from the done item", done.elapsed)
 	}
 
 	// A closed channel with nothing left also yields a done message.
@@ -284,6 +291,50 @@ func TestStartUpdateCmdStreamsToCompletion(t *testing.T) {
 		default:
 			t.Fatalf("unexpected msg %T", msg)
 		}
+	}
+}
+
+// TestStartUpdateCmdReportsElapsed: the done message carries how long the
+// process ran. The measurement lives here rather than in the updateDoneMsg
+// handler because time.Now() inside Update() would make completion
+// non-deterministic in every test that drives it.
+func TestStartUpdateCmdReportsElapsed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh -c")
+	}
+	p := updater.Plan{Manager: "custom", Argv: []string{"sh", "-c", "printf 'x\\n'"}, Display: "x"}
+
+	msg := startUpdateCmd(p, "x")()
+	for {
+		switch v := msg.(type) {
+		case updateChunkMsg:
+			msg = waitForChunkCmd(v.tool, v.ch)()
+		case updateDoneMsg:
+			if v.elapsed <= 0 {
+				t.Errorf("elapsed = %v, want a positive duration for a run that happened", v.elapsed)
+			}
+			return
+		default:
+			t.Fatalf("unexpected msg %T", msg)
+		}
+	}
+}
+
+// TestStartUpdateCmdUnstartedReportsZeroElapsed: the early returns — empty argv,
+// a StdoutPipe or Start failure — never reach the stamp, so they report zero.
+// That is the "it never ran" signal the block in [3] reads to omit the duration
+// cell instead of claiming an update took 0s.
+func TestStartUpdateCmdUnstartedReportsZeroElapsed(t *testing.T) {
+	msg := startUpdateCmd(updater.Plan{Manager: "custom"}, "x")()
+	done, ok := msg.(updateDoneMsg)
+	if !ok {
+		t.Fatalf("got %T, want updateDoneMsg", msg)
+	}
+	if done.err == nil {
+		t.Error("empty argv must report an error")
+	}
+	if done.elapsed != 0 {
+		t.Errorf("elapsed = %v, want 0 for a process that never started", done.elapsed)
 	}
 }
 

@@ -169,15 +169,15 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
 - Modify: `internal/model/model.go`
 - Modify: `internal/model/commands_test.go`
 
-- [ ] add `elapsed time.Duration` to `updateLine` (`commands.go:460`) and to
+- [x] add `elapsed time.Duration` to `updateLine` (`commands.go:460`) and to
       `updateDoneMsg` (`model.go:209`)
-- [ ] in `startUpdateCmd`, stamp `start := time.Now()` before `cmd.Start()` and
+- [x] in `startUpdateCmd`, stamp `start := time.Now()` before `cmd.Start()` and
       send `updateLine{done: true, err: waitErr, elapsed: time.Since(start)}`
-- [ ] pass `ul.elapsed` through `waitForChunkCmd` into `updateDoneMsg`; leave the
+- [x] pass `ul.elapsed` through `waitForChunkCmd` into `updateDoneMsg`; leave the
       early-return error paths (empty argv, `StdoutPipe`, `Start`) at zero
-- [ ] write a test that a streamed run reports a non-zero elapsed and that an
+- [x] write a test that a streamed run reports a non-zero elapsed and that an
       empty-argv failure reports zero
-- [ ] run `go test -race ./internal/model/` — must pass before task 2
+- [x] run `go test -race ./internal/model/` — must pass before task 2
 
 ### Task 2: Record the outcome from one function on both paths
 

@@ -456,12 +456,16 @@ func (m *Model) autoFetchCmdsForSelected() tea.Cmd {
 // channel for both — instead of a separate error channel threaded through every
 // waitForChunkCmd re-subscribe — keeps the happens-before ordering trivial: the
 // reader sends the done item before closing the channel, so it is received in
-// order, race-free.
+// order, race-free. The done item also carries how long the process ran: the
+// duration is measured here rather than in the model because time.Now() inside
+// Update() would make completion non-deterministic in tests, and this is where
+// the process actually lives.
 type updateLine struct {
 	text    string
 	replace bool
 	done    bool
 	err     error
+	elapsed time.Duration
 }
 
 // updateTimeout bounds a running update. `cargo install` compiles from source
@@ -515,6 +519,11 @@ func startUpdateCmd(plan updater.Plan, tool string) tea.Cmd {
 			return updateDoneMsg{tool: tool, err: err}
 		}
 
+		// Stamped after Start returns, so the duration measures the process and
+		// not the fork: the two early returns above never reach this and report a
+		// zero elapsed, which is exactly the "it never ran" case.
+		start := time.Now()
+
 		go func() {
 			defer cancel()
 			// Read the pipe to EOF *first*, then Wait: os/exec forbids calling
@@ -524,7 +533,7 @@ func startUpdateCmd(plan updater.Plan, tool string) tea.Cmd {
 				ch <- updateLine{text: text, replace: replace}
 			})
 			waitErr := cmd.Wait()
-			ch <- updateLine{done: true, err: waitErr}
+			ch <- updateLine{done: true, err: waitErr, elapsed: time.Since(start)}
 			close(ch)
 		}()
 
@@ -543,7 +552,7 @@ func waitForChunkCmd(tool string, ch chan updateLine) tea.Cmd {
 	return safeCmd("waitForChunkCmd", func() tea.Msg {
 		ul, ok := <-ch
 		if !ok || ul.done {
-			return updateDoneMsg{tool: tool, err: ul.err}
+			return updateDoneMsg{tool: tool, err: ul.err, elapsed: ul.elapsed}
 		}
 		return updateChunkMsg{tool: tool, line: ul.text, replace: ul.replace, ch: ch}
 	})
