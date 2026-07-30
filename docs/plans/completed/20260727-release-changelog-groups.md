@@ -134,20 +134,41 @@ Two edits to `.goreleaser.yaml`, one line in CLAUDE.md:
    `build:` (plus merge commits); anything else — `refactor:`, `perf:`, an
    off-nomenclature subject — stays visible under *Other changes*.
 
-Key regexp detail: with `use: github` the changelog line is prefixed with the
-SHA, so group regexps must be of the `^.*?feat(\(.+\))??!?:.+$` shape (scope +
-breaking marker; the same convention GoReleaser's own config uses), while
-`filters.exclude` anchors on the raw message start (`^docs`) — GoReleaser
-strips the SHA token before applying filters.
+⚠️ **The "key regexp detail" this plan was built on was WRONG, and the error
+shipped before review caught it.** The claim was that `use: github` prefixes
+each changelog line with the SHA, so a group regexp needs a leading `^.*?`
+while `filters.exclude` anchors at `^` — an asymmetry the plan then recorded
+as "confirmed on a real render".
 
-✅ **Both halves of that asymmetry are now confirmed on a real render**, not
-just in review: the rendered lines carry a SHA prefix (`* e1ad93c… feat(model):
-…`), which is what the leading `^.*?` is for, and the `^docs`-anchored
-excludes nonetheless dropped every `docs:` commit in the range — so filters
-genuinely see the bare subject while groups see the formatted line. The two
-patterns are **not** interchangeable: anchoring a group at `^feat` matches
-nothing, and prefixing an exclude with `^.*?` would make it match far more
-than intended.
+**There is no asymmetry.** Groups and excludes both match the **bare commit
+subject**: grouping runs *before* the entry is formatted, so it never sees the
+SHA the rendered line carries. Confirmed three ways — GoReleaser's
+`internal/pipe/changelog/changelog.go:185` matches on `entry.Message`;
+`internal/client/github.go:156` sets that to the subject's first line, so it
+holds for `use: github` too; and a render with the wildcard removed grouped
+every entry correctly while the rendered lines still showed their SHA prefix.
+
+**How the false confirmation happened** — worth recording, because the
+mechanism is more reusable than the fact. The test observed a SHA in the
+*output* and concluded grouping must match the formatted line. That is a
+non-sequitur: rendering happens after grouping. Worse, `^.*?` matches under
+*both* hypotheses, so the experiment could not distinguish them and had no
+power to confirm anything. The decisive test — the one never run — was to
+remove the wildcard and see whether grouping still worked. It does.
+
+**The bug the wildcard caused** was not cosmetic: `^.*?feat` is a *substring*
+match, and `git revert` writes `Revert "feat: x"` by default, so a reverted
+feature was announced under *New features* — as the **first** line, since
+`sort: asc` compares bytes and `R` precedes `f`. `fixup!`/`squash!` subjects
+leaked the same way. Both patterns are now plain `^feat…`/`^fix…`, verified
+against a 7-subject probe: `Revert "…"` and `fixup!` land in *Other changes*,
+all four breaking-marker shapes (`feat!:`, `feat(ui)!:`, `fix!:`,
+`fix(model)!:`) still group correctly.
+
+Note this file already contained the correct statement in Testing Strategy
+("GoReleaser applies `filters`/`groups` identically for both sources — only
+entry origin and line format differ") and the two sat contradicting each other
+for a full review cycle.
 
 Deliberately out of scope (YAGNI, confirmed in brainstorm): `release.header`,
 semver automation from commit types, draft releases, git-cliff / CHANGELOG.md,
