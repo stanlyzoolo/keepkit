@@ -37,11 +37,19 @@ discipline in CLAUDE.md.
   of scope.
 - Existing preview tooling: the `release-tools:last-tag` skill shows commits
   since the last tag — the raw material of the next changelog.
-- keepkit's own card strips markdown when rendering a release body
-  (`stripMarkdown`, `internal/model/textutil.go`): `#` and backticks are
-  dropped, a fenced ` ```bash ` line degrades to a bare `bash` line. The
-  footer therefore uses **inline code, no fenced block** (GitHub renders
-  inline code fine; the card stays clean).
+- ⚠️ **Stale when implemented, corrected here.** The plan was written against
+  `stripMarkdown`, which no longer exists: main replaced it with
+  `markdownToLines` (`internal/model/textutil.go`) in `e81bfb6`, *Keep the
+  markdown structure in the card's changelog*. So a fenced block no longer
+  degrades to a stray `bash` line — it renders properly on the card's
+  `Surface` code plate. The footer still uses **inline code, no fenced
+  block**, but now as a *preference* rather than a workaround: `mdInline`
+  ends in `strings.ReplaceAll(s, "`", "")`, so inline backticks are dropped
+  and the three install paths read as one prose sentence, whereas a fence
+  would split that sentence across three plated blocks. Verified by probing
+  `markdownToLines` with the real footer text — `## Install` → `mdHeading`
+  (`"Install"`, prefix stripped), the command lines → `mdBody` with the
+  backticks gone.
 
 ## Development Approach
 
@@ -64,22 +72,36 @@ discipline in CLAUDE.md.
   deprecation warning; exit code 0 is the criterion).
 - **real changelog render is possible locally** (despite `--snapshot`
   skipping it): a non-snapshot run with publish skipped writes the grouped
-  output to `dist/CHANGELOG.md`:
+  output to `dist/CHANGELOG.md`. ⚠️ **The recipe below is the corrected one —
+  the plan's original `use: github` version cannot work.** A local temp tag
+  does not exist on the remote, so the compare API the `github` source calls
+  answers `404 Not Found`:
+  `GET /repos/stanlyzoolo/keepkit/compare/v0.1.0...v0.1.1-preview: 404`.
+  Pushing the preview tag to satisfy it is not acceptable. The fix is to
+  render from **local git** through a throwaway copy of the config, leaving
+  the committed one untouched:
 
   ```bash
+  sed 's/^  use: github$/  use: git/' .goreleaser.yaml > /tmp/preview.yaml
   git tag v0.1.1-preview
-  GITHUB_TOKEN=$(gh auth token) goreleaser release --clean \
+  goreleaser release --clean --config /tmp/preview.yaml \
     --skip=archive,publish,validate,sbom,sign,docker,announce,homebrew,before
   cat dist/CHANGELOG.md
-  git tag -d v0.1.1-preview
+  git tag -d v0.1.1-preview && rm -rf dist
   ```
 
-  `GITHUB_TOKEN` is required because `use: github` pulls entries from the
-  compare API; `dist/` is gitignored. **Limits**: the footer is rendered only
-  at publish time — this preview validates grouping/filtering, not the footer
-  template; and on this branch the range `v0.1.0..v0.1.1-preview` holds only
-  docs/chore commits, so an *empty* `## Changelog` body is the **correct**
-  expected output here (it proves the filters drop them).
+  This still exercises the real filter/group code path (GoReleaser applies
+  `filters`/`groups` identically for both sources — only entry origin and
+  line format differ), and needs **no** `GITHUB_TOKEN`. `dist/` is gitignored.
+  **Limit**: the footer is rendered only at publish time, so this validates
+  grouping/filtering but not the footer template — see Task 2 for how that
+  gap was closed instead.
+- ⚠️ **Expected output changed with the rebase.** The plan predicted an empty
+  `## Changelog` because at its original base every commit since `v0.1.0` was
+  docs/chore. This branch was rebased onto `9ca6573`, which carries 31
+  commits including real `feat(ui):`/`fix(model):`/`perf(model):` work, so the
+  correct expectation is a *populated* three-group changelog — a stronger
+  proof than the empty one, since it exercises all three groups at once.
 - final proof: the first tag cut after real feat/fix work produces grouped
   notes with the Install footer.
 
@@ -116,8 +138,16 @@ Key regexp detail: with `use: github` the changelog line is prefixed with the
 SHA, so group regexps must be of the `^.*?feat(\(.+\))??!?:.+$` shape (scope +
 breaking marker; the same convention GoReleaser's own config uses), while
 `filters.exclude` anchors on the raw message start (`^docs`) — GoReleaser
-strips the SHA token before applying filters (empirically confirmed in
-review).
+strips the SHA token before applying filters.
+
+✅ **Both halves of that asymmetry are now confirmed on a real render**, not
+just in review: the rendered lines carry a SHA prefix (`* e1ad93c… feat(model):
+…`), which is what the leading `^.*?` is for, and the `^docs`-anchored
+excludes nonetheless dropped every `docs:` commit in the range — so filters
+genuinely see the bare subject while groups see the formatted line. The two
+patterns are **not** interchangeable: anchoring a group at `^feat` matches
+nothing, and prefixing an exclude with `^.*?` would make it match far more
+than intended.
 
 Deliberately out of scope (YAGNI, confirmed in brainstorm): `release.header`,
 semver automation from commit types, draft releases, git-cliff / CHANGELOG.md,
@@ -181,16 +211,19 @@ after the tag is pushed (recovery in Post-Completion).
 **Files:**
 - Modify: `.goreleaser.yaml`
 
-- [ ] replace the two-line `changelog:` block with the grouped/filtered block
+- [x] replace the two-line `changelog:` block with the grouped/filtered block
       from Technical Details (keep `use: github`, `sort: asc`)
-- [ ] keep the catch-all `Other changes` group **without** a `regexp` key —
+- [x] keep the catch-all `Other changes` group **without** a `regexp` key —
       that is what makes it the catch-all
-- [ ] run the local changelog render from Testing Strategy (temp tag +
-      `--skip=…publish…`, needs `GITHUB_TOKEN`); confirm `dist/CHANGELOG.md`
-      matches expectations for the tag range (on this branch: an empty
-      `## Changelog` — every commit since v0.1.0 is docs/chore and must be
-      filtered out); delete the temp tag
-- [ ] run `goreleaser check` — exit 0 (the pre-existing `brews` deprecation
+- [x] run the local changelog render from Testing Strategy (temp tag +
+      `--skip=…publish…`, via the corrected `use: git` recipe — the original
+      `use: github` one 404s on the compare API); confirm `dist/CHANGELOG.md`
+      matches expectations for the tag range; delete the temp tag.
+      **Result**: all three groups populated correctly — 7 `feat` under *New
+      features*, 11 `fix` under *Bug fixes*, `perf(model):` alone under *Other
+      changes*; every `docs:` commit and every merge commit filtered out.
+      Temp tag and `dist/` removed afterwards
+- [x] run `goreleaser check` — exit 0 (the pre-existing `brews` deprecation
       warning is expected) — must pass before task 2
 
 ### Task 2: Add the static Install footer to releases
@@ -198,63 +231,110 @@ after the tag is pushed (recovery in Post-Completion).
 **Files:**
 - Modify: `.goreleaser.yaml`
 
-- [ ] add `footer:` to the **existing** `release:` block (lines 61–64) as
-      shown in Technical Details — do not introduce a second `release:` key
-- [ ] use inline code for the install commands, no fenced ` ```bash ` block
-      (keepkit's card strips fences into stray `bash` lines)
-- [ ] verify `{{ .Tag }}` is used (not a hardcoded version) and is the
+- [x] add `footer:` to the **existing** `release:` block as shown in Technical
+      Details — do not introduce a second `release:` key. Verified: the parsed
+      YAML has exactly one `release:` key, holding `['github', 'footer']`
+- [x] use inline code for the install commands, no fenced ` ```bash ` block —
+      note the *reason* changed (see the corrected Context bullet); the
+      decision stands, now because a fence would split one sentence across
+      three plated blocks on the card
+- [x] verify `{{ .Tag }}` is used (not a hardcoded version) and is the
       **only** template expression in the footer — `goreleaser check` cannot
       catch a template typo, it would fail the release job at tag time
-- [ ] run `goreleaser check` — exit 0 — must pass before task 3
+- [x] ➕ **closed that gap instead of just noting it**: rather than leave the
+      one un-checkable failure mode to the next real tag, the footer was
+      extracted from the parsed YAML and run through Go's `text/template`
+      with `Option("missingkey=error")` and a `struct{ Tag string }`. Parses
+      and executes clean, rendering
+      `go install github.com/stanlyzoolo/keepkit@v0.1.1` — so `.Tag` keeps
+      its leading `v` as designed. `missingkey=error` is what makes a
+      mistyped field (`{{ .tag }}`) a hard failure rather than the silent
+      `<no value>` GoReleaser would otherwise publish
+- [x] run `goreleaser check` — exit 0 — must pass before task 3
 
 ### Task 3: Commit-discipline note in CLAUDE.md
 
 **Files:**
 - Modify: `CLAUDE.md`
 
-- [ ] add 1–2 sentences to the Commands/CI paragraph (next to the existing
+- [x] add 1–2 sentences to the Commands/CI paragraph (next to the existing
       release description; name `.goreleaser.yaml` explicitly, since the
       paragraph currently doesn't): `feat:`/`fix:` commit subjects become
       release notes verbatim (grouped by `.goreleaser.yaml`'s changelog
       config) — write them user-facing; `docs:`/`test:`/`chore:`/`ci:`/
       `build:` are dropped by the filters, and anything else (`refactor:`,
       `perf:`, off-nomenclature) lands under *Other changes*
-- [ ] keep it tight — this is discipline guidance, not a spec
+- [x] keep it tight — this is discipline guidance, not a spec. Landed as three
+      sentences in the existing CI/release paragraph, also naming panel `[2]`
+      as the second consumer of the body and recording the group-vs-exclude
+      regexp asymmetry, since that is the part a future editor would get
+      wrong
 
 ### Task 4: Verify acceptance criteria
 
-- [ ] `goreleaser check` passes on the final config (exit 0; only the known
+- [x] `goreleaser check` passes on the final config (exit 0; only the known
       `brews` deprecation warning)
-- [ ] re-read `.goreleaser.yaml` top to bottom: changelog block matches the
+- [x] re-read `.goreleaser.yaml` top to bottom: changelog block matches the
       approved design exactly; single `release:` block; footer renders the
       three install paths inline
-- [ ] `go build .` and `go test -race ./...` still green (nothing in the Go
-      tree should have changed)
-- [ ] confirm nothing else in the release pipeline references changelog
+- [x] `go build .` and `go test -race ./...` still green (nothing in the Go
+      tree should have changed). Ran the **full** `preflight` matrix rather
+      than just those two — `go build` ✅, `go vet ./...` ✅, `go test -race
+      ./...` ✅ (all 10 packages), `golangci-lint run` ✅ 0 issues
+      (v2.12.2). ⚠️ Both must be run **inside the worktree**: cwd resets to
+      the primary checkout between shell calls, and a check that silently runs
+      against `main` reports a false green
+- [x] confirm nothing else in the release pipeline references changelog
       behavior (grep `.github/workflows/` for changelog assumptions;
       `release.yml`'s `fetch-depth: 0` stays — GoReleaser still needs full
-      history for the tag range)
+      history for the tag range). **Result**: the only hit is
+      `release.yml:18-19`, the `fetch-depth: 0` line and its comment already
+      naming the changelog. No workflow change needed
 
 ### Task 5: [Final] Update documentation
 
-- [ ] check README.md — no changes expected (verified in review: its
+- [x] check README.md — no changes expected (verified in review: its
       "changelog" mentions are the TUI's `[c]` key and card block only);
-      update only if something slipped in
-- [ ] CLAUDE.md already updated in task 3 — verify the note reads naturally
+      update only if something slipped in. **Confirmed**: the only two hits
+      (lines 58, 134) are both the `[c]`-key/card-refresh feature text, and
+      the word `goreleaser` does not appear in README.md at all
+- [x] CLAUDE.md already updated in task 3 — verify the note reads naturally
       in context
-- [ ] move this plan to `docs/plans/completed/`
+- [x] move this plan to `docs/plans/completed/`
+
+### ➕ Task 6: Rebase the worktree onto current `main`
+
+*Discovered at the start of implementation — not in the original plan.*
+
+- [x] ⚠️ The worktree branch was based on `f8ad9d2`, while `main` had advanced
+      to `9ca6573` (31 commits, including the whole theming/redesign series).
+      Task 3 edits `CLAUDE.md`, which `main` had rewritten by 89 lines — so
+      editing the stale copy would have produced a conflict-prone merge in
+      exactly the paragraph being touched. Rebased the single docs commit onto
+      `main` **before** any edit; it applied cleanly
+- [x] confirmed `.goreleaser.yaml` itself was **untouched** by all 31 commits,
+      so Tasks 1–2 were unaffected by the rebase and the plan's line
+      references for the `release:` block stayed valid
+- [x] ⚠️ side effect worth recording: this is also what changed Task 1's
+      expected render output from empty to populated (see Testing Strategy)
 
 ## Post-Completion
 
 *No checkboxes — external actions.*
 
 **Manual verification:**
-- The real proof is the next tag — but note: if it is cut right after this
-  merge, the changelog section will be **empty** (this plan's own commits are
-  all docs/chore, correctly filtered; the body would be a bare `## Changelog`
-  plus the footer). Cut the first tag after real feat/fix work, or accept an
-  empty section. Before tagging, preview the raw material with
+- The real proof is the next tag. ⚠️ **This no longer carries the plan's
+  original caveat**: it warned the section would be empty because this plan's
+  own commits are all docs/chore. After the rebase onto `9ca6573` the
+  `v0.1.0..HEAD` range holds 31 commits with 7 `feat` and 11 `fix` among them,
+  so the next tag produces a fully populated three-group changelog — already
+  rendered and inspected locally (see Task 1). Nothing needs to be waited for
+  or accepted as empty. Before tagging, preview the raw material with
   `release-tools:last-tag`.
+- The one thing still unproven end-to-end is the footer *at publish time*
+  (GoReleaser only renders it when actually cutting the release). Its template
+  was validated independently — see Task 2 — so the residual risk is
+  GoReleaser's own footer plumbing, not the template.
 - **Recovery if the release job fails on a footer template error** (the one
   class of typo `goreleaser check` cannot catch): fix the config on main,
   then delete and re-push the tag (`git tag -d vX.Y.Z && git push --delete

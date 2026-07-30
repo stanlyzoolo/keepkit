@@ -56,12 +56,53 @@ checksum:
 
 changelog:
   use: github
+  # Sorts alphabetically by message, not chronologically — deliberate: scoped
+  # subjects like "feat(model):" cluster together inside their group.
   sort: asc
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"
+      - "^chore"
+      - "^ci"
+      - "^build"
+      - "Merge pull request"
+      - "Merge branch"
+      - "go mod tidy"
+  groups:
+    # With `use: github` each line is SHA-prefixed, so a group regexp has to
+    # tolerate a prefix (^.*?) — filters.exclude above anchors on the raw
+    # message instead, which is why those patterns start at ^.
+    - title: New features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 100
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 200
+    # No regexp: the catch-all. An off-nomenclature subject (refactor:, perf:,
+    # or none at all) stays visible here instead of silently vanishing.
+    - title: Other changes
+      order: 999
 
 release:
   github:
     owner: stanlyzoolo
     name: keepkit
+  # The Install block v0.1.0 carried by hand, now stamped onto every release.
+  # {{ .Tag }} is the only template expression here on purpose — `goreleaser
+  # check` does not validate templates, so a typo surfaces as a failed release
+  # job after the tag is already pushed. .Tag keeps the leading "v", so the
+  # `go install` line names the real released tag.
+  #
+  # Inline code, not a fenced block: this body is also what keepkit renders in
+  # panel [2], where markdownToLines drops inline backticks and the commands
+  # read as prose — a fence would instead land on the card's code plate and
+  # break the sentence across three blocks.
+  footer: |
+    ## Install
+
+    `brew install stanlyzoolo/apps/keepkit`, or
+    `go install github.com/stanlyzoolo/keepkit@{{ .Tag }}`, or grab an archive above.
 
 brews:
   - name: keepkit
