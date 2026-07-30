@@ -328,9 +328,10 @@ lives in `[3] Update` (a ~500-line buffer); the 10-minute deadline ends with
 
 ## Self-update and restart (`U` / `X`)
 
-keepkit watches its own releases and installs one through the same pipeline as `[u]`.
-**The main case is a keepkit that is not tracked**, which is what shapes the design: no
-step in this path may depend on `meta.yaml`, on a selection or on a card.
+keepkit watches its own releases and installs one through the same pipeline as
+`enter` in `[2]`. **The main case is a keepkit that is not tracked**, which is what
+shapes the design: no step in this path may depend on `meta.yaml`, on a selection
+or on a card.
 
 `WithAppVersion(v)` injects the running binary's version (a builder, not a `New`
 parameter — the zero value leaves the feature off, so the hundred-odd existing `New(`
@@ -362,7 +363,8 @@ banner up the key is unbound, and since `selfNone` is the only state a dev build
 reaches, answering there would give a build with the feature off one audible piece of
 it.
 
-Detection, the confirm dialog and the streaming log are the `[u]` machinery, and the way
+Detection, the confirm dialog and the streaming log are the tool-update machinery
+(`enter` in `[2]`), and the way
 the self case fits into it is a **name**, not a parallel path: the detection result
 carries the target, the handler stores it as `updateTarget`, and everything downstream —
 the confirm dialog, its status bar, the log's claim on panel `[3]`, the completion

@@ -854,8 +854,8 @@ func TestSelfUpdateKeyInertWithoutBanner(t *testing.T) {
 }
 
 // TestToolUpdateKeyBlockedBySelfUpdate: one update at a time in the other
-// direction too — [u] on a tool with a pending release must not start a second
-// one while keepkit updates itself. Same updatingFor guard, mirrored by
+// direction too — enter in [2] on a tool with a pending release must not start a
+// second one while keepkit updates itself. Same updatingFor guard, mirrored by
 // TestSelfUpdateKeyInertWithoutBanner's blocked rows for [U] under one.
 func TestToolUpdateKeyBlockedBySelfUpdate(t *testing.T) {
 	shrinkStatusTTL(t)
@@ -868,7 +868,7 @@ func TestToolUpdateKeyBlockedBySelfUpdate(t *testing.T) {
 		InstalledPresent: true,
 	}
 	if !m.hasUpdate("rg") {
-		t.Fatal("fixture: rg must have a pending update for [u] to be live")
+		t.Fatal("fixture: rg must have a pending update for enter in [2] to be live")
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -913,7 +913,7 @@ func TestSelfKeysAreNormalModeOnly(t *testing.T) {
 
 // TestSelfToolInheritsTrackedEntry: the detection target is the tracked entry
 // when there is one, so an update_cmd override governs [U] exactly as it governs
-// [u] on that row; otherwise it is synthesized from the constants.
+// enter in [2] on that row; otherwise it is synthesized from the constants.
 func TestSelfToolInheritsTrackedEntry(t *testing.T) {
 	tracked := New([]loader.ToolMeta{
 		{Name: "rg"},
@@ -1010,7 +1010,7 @@ func TestSelfDetectedAcceptance(t *testing.T) {
 // wording is chosen by what the target *is* (isSelfUpdate), not by which key
 // asked: keepkit's manual route is whatever installed it, a tool's is update_cmd,
 // and the identical failure of the identical binary must not read two ways
-// depending on whether [U] or [u] started it.
+// depending on whether [U] or enter in [2] started it.
 func TestSelfDetectedUnknownManager(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1019,12 +1019,12 @@ func TestSelfDetectedUnknownManager(t *testing.T) {
 		want       string
 	}{
 		{name: "U", appVersion: "v0.4.2", self: true, want: "manually"},
-		// [u] on a tracked keepkit row is the same self-update, so it gets the
-		// same wording even though msg.self is false.
-		{name: "u on a tracked keepkit row", appVersion: "v0.4.2", want: "manually"},
+		// enter in [2] on a tracked keepkit row is the same self-update, so it gets
+		// the same wording even though msg.self is false.
+		{name: "enter on a tracked keepkit row", appVersion: "v0.4.2", want: "manually"},
 		// ...but only where the feature is live at all: on a dev build that press
 		// is a plain tool update and gets the tool wording.
-		{name: "u on a dev build", appVersion: "v0.0.0-20260725115912-1be4bafa79c8", want: "update_cmd"},
+		{name: "enter on a dev build", appVersion: "v0.0.0-20260725115912-1be4bafa79c8", want: "update_cmd"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1274,8 +1274,8 @@ func TestUpdateFailureSeedsOnlyItsOwnLog(t *testing.T) {
 // four non-trivial prior states are ways to get that wrong: an [X] folded
 // mid-update is a deliberate "not now"; a pending [U] restart from an earlier
 // successful update is still valid (that binary is on disk either way); and
-// selfNone — reachable with no [U] press at all, since [u] on a tracked keepkit row
-// is a self-update too and hasUpdate comes from the locally detected version,
+// selfNone — reachable with no [U] press at all, since enter in [2] on a tracked
+// keepkit row is a self-update too and hasUpdate comes from the locally detected version,
 // independent of a startup check that may have been rate-limited, offline, or
 // simply said "not newer" — has no version behind it, so forcing "offered" there
 // rendered a banner with a hole in it ("keepkit  available") that no later
@@ -1323,8 +1323,8 @@ func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 	}
 }
 
-// TestKeepkitUpdateSelfHandlingGatedOnBuild: [u] on a tracked keepkit row reaches
-// the completion handler on every build, so the version gate — not the target name
+// TestKeepkitUpdateSelfHandlingGatedOnBuild: enter in [2] on a tracked keepkit
+// row reaches the completion handler on every build, so the version gate — not the target name
 // — is what decides whether it is treated as a self-update. On a release build it
 // is one (the restart offer appears even though the startup check never got to
 // selfOffered); on a dev build, where the feature is documented as fully off, it
@@ -1352,7 +1352,7 @@ func TestKeepkitUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 				t.Fatalf("selfState = %v, want selfNone before anything ran", m.selfState)
 			}
 
-			// The tool route, exactly as [u] on the keepkit row leaves it.
+			// The tool route, exactly as enter in [2] on the keepkit row leaves it.
 			m.mode = modeConfirmUpdate
 			m.updateTarget = selfToolName
 			m.updatePlan = updater.Plan{Manager: "brew", Argv: []string{"true"}, Display: "brew upgrade keepkit"}

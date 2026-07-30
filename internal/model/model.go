@@ -126,8 +126,9 @@ const (
 // final "installed"/error lines); older output can be dropped without loss.
 const updateLogMaxLines = 500
 
-// updateBusyStatus is what [u] and [U] report while another update runs (one at
-// a time, no queue). Shared so the two refusals cannot word it differently.
+// updateBusyStatus is what enter in [2] and [U] report while another update
+// runs (one at a time, no queue). Shared so the two refusals cannot word it
+// differently.
 const updateBusyStatus = "another update is running"
 
 // selfToolName is the name keepkit uses for itself inside the update pipeline:
@@ -180,10 +181,10 @@ type selfCheckMsg struct {
 // confirm mode on success and shows a hint on ErrUnknownManager.
 //
 // self marks a detection fired by the self-update banner ([U]) rather than by
-// [u] on a tracked tool row. The two differ in what makes a landed result still
-// relevant: a tool result must match the selection, while keepkit's own has no
-// selection to match (the main case is a keepkit that is not tracked) — see
-// acceptsUpdateDetect.
+// enter in [2] on a tracked tool row. The two differ in what makes a landed
+// result still relevant: a tool result must match the selection, while
+// keepkit's own has no selection to match (the main case is a keepkit that is
+// not tracked) — see acceptsUpdateDetect.
 type updateDetectedMsg struct {
 	tool string
 	plan updater.Plan
@@ -629,11 +630,11 @@ func previousPatch(v string) string {
 // (selfCheckEnabled), and the name alone would smuggle it past that gate.
 //
 // The gate is not cosmetic. On a dev build there is no check, no banner and
-// nothing to compare, so [u] on a tracked keepkit row must stay what it is for
-// every other row: a plain tool update. Announcing a restart there would also be
-// a lie — a working copy's argv0 carries a path separator, so resolveSelfPath
-// re-execs that very binary and would silently return the user to the pre-update
-// version.
+// nothing to compare, so enter in [2] on a tracked keepkit row must stay what
+// it is for every other row: a plain tool update. Announcing a restart there
+// would also be a lie — a working copy's argv0 carries a path separator, so
+// resolveSelfPath re-execs that very binary and would silently return the user
+// to the pre-update version.
 func (m Model) isSelfUpdate(name string) bool {
 	return name == selfToolName && m.selfCheckEnabled()
 }
@@ -647,9 +648,10 @@ func (m Model) selfUpdating() bool {
 
 // selfTool is the updater's detection target for keepkit itself. A tracked
 // keepkit is used as tracked, so a update_cmd override in meta.yaml governs the
-// self-update exactly as it governs a [u] on that row; otherwise the entry is
-// synthesized — the feature's main case is a keepkit that is not in the tracker
-// at all, and updater.Detect only needs the name (plus the override).
+// self-update exactly as it governs an enter in [2] on that row; otherwise the
+// entry is synthesized — the feature's main case is a keepkit that is not in
+// the tracker at all, and updater.Detect only needs the name (plus the
+// override).
 func (m Model) selfTool() loader.Tool {
 	if t, ok := m.toolByName(selfToolName); ok {
 		return t
@@ -971,8 +973,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		// Animate while a refresh ([r]) or an update ([u]) is in flight; once
-		// both refreshingFor and updatingFor are cleared (by the remoteMsg /
+		// Animate while a refresh ([r]) or an update (enter in [2]) is in flight;
+		// once both refreshingFor and updatingFor are cleared (by the remoteMsg /
 		// updateDoneMsg handlers) the loop stops rescheduling itself.
 		if m.refreshingFor == "" && m.updatingFor == "" {
 			return m, nil
@@ -1094,9 +1096,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case updateDetectedMsg:
-		// Detection result for a [u] (tool) or [U] (keepkit itself) press; the
-		// relevance gate differs per path, see acceptsUpdateDetect. A dropped
-		// result changes nothing — for the self path the banner stays at
+		// Detection result for an enter in [2] (tool) or a [U] (keepkit itself)
+		// press; the relevance gate differs per path, see acceptsUpdateDetect. A
+		// dropped result changes nothing — for the self path the banner stays at
 		// selfOffered, where [U] is a retry. ErrUnknownManager is not a dead-end
 		// dialog either, just a hint: the tool path can point at update_cmd, while
 		// keepkit's own manual route is whatever installed it. On success, stash
@@ -1109,7 +1111,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if errors.Is(msg.err, updater.ErrUnknownManager) {
 				// The wording branches on what the target *is*, not on which key
 				// asked: the same failure of the same binary must read the same
-				// way from [U] and from [u] on a tracked keepkit row (see
+				// way from [U] and from enter in [2] on a tracked keepkit row (see
 				// isSelfUpdate). msg.self keeps the one meaning only it has — "no
 				// selection to match" — in acceptsUpdateDetect.
 				if m.isSelfUpdate(msg.tool) {
@@ -1163,10 +1165,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// which for keepkit is the normal case — the update would finish silently
 		// and the [U] restart offer would never appear. The discriminator is
 		// isSelfUpdate, not the bare name: an update of keepkit is a self-update
-		// whichever key started it (so [u] on a tracked keepkit row ends here too
-		// and offers the same restart instead of leaving a banner that contradicts
-		// the card), but only on a build where the feature is live at all — on a dev
-		// build the same keypress falls through to the plain tool path below.
+		// whichever key started it (so enter in [2] on a tracked keepkit row ends
+		// here too and offers the same restart instead of leaving a banner that
+		// contradicts the card), but only on a build where the feature is live at
+		// all — on a dev build the same keypress falls through to the plain tool
+		// path below.
 		if m.isSelfUpdate(msg.tool) {
 			m.briefViewport.SetContent(m.renderCard())
 			if msg.err != nil {
@@ -1177,9 +1180,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// the check never offered anything. Forcing selfOffered here instead
 				// announced "keepkit  available" with no version behind it whenever
 				// the update started from selfNone (a rate-limited or offline startup
-				// check, a check that said "not newer", or [u] on a tracked row), and
-				// it replaced a pending [U] restart from an earlier successful update
-				// with that same empty banner.
+				// check, a check that said "not newer", or enter in [2] on a tracked
+				// row), and it replaced a pending [U] restart from an earlier
+				// successful update with that same empty banner.
 				statusCmd := m.setStatus("update failed — see [3]")
 				m.recordUpdateFailure(msg)
 				return m, statusCmd
