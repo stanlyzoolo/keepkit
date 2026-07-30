@@ -1228,11 +1228,19 @@ func TestSelfUpdateDoneFailure(t *testing.T) {
 	if m.updatingFor != "" {
 		t.Errorf("updatingFor = %q, want the guard cleared", m.updatingFor)
 	}
-	if len(m.updateLog) != 1 || !strings.Contains(m.updateLog[0], "exit status 1") {
-		t.Errorf("updateLog = %#v, want the failure seeded for [3]", m.updateLog)
+	// The buffer stays exactly what the command printed — here, nothing. The
+	// reason reaches [3] through the outcome block instead, which is also what
+	// keeps the panel from still reading "starting update…" after a failure that
+	// produced no output.
+	if len(m.updateLog) != 0 {
+		t.Errorf("updateLog = %#v, want the buffer left as the command's own output", m.updateLog)
 	}
-	if view := stripANSI(m.helpViewport.View()); !strings.Contains(view, "exit status 1") {
-		t.Errorf("help viewport = %q, want the seeded failure painted into [3]", view)
+	view := stripANSI(m.helpViewport.View())
+	if !strings.Contains(view, "exit status 1") || !strings.Contains(view, "✕ failed") {
+		t.Errorf("help viewport = %q, want the failure block painted into [3]", view)
+	}
+	if strings.Contains(view, "starting update…") {
+		t.Errorf("help viewport = %q, still claims the update is starting", view)
 	}
 	// The same post-hoc record the tool path writes, and just as token-free.
 	log := logx.ReadAllForTesting(logDir)

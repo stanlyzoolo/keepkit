@@ -208,10 +208,37 @@ type updateChunkMsg struct {
 
 // updateDoneMsg signals the update subprocess finished (err is the exit error,
 // nil on success). The handler clears updatingFor and, on success, re-detects
-// the installed version so the ↑ marker clears.
+// the installed version so the ↑ marker clears. elapsed is how long the process
+// ran, measured by startUpdateCmd; it is zero when the run never started (empty
+// argv, a StdoutPipe or Start error), and the block in [3] then omits the cell.
 type updateDoneMsg struct {
-	tool string
-	err  error
+	tool    string
+	err     error
+	elapsed time.Duration
+}
+
+// updateOutcome is the terminal state of the last update session: what the
+// command did, and — once the post-update re-detect lands — what actually got
+// installed. A zero tool means no session has finished yet.
+//
+// It is model state rather than lines appended to updateLog because the buffer
+// is wrapped at render time (wrapText rebuilds lines from strings.Fields and
+// counts runes), which would shred any styling written into it. So the buffer
+// stays exactly what the command printed and the renderer draws the outcome —
+// the same split changelogRender uses, where styling lands on whole finished
+// lines.
+//
+// The two phases exist because "the command finished" is not "the tool was
+// updated": brew can exit zero having done nothing. Phase 1 states only what the
+// exit status proves; verified/now/nowPresent arrive from the installedMsg the
+// success path fires, and are what let the block say the version actually moved.
+type updateOutcome struct {
+	tool, manager string
+	elapsed       time.Duration
+	err           error
+	verified      bool   // the post-update re-detect landed
+	was, now      string // installed version before / after
+	nowPresent    bool
 }
 
 type Model struct {
@@ -303,12 +330,15 @@ type Model struct {
 	// is empty) needs no separate identity. updateLog is the live merged
 	// stdout+stderr buffer for panel [3]; updateLogFor is the tool it belongs to,
 	// so navigating away shows normal help and navigating back shows the log
-	// again (the buffer survives until the next update starts).
-	updatingFor  string
-	updatePlan   updater.Plan
-	updateTarget string
-	updateLog    []string
-	updateLogFor string
+	// again (the buffer survives until the next update starts). updateOutcome is
+	// that session's terminal state, rendered as a block under the buffer; it is
+	// reset with the buffer, so the two can never describe different sessions.
+	updatingFor   string
+	updatePlan    updater.Plan
+	updateTarget  string
+	updateLog     []string
+	updateLogFor  string
+	updateOutcome updateOutcome
 
 	// appVersion is the version of the running binary (ldflag or buildinfo,
 	// injected by WithAppVersion) and the gate for the whole self-update
@@ -784,20 +814,47 @@ func (m Model) acceptsUpdateDetect(msg updateDetectedMsg) bool {
 	return ok && mt.Name == msg.tool
 }
 
-// recordUpdateFailure seeds the live log with the exit error when the command
-// produced no output at all (empty argv, missing manager binary,
-// StdoutPipe/Start error, immediate non-zero exit) — otherwise [3] would still
-// read "starting update…" while the status bar points there for the reason — and
-// records the failure for post-hoc research. The update argv never carries the
-// token and msg.err is an exec/exit error, so both stay token-free.
-func (m *Model) recordUpdateFailure(msg updateDoneMsg) {
-	if m.updateLogFor == msg.tool && len(m.updateLog) == 0 {
-		m.updateLog = append(m.updateLog, "update failed: "+msg.err.Error())
-		if m.showsUpdateLog() {
-			m.helpViewport.SetContent(m.renderHelpContent())
-			m.helpViewport.GotoBottom()
-		}
+// recordUpdateOutcome closes an update session: it stores the terminal state the
+// block under the live log renders, and — on a failure — records it for post-hoc
+// research. Both paths call it, a tool's update and keepkit's own, on success as
+// well as failure, so the two can never drift in what a finished update looks
+// like or in how a failed one is logged.
+//
+// was is read here rather than later because this runs before the version merge:
+// the success path returns fetchInstalledCmd, whose installedMsg is what fills in
+// the other half of the outcome (see the phase 2 note on updateOutcome), so
+// m.versions still holds the pre-update version at this point.
+//
+// The repaint goes through setHelpContent, not a bare SetContent: the *text* of
+// [3] changes here, and that is the single recompute point for it. The entry
+// index stays empty for a log either way, so j/k remain plain scroll.
+//
+// Nothing is written into the buffer. A failure with no output at all (empty
+// argv, missing manager binary, an immediate non-zero exit) used to seed its
+// reason there so [3] would not read "starting update…" while the status bar
+// pointed at it for the reason; updateOutcomeBlock now states it, so the buffer
+// stays exactly what the command printed and the tail below is the manager's own
+// output rather than a line this function wrote a moment ago.
+//
+// The update argv never carries the token and msg.err is an exec/exit error, so
+// the log line stays token-free.
+func (m *Model) recordUpdateOutcome(msg updateDoneMsg) {
+	m.updateOutcome = updateOutcome{
+		tool:    msg.tool,
+		manager: m.updatePlan.Manager,
+		elapsed: msg.elapsed,
+		err:     msg.err,
+		was:     m.versions[msg.tool].Installed,
 	}
+	if m.showsUpdateLog() {
+		m.setHelpContent()
+		m.helpViewport.GotoBottom()
+	}
+	if msg.err == nil {
+		return
+	}
+	// The tail is the manager's own output and nothing else: the failure reason
+	// rides msg.err, which is already the next field over.
 	logx.Errorf("update failed: tool=%s manager=%s err=%v tail=%q",
 		msg.tool, m.updatePlan.Manager, msg.err, tailLines(m.updateLog, 5))
 }
@@ -865,6 +922,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		info.InstalledKnown = true
 		info.InstalledPresent = msg.present
 		m.versions[msg.toolName] = info
+		// Phase 2 of a finished update: this is the re-detect its success path
+		// fired, and the only thing that knows whether the version actually moved
+		// — a manager can exit zero having done nothing. Guarded on the outcome's
+		// own name and on not being answered yet, since this handler fires for
+		// every tracked tool at startup and again on any [r] refresh.
+		if m.updateOutcome.tool == msg.toolName && !m.updateOutcome.verified {
+			m.updateOutcome.verified = true
+			m.updateOutcome.now = msg.installed
+			m.updateOutcome.nowPresent = msg.present
+			if m.showsUpdateLog() {
+				m.setHelpContent()
+				m.helpViewport.GotoBottom()
+			}
+		}
 		if hasSel {
 			m.metaSelected = m.indexOfMeta(prev.Name)
 		}
@@ -1160,6 +1231,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// rescheduling itself; the live log in [3] survives until the next
 		// update begins. Re-render the card so its title drops the spinner.
 		m.updatingFor = ""
+		// One record for every outcome, ahead of every branch below: the block in
+		// [3] is what tells the user the update ended at all, and four call sites
+		// for it would be four chances for the self path and the tool path to say
+		// different things about the same event. It reaches no card and fires no
+		// fetch, so even the untracked-mid-update branch can pass through it — a
+		// failed update is worth logging whether or not its tool is still tracked.
+		m.recordUpdateOutcome(msg)
 		// keepkit's own update is settled first, ahead of the toolByName lookup:
 		// that early return drops the message whenever the tool is not tracked,
 		// which for keepkit is the normal case — the update would finish silently
@@ -1183,9 +1261,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// check, a check that said "not newer", or enter in [2] on a tracked
 				// row), and it replaced a pending [U] restart from an earlier
 				// successful update with that same empty banner.
-				statusCmd := m.setStatus("update failed — see [3]")
-				m.recordUpdateFailure(msg)
-				return m, statusCmd
+				return m, m.setStatus("update failed — see [3]")
 			}
 			m.selfState = selfUpdated
 			statusCmd := m.setStatus("updated " + selfToolName)
@@ -1206,7 +1282,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			statusCmd := m.setStatus("update failed — see [3]")
-			m.recordUpdateFailure(msg)
 			m.briefViewport.SetContent(m.renderCard())
 			return m, statusCmd
 		}

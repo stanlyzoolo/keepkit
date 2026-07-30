@@ -6,13 +6,69 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/stanlyzoolo/keepkit/internal/ui"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
+
+// outcomeKind is the verdict a line of the update-outcome block carries, which
+// is what picks its color. Three kinds, because Theme already has exactly three
+// roles for this: Ok for a healthy resting state, Signal for something that
+// requires the user to act, Danger for something broken. The kind is returned
+// instead of a style so the lines can be built and table-tested without a
+// terminal profile.
+type outcomeKind int
+
+const (
+	outcomeOk outcomeKind = iota
+	outcomeWarn
+	outcomeBad
+)
+
+// formatElapsed renders how long an update ran. Zero means the process never
+// started (empty argv, a Start error), and the block drops the cell rather than
+// claim an update took no time; anything under a second is reported as such
+// instead of rounding to a "0s" that reads like the same thing.
+func formatElapsed(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return ""
+	case d < time.Second:
+		return "<1s"
+	default:
+		return d.Round(time.Second).String()
+	}
+}
+
+// updateVerifyLine states what the post-update re-detect found, which is the
+// only part of the block that speaks about the tool rather than the command.
+// The four results are distinct on purpose: a manager can exit zero having
+// changed nothing (Already up-to-date), and an update can leave no working
+// binary behind at all — both are invisible in an exit status, and both are
+// what the second phase exists to say out loud.
+//
+// present and now are the two independent results of the same probe, so a tool
+// that is installed but will not name its version stays an affirmative answer,
+// exactly as the card's installed: line reads it.
+func updateVerifyLine(tool, was, now string, present bool) (string, outcomeKind) {
+	switch {
+	case !present:
+		return "✕ " + tool + "  not on PATH", outcomeBad
+	case now == "":
+		return "✓ " + tool + "  installed", outcomeOk
+	case now == was:
+		return "⚠ " + tool + "  still " + version.DisplayVersion(now), outcomeWarn
+	case was == "":
+		return "✓ " + tool + "  " + version.DisplayVersion(now), outcomeOk
+	default:
+		return "✓ " + tool + "  " + version.DisplayVersion(was) + " → " + version.DisplayVersion(now), outcomeOk
+	}
+}
 
 // formatStars formats a star count with K suffix for thousands.
 func formatStars(n int) string {

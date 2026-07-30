@@ -4937,3 +4937,36 @@ func TestFormatShare(t *testing.T) {
 		}
 	}
 }
+
+// TestFitCells: cells go from the right until the line fits, reserve is charged
+// against the same budget, and an impossible budget yields "" rather than a cut
+// cell. The helper backs both the panel footers and the update-outcome block, so
+// this is the one place the rule is pinned.
+func TestFitCells(t *testing.T) {
+	cells := []string{"aaa", "bbb", "ccc"}
+	tests := []struct {
+		name    string
+		inner   int
+		reserve int
+		want    string
+	}{
+		{"everything fits", 20, 0, "aaa · bbb · ccc"},
+		{"exactly fits", 15, 0, "aaa · bbb · ccc"},
+		{"one short drops the last", 14, 0, "aaa · bbb"},
+		{"reserve is charged too", 20, 6, "aaa · bbb"},
+		{"only the leading cell survives", 5, 0, "aaa"},
+		{"nothing fits", 2, 0, ""},
+		{"reserve alone can starve the line", 15, 15, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fitCells(cells, " · ", tt.inner, tt.reserve); got != tt.want {
+				t.Errorf("fitCells(inner=%d, reserve=%d) = %q, want %q",
+					tt.inner, tt.reserve, got, tt.want)
+			}
+		})
+	}
+	if got := fitCells(nil, " · ", 20, 0); got != "" {
+		t.Errorf("fitCells(nil) = %q, want empty", got)
+	}
+}

@@ -424,6 +424,10 @@ func (m Model) updateConfirmUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.updatingFor = target
 		m.updateLog = nil
 		m.updateLogFor = target
+		// The previous session's terminal block goes with its buffer: the two are
+		// rendered as one thing, so a stale "✓ finished" left under a log that has
+		// just started would read as this update having already ended.
+		m.updateOutcome = updateOutcome{}
 		// keepkit's own log owns [3] under every selection — an untracked keepkit
 		// has no row of its own (see showsUpdateLog) — while a tool's log is
 		// per-tool sticky, so taking the single buffer over also releases a

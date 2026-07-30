@@ -139,7 +139,7 @@ Run `keepkit` — a three-panel interface opens:
   without its URL, the title (and a slogan under it that only repeats the card's own)
   is dropped so the panel opens on the first sentence that says something new, and
   code blocks are untouched. While an update runs, this panel shows its live log
-  instead.
+  instead, and keeps it afterwards under a line saying how the update ended.
 
 Focus moves with `←` / `→` or the digits `1` / `2` / `3` (each panel's number is in
 its title, and the focused panel is marked with `▸` as well as by color). The status
@@ -207,10 +207,26 @@ by a config file, or a session started without your shell profile. Export the
 variable, or set `update_cmd` on the tool, and the right manager is picked.
 
 The command is shown in the status bar for confirmation; its output streams into
-panel `[3] Update` in real time and the TUI stays responsive. After a successful
-update the version is re-detected and the `↑` marker disappears. One update runs at
-a time; a command gets 10 minutes (a sudo password prompt inside it fails fast
-instead of hanging).
+panel `[3] update` in real time and the TUI stays responsive. One update runs at a
+time; a command gets 10 minutes (a sudo password prompt inside it fails fast instead
+of hanging).
+
+When it ends, the log stays where it is — it is the record of what happened — and
+closes with what the panel frame now also says, `[3] update finished` or
+`[3] update failed`:
+
+```
+✓ finished · brew · 14s
+✓ fd  v10.2.0 → v10.3.0
+R readme · H help · M man
+```
+
+The second line is written a moment later, once the version has been re-detected —
+which is also what makes the `↑` marker disappear. It is a separate line because a
+manager exiting successfully is not the same thing as the tool having moved: when
+nothing changed it reads `⚠ fd  still v10.2.0` instead, and if the update left no
+working binary behind, `✕ fd  not on PATH`. A failure prints the reason under the
+first line and has no second one.
 
 If the manager cannot be detected (manual install), keepkit suggests setting the
 `update_cmd` field or updating manually. `update_cmd` in `meta.yaml` always takes

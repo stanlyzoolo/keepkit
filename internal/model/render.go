@@ -848,17 +848,6 @@ func (m Model) panelFooter(w int, left []string, right string) string {
 	// labels it is supposed to be separating.
 	sep := m.sty().Dim.Render(footerSep)
 
-	fit := func(cells []string, reserve int) string {
-		for len(cells) > 0 {
-			line := strings.Join(cells, sep)
-			if lipgloss.Width(line)+reserve <= inner {
-				return line
-			}
-			cells = cells[:len(cells)-1]
-		}
-		return ""
-	}
-
 	// An absent right cell reserves nothing — not even the gap that would
 	// separate it. [1] and [2] pass "" here, and charging them two cells for a
 	// neighbour that does not exist is what dropped [1]'s last footer cell one
@@ -867,7 +856,7 @@ func (m Model) panelFooter(w int, left []string, right string) string {
 	if right != "" {
 		reserve = rateGaugeMinGap + lipgloss.Width(right)
 	}
-	line := fit(left, reserve)
+	line := fitCells(left, sep, inner, reserve)
 	if right != "" {
 		if gap := inner - lipgloss.Width(line) - lipgloss.Width(right); gap >= rateGaugeMinGap {
 			line += strings.Repeat(" ", gap) + right
@@ -880,6 +869,27 @@ func (m Model) panelFooter(w int, left []string, right string) string {
 	}
 	gutter := strings.Repeat(" ", panelGutter)
 	return "\n" + gutter + line
+}
+
+// fitCells joins already-styled cells with sep and drops them from the right
+// until the line fits inner, reserving reserve cells for whatever is pinned to
+// the far edge. Cells are ordered most-important-first, so what goes is what
+// matters least; "" means not even the first cell fits.
+//
+// Dropping rather than wrapping is the whole point: a cell carries ANSI, so a
+// line built of several of them cannot be handed to wrapText — it counts runes
+// and would cut inside an escape sequence, which the viewport re-emits to the
+// real terminal verbatim. Shared by the panel footers and the update-outcome
+// block in [3], the two places that build a line out of styled pieces.
+func fitCells(cells []string, sep string, inner, reserve int) string {
+	for len(cells) > 0 {
+		line := strings.Join(cells, sep)
+		if lipgloss.Width(line)+reserve <= inner {
+			return line
+		}
+		cells = cells[:len(cells)-1]
+	}
+	return ""
 }
 
 // panelGutter is the blank column a panel keeps between its frame and its own
@@ -1368,6 +1378,28 @@ func (m Model) renderBrief() string {
 		m.focusTitle("2", "brief", focused))
 }
 
+// updateLogTitle names what panel [3] is while a log owns it — and, once the
+// session has ended, that it has. One string feeds both the inset title and the
+// footer's source cell, so the two can never disagree about whether an update is
+// still running.
+//
+// Words rather than the block's own ✓/✕: insetPanelTitle measures the title in
+// runes, not cells, so an East-Asian-Ambiguous glyph there would render two
+// cells wide under RUNEWIDTH_EASTASIAN=1 and push the top border out by one.
+// Inside the viewport the same glyphs are harmless, which is why the block keeps
+// them.
+func (m Model) updateLogTitle() string {
+	o := m.updateOutcome
+	switch {
+	case o.tool == "" || o.tool != m.updateLogFor:
+		return "update"
+	case o.err != nil:
+		return "update failed"
+	default:
+		return "update finished"
+	}
+}
+
 func (m Model) renderHelp() string {
 	s := m.sty()
 	focused := m.focus == focusHelp
@@ -1385,7 +1417,7 @@ func (m Model) renderHelp() string {
 	// three modes is what the panel is currently showing.
 	logShowing := m.showsUpdateLog()
 	if logShowing {
-		name = "update"
+		name = m.updateLogTitle()
 	}
 	title := m.focusTitle("3", name, focused)
 	if !logShowing {
@@ -2220,6 +2252,80 @@ func (m Model) renderHelpContent() string {
 	return indentLines(m.helpContent())
 }
 
+// updateOutcomeBlock renders the terminal state of a finished update session
+// under its log, or "" while one is still running. It is what closes the chain:
+// without it the log simply stops on the manager's last line under a frame that
+// still says the update is running, which is indistinguishable from one that is.
+//
+// The color carries the verdict and nothing else — the manager name and the
+// duration are labels, and Dim is what the theme has for those. That splits the
+// lines into two classes, and the wrap rule follows the split: a line built of
+// styled cells (the verdict row, the way out) can only be shortened by dropping
+// cells, since wrapText counts runes and would cut inside an escape sequence,
+// while the single-role lines (the failure reason, the verified version) take
+// the ordinary build-plain-then-style path.
+func (m Model) updateOutcomeBlock() string {
+	o := m.updateOutcome
+	// The outcome belongs to the buffer under it. Both are reset together when a
+	// session starts, so a mismatch here means the block is not this log's.
+	if o.tool == "" || o.tool != m.updateLogFor {
+		return ""
+	}
+	s := m.sty()
+	width := m.helpWrapWidth()
+	sep := s.Dim.Render(footerSep)
+
+	// One line per role, styled whole, so the indent renderHelpContent applies
+	// later lands outside every escape sequence.
+	single := func(text string, style lipgloss.Style, indent string) []string {
+		var out []string
+		for line := range strings.SplitSeq(wrapText(text, max(width-len(indent), 1)), "\n") {
+			out = append(out, indent+style.Render(line))
+		}
+		return out
+	}
+
+	verdict, meta := s.Ok.Render("✓ finished"), o.manager
+	if o.err != nil {
+		verdict = s.Danger.Render("✕ failed")
+	}
+	cells := []string{verdict}
+	if meta != "" {
+		cells = append(cells, s.Dim.Render(meta))
+	}
+	if el := formatElapsed(o.elapsed); el != "" {
+		cells = append(cells, s.Dim.Render(el))
+	}
+	lines := []string{fitCells(cells, sep, width, 0)}
+
+	// The reason sits under the verdict rather than beside it: an exec error is
+	// prose of unbounded length, and it reads as the continuation it is. Text,
+	// not Danger — the line above is already the alarm.
+	if o.err != nil {
+		lines = append(lines, single(o.err.Error(), s.Text, "  ")...)
+	}
+	if o.verified {
+		text, kind := updateVerifyLine(o.tool, o.was, o.now, o.nowPresent)
+		style := s.Ok
+		switch kind {
+		case outcomeWarn:
+			style = s.Signal
+		case outcomeBad:
+			style = s.Danger
+		case outcomeOk:
+		}
+		lines = append(lines, single(text, style, "")...)
+	}
+	// The way out. The panel drops its H/M/R title hints while a log owns it, so
+	// without this a finished log is a room with the door unmarked — and the
+	// title has no room for them (one hint fits, three do not), while content
+	// has the full width.
+	lines = append(lines, fitCells(
+		[]string{m.hint("R", "readme"), m.hint("H", "help"), m.hint("M", "man")},
+		sep, width, 0))
+	return strings.Join(lines, "\n")
+}
+
 func (m Model) helpContent() string {
 	s := m.sty()
 	// Live update log: while a tool is (or was just) being updated, [3] shows the
@@ -2231,10 +2337,24 @@ func (m Model) helpContent() string {
 	// untracked and the tracker may even be empty. The buffer survives until the
 	// next update starts.
 	if m.showsUpdateLog() {
-		if len(m.updateLog) == 0 {
-			return s.Note.Render("starting update…")
+		block := m.updateOutcomeBlock()
+		body := ""
+		if len(m.updateLog) > 0 {
+			body = wrapText(strings.Join(m.updateLog, "\n"), m.helpWrapWidth())
 		}
-		return wrapText(strings.Join(m.updateLog, "\n"), m.helpWrapWidth())
+		switch {
+		case block == "" && body == "":
+			// Only while one is actually running: a finished session always has a
+			// block, so a manager that succeeded without printing anything can no
+			// longer leave the panel claiming the update is still starting.
+			return s.Note.Render("starting update…")
+		case block == "":
+			return body
+		case body == "":
+			return block
+		default:
+			return body + "\n\n" + block
+		}
 	}
 
 	mt, ok := m.selectedMeta()
