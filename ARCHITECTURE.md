@@ -267,9 +267,12 @@ Key invariants:
   either per tool (the buffered tool is the selected one) or regardless of the
   selection (a self-update — keepkit is typically not tracked and the tracker may be
   empty). Both cases are the single argument-less `showsUpdateLog()`, used by the inset
-  title, the render branch, the per-chunk repaint, the `setHelpContent` entry gate and
-  the help fetch, so they cannot disagree. Releasing a *completed* self-update's claim
-  is `dismissSelfLog()`.
+  title, the render branch, the per-chunk repaint, `recordUpdateOutcome`'s repaint, the
+  `setHelpContent` entry gate and the help fetch, so they cannot disagree. Releasing a
+  *completed* self-update's claim is `dismissSelfLog()`. What the title says is a second
+  single definition, `updateLogTitle()`: `[3] update` while one runs, `[3] update
+  finished` / `[3] update failed` once the session left an outcome behind, feeding the
+  footer's source cell from the same string.
 
 ## Updating a tool (`enter` in `[2]`)
 
