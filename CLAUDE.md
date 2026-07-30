@@ -27,7 +27,7 @@ CI (`.github/workflows/ci.yml`) runs build / vet / `test -race` / golangci-lint 
 | [`docs/design/self-update.md`](docs/design/self-update.md) | `U`/`X`: the version gate, `selfState`, the restart and its path resolution |
 | [`docs/design/readme-pipeline.md`](docs/design/readme-pipeline.md) | panel `[3]`: the three sources, `cleanReadmeMarkdown`, the glamour theme |
 
-Everything else stays here. When a change makes one of those three sections wrong, fix it **in its own file** rather than re-inlining it — `docs-sync` treats the split as the layout, not as drift.
+Everything else stays here. **Never re-inline these three sections.** When a change makes one of them wrong, fix it in its own file, and touch this one only when the invariant summary itself went wrong — the split is the layout, not drift.
 
 ### Entry point
 

@@ -17,6 +17,11 @@ Both ends of that wiring sit in named functions outside `runTUI` — `newRootMod
 and `restartIfRequested(final, restart)` — because `runTUI` needs a terminal and cannot be
 tested, and those two lines are the whole path from the model logic to the user.
 
+Three areas carry more rationale than fits here — updating a tool, self-update, and panel
+`[3]`'s README pipeline. Their full text lives under `docs/design/`:
+[`updating.md`](docs/design/updating.md), [`self-update.md`](docs/design/self-update.md)
+and [`readme-pipeline.md`](docs/design/readme-pipeline.md).
+
 ## Package map
 
 ```mermaid
