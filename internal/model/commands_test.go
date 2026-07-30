@@ -236,9 +236,11 @@ func TestUpdateDoneFailure(t *testing.T) {
 }
 
 // TestUpdateDoneFailureEmptyLogSurfacesError: when the update fails before
-// emitting any output (missing binary, bad argv, immediate exit), the empty [3]
-// log would still read "starting update…". The done handler seeds the log with
-// the error so the panel the status bar points to actually shows the reason.
+// emitting any output (missing binary, bad argv, immediate exit) there is
+// nothing in the buffer to read, and [3] would still say "starting update…"
+// while the status bar points at it for the reason. The outcome block is what
+// states it — the buffer is left as the command's own output, which here is
+// none.
 func TestUpdateDoneFailureEmptyLogSurfacesError(t *testing.T) {
 	logDir := t.TempDir()
 	restore := logx.SetDirForTesting(logDir)
@@ -249,15 +251,15 @@ func TestUpdateDoneFailureEmptyLogSurfacesError(t *testing.T) {
 
 	nm, _ := m.Update(updateDoneMsg{tool: "rg", err: errUpdateTest})
 	m2 := nm.(Model)
-	if len(m2.updateLog) == 0 {
-		t.Fatal("updateLog empty, want the error text seeded for [3]")
+	if len(m2.updateLog) != 0 {
+		t.Errorf("updateLog = %#v, want the buffer left alone", m2.updateLog)
 	}
-	if !strings.Contains(m2.updateLog[0], "exit status 1") {
-		t.Errorf("updateLog[0] = %q, want the error text", m2.updateLog[0])
-	}
-	// [3] must now render the seeded error, not the "starting update…" placeholder.
-	if content := m2.renderHelpContent(); !strings.Contains(content, "exit status 1") {
+	content := stripANSI(m2.renderHelpContent())
+	if !strings.Contains(content, "exit status 1") || !strings.Contains(content, "✕ failed") {
 		t.Errorf("[3] content = %q, want the update error surfaced", content)
+	}
+	if strings.Contains(content, "starting update…") {
+		t.Errorf("[3] content = %q, still claims the update is starting", content)
 	}
 }
 

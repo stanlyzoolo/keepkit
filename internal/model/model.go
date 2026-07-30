@@ -829,6 +829,13 @@ func (m Model) acceptsUpdateDetect(msg updateDetectedMsg) bool {
 // [3] changes here, and that is the single recompute point for it. The entry
 // index stays empty for a log either way, so j/k remain plain scroll.
 //
+// Nothing is written into the buffer. A failure with no output at all (empty
+// argv, missing manager binary, an immediate non-zero exit) used to seed its
+// reason there so [3] would not read "starting update…" while the status bar
+// pointed at it for the reason; updateOutcomeBlock now states it, so the buffer
+// stays exactly what the command printed and the tail below is the manager's own
+// output rather than a line this function wrote a moment ago.
+//
 // The update argv never carries the token and msg.err is an exec/exit error, so
 // the log line stays token-free.
 func (m *Model) recordUpdateOutcome(msg updateDoneMsg) {
@@ -838,13 +845,6 @@ func (m *Model) recordUpdateOutcome(msg updateDoneMsg) {
 		elapsed: msg.elapsed,
 		err:     msg.err,
 		was:     m.versions[msg.tool].Installed,
-	}
-	// A failure that produced no output at all (empty argv, missing manager
-	// binary, StdoutPipe/Start error, immediate non-zero exit) seeds the buffer
-	// with its reason, or [3] would read "starting update…" while the status bar
-	// points there for it.
-	if msg.err != nil && m.updateLogFor == msg.tool && len(m.updateLog) == 0 {
-		m.updateLog = append(m.updateLog, "update failed: "+msg.err.Error())
 	}
 	if m.showsUpdateLog() {
 		m.setHelpContent()

@@ -249,23 +249,23 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/update_test.go`
 
-- [ ] add `updateOutcomeBlock()`: line 1 from cells via `fitCells` (verdict in
+- [x] add `updateOutcomeBlock()`: line 1 from cells via `fitCells` (verdict in
       `Ok`/`Danger`, metadata in `Dim`, dim `footerSep`), the reason line wrapped
       then styled `Text`, line 2 from `updateVerifyLine`, line 3 from
       `m.hint()` cells via `fitCells`
-- [ ] append it in `helpContent()` after one blank line, and narrow the
+- [x] append it in `helpContent()` after one blank line, and narrow the
       `starting update…` branch to "buffer empty **and** no outcome"
-- [ ] ➕ drop the buffer seeding from `recordUpdateOutcome` (moved here from
+- [x] ➕ drop the buffer seeding from `recordUpdateOutcome` (moved here from
       task 2: the seeding and the block are one substitution, and removing it
       earlier would leave `TestUpdateDoneFailureEmptyLogSurfacesError` and
       `TestSelfUpdateDoneFailure` red across four tasks)
-- [ ] rewrite those two tests onto the block: the reason is surfaced in `[3]`,
+- [x] rewrite those two tests onto the block: the reason is surfaced in `[3]`,
       the buffer itself stays empty
-- [ ] write tests: the block renders on success and failure; with an **empty**
+- [x] write tests: the block renders on success and failure; with an **empty**
       buffer `starting update…` is gone; lines 1 and 3 drop cells on a narrow
       panel and never add a line; the color roles are the ones in the table
       (`forceColorProfile` + `themeSeq`)
-- [ ] run `go test -race ./internal/model/` — must pass before task 7
+- [x] run `go test -race ./internal/model/` — must pass before task 7
 
 ### Task 7: Mark completion in the frame and the footer
 
@@ -273,22 +273,22 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/update_test.go`
 
-- [ ] in `renderHelp`, resolve `name` to `update` while live and to
+- [x] in `renderHelp`, resolve `name` to `update` while live and to
       `update finished` / `update failed` once the outcome belongs to this log,
       so the inset title and the footer's source cell follow one variable
-- [ ] write a test asserting all three spellings on `renderHelp()` output (with
+- [x] write a test asserting all three spellings on `renderHelp()` output (with
       the frame, so the title arithmetic is exercised)
-- [ ] confirm `render_test.go:3272` and `selfupdate_test.go:1472` — both pin
+- [x] confirm `render_test.go:3272` and `selfupdate_test.go:1472` — both pin
       `[3] update` for a **live** log — stay green untouched
-- [ ] run `go test -race ./internal/model/` — must pass before task 8
+- [x] run `go test -race ./internal/model/` — must pass before task 8
 
 ### Task 8: Verify acceptance criteria
 
-- [ ] look at it: temporary `internal/model/zz_vis_test.go` dumping
+- [x] look at it: temporary `internal/model/zz_vis_test.go` dumping
       `renderHelp()` at widths **80** and 120 for all five states (live /
       finished / finished with a moved version / finished with `⚠ still` /
       failed with a reason), then **delete the file**
-- [ ] mutation-check every assertion added in tasks 1-7: revert the production
+- [x] mutation-check every assertion added in tasks 1-7: revert the production
       edit, confirm red, restore — colors and title words especially, that class
       of mutant survived the PR #48 review
 - [ ] `go run .` against a tracked tool with a pending update: the block appears,

@@ -8,9 +8,11 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/stanlyzoolo/keepkit/internal/loader"
 	"github.com/stanlyzoolo/keepkit/internal/logx"
+	"github.com/stanlyzoolo/keepkit/internal/ui"
 	"github.com/stanlyzoolo/keepkit/internal/updater"
 )
 
@@ -540,5 +542,254 @@ func TestHelpKeyKeepsLiveUpdateLog(t *testing.T) {
 		if m.updateLogFor != "git" {
 			t.Errorf("[%s] during in-flight update should keep live log, got %q", key, m.updateLogFor)
 		}
+	}
+}
+
+// outcomeModel builds a model whose panel [3] shows fd's update log, sized to
+// the 80x24 baseline where the block's width budget is tightest (27 cells).
+func outcomeModel(t *testing.T, width int, o updateOutcome) Model {
+	t.Helper()
+	m := New([]loader.ToolMeta{{Name: "fd", GitHub: "github.com/sharkdp/fd"}})
+	m = mustModel(m.Update(tea.WindowSizeMsg{Width: width, Height: 24}))
+	m.updateLogFor = "fd"
+	m.updateLog = []string{"go: downloading golang.org/x/mod"}
+	m.updateOutcome = o
+	m.setHelpContent()
+	return m
+}
+
+// TestUpdateOutcomeBlockRendered: what a finished session actually says. The
+// live row is the control — while the update runs the panel must show no
+// verdict at all, or the block would be announcing an ending that has not
+// happened.
+func TestUpdateOutcomeBlockRendered(t *testing.T) {
+	tests := []struct {
+		name    string
+		outcome updateOutcome
+		want    []string
+		absent  []string
+	}{
+		{
+			name:   "still running",
+			want:   []string{"go: downloading"},
+			absent: []string{"✓ finished", "✕ failed", "R readme"},
+		},
+		{
+			name:    "finished, not yet verified",
+			outcome: updateOutcome{tool: "fd", manager: "go", elapsed: 12 * time.Second},
+			want:    []string{"✓ finished · go · 12s", "R readme · H help · M man"},
+			absent:  []string{"✕ failed"},
+		},
+		{
+			name: "finished and verified",
+			outcome: updateOutcome{tool: "fd", manager: "go", elapsed: 12 * time.Second,
+				verified: true, was: "10.2.0", now: "10.3.0", nowPresent: true},
+			want: []string{"✓ finished · go · 12s", "✓ fd  v10.2.0 → v10.3.0"},
+		},
+		{
+			name: "the manager did nothing",
+			outcome: updateOutcome{tool: "fd", manager: "brew", elapsed: 3 * time.Second,
+				verified: true, was: "10.2.0", now: "10.2.0", nowPresent: true},
+			want: []string{"✓ finished · brew · 3s", "⚠ fd  still v10.2.0"},
+		},
+		{
+			name: "failed",
+			outcome: updateOutcome{tool: "fd", manager: "brew", elapsed: 4 * time.Second,
+				err: errUpdateTest},
+			want:   []string{"✕ failed · brew · 4s", "exit status 1"},
+			absent: []string{"✓ finished"},
+		},
+		{
+			name:    "a run that never started omits the duration",
+			outcome: updateOutcome{tool: "fd", manager: "brew", err: errUpdateTest},
+			want:    []string{"✕ failed · brew"},
+			absent:  []string{"· 0s", "<1s"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := outcomeModel(t, 80, tt.outcome)
+			got := stripANSI(m.renderHelpContent())
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("[3] = %q, want it to contain %q", got, want)
+				}
+			}
+			for _, absent := range tt.absent {
+				if strings.Contains(got, absent) {
+					t.Errorf("[3] = %q, want it free of %q", got, absent)
+				}
+			}
+		})
+	}
+}
+
+// TestUpdateOutcomeBlockReplacesPlaceholder: a manager that succeeds without
+// printing anything used to leave [3] reading "starting update…" forever, since
+// the placeholder was gated on the buffer alone.
+func TestUpdateOutcomeBlockReplacesPlaceholder(t *testing.T) {
+	m := outcomeModel(t, 80, updateOutcome{tool: "fd", manager: "go", elapsed: time.Second})
+	m.updateLog = nil
+	m.setHelpContent()
+
+	got := stripANSI(m.renderHelpContent())
+	if strings.Contains(got, "starting update…") {
+		t.Errorf("[3] = %q, want the placeholder gone once a session has ended", got)
+	}
+	if !strings.Contains(got, "✓ finished") {
+		t.Errorf("[3] = %q, want the block on its own", got)
+	}
+}
+
+// TestUpdateOutcomeBlockBelongsToItsLog: the block is rendered under the buffer
+// it describes. A tool whose log is not the one on screen must not have its
+// verdict painted over another tool's output.
+func TestUpdateOutcomeBlockBelongsToItsLog(t *testing.T) {
+	m := outcomeModel(t, 80, updateOutcome{tool: "rg", manager: "brew", elapsed: time.Second})
+	if got := stripANSI(m.renderHelpContent()); strings.Contains(got, "✓ finished") {
+		t.Errorf("[3] = %q, want no block for another tool's outcome", got)
+	}
+}
+
+// TestUpdateOutcomeBlockLinesNeverWrap: the verdict row and the way out are
+// built from styled cells, so they can only be shortened by dropping cells —
+// wrapText counts runes and would cut inside an escape sequence. Squeeze the
+// panel and the block must lose cells, never gain lines.
+func TestUpdateOutcomeBlockLinesNeverWrap(t *testing.T) {
+	o := updateOutcome{tool: "fd", manager: "brew", elapsed: 12 * time.Second}
+	wide := outcomeModel(t, 200, o)
+	narrow := outcomeModel(t, 80, o)
+	narrow.helpW = 24 // below the panel minimum, reachable only by hand
+	narrow.setHelpContent()
+
+	count := func(m Model) int {
+		return len(strings.Split(strings.TrimRight(stripANSI(m.updateOutcomeBlock()), "\n"), "\n"))
+	}
+	if got, want := count(narrow), count(wide); got != want {
+		t.Errorf("narrow block = %d lines, wide = %d; cells must drop, not wrap", got, want)
+	}
+	got := stripANSI(narrow.updateOutcomeBlock())
+	for _, line := range strings.Split(got, "\n") {
+		if w := lipgloss.Width(line); w > narrow.helpWrapWidth() {
+			t.Errorf("line %q is %d cells, over the %d budget", line, w, narrow.helpWrapWidth())
+		}
+	}
+	if !strings.Contains(got, "✓ finished") {
+		t.Errorf("block = %q, want the leading cell kept", got)
+	}
+}
+
+// TestUpdateOutcomeBlockColorRoles: the verdict carries the color and the
+// metadata beside it does not — the manager name and the duration are labels,
+// and Dim is the role for those. Swapping any of these reads as a different
+// claim about the update, which is exactly the mutation a plain-text assertion
+// would miss.
+func TestUpdateOutcomeBlockColorRoles(t *testing.T) {
+	forceColorProfile(t)
+	th := ui.Default
+
+	tests := []struct {
+		name    string
+		outcome updateOutcome
+		verdict string
+		color   lipgloss.Color
+	}{
+		{
+			name:    "success",
+			outcome: updateOutcome{tool: "fd", manager: "go", elapsed: 12 * time.Second},
+			verdict: "✓ finished", color: th.Ok,
+		},
+		{
+			name:    "failure",
+			outcome: updateOutcome{tool: "fd", manager: "go", elapsed: 12 * time.Second, err: errUpdateTest},
+			verdict: "✕ failed", color: th.Danger,
+		},
+		{
+			name: "nothing changed",
+			outcome: updateOutcome{tool: "fd", manager: "brew", elapsed: time.Second,
+				verified: true, was: "10.2.0", now: "10.2.0", nowPresent: true},
+			verdict: "⚠ fd  still v10.2.0", color: th.Signal,
+		},
+		{
+			name: "install broken",
+			outcome: updateOutcome{tool: "fd", manager: "brew", elapsed: time.Second,
+				verified: true, was: "10.2.0", nowPresent: false},
+			verdict: "✕ fd  not on PATH", color: th.Danger,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			block := outcomeModel(t, 120, tt.outcome).updateOutcomeBlock()
+
+			var line string
+			for _, l := range strings.Split(block, "\n") {
+				if strings.Contains(stripANSI(l), tt.verdict) {
+					line = l
+					break
+				}
+			}
+			if line == "" {
+				t.Fatalf("block = %q, want a line reading %q", block, tt.verdict)
+			}
+			if !strings.Contains(line, themeSeq(tt.color)) {
+				t.Errorf("line %q does not carry %s, the role for this verdict", line, tt.color)
+			}
+			for _, other := range []lipgloss.Color{th.Ok, th.Signal, th.Danger} {
+				if other != tt.color && strings.Contains(line, themeSeq(other)) {
+					t.Errorf("line %q also carries %s — one verdict, one role", line, other)
+				}
+			}
+		})
+	}
+
+	// The verdict row carries two roles, not one: the metadata beside it steps
+	// back to Dim. A whole-line render would leave no Dim on that row at all.
+	verdictRow := strings.SplitN(outcomeModel(t, 120, updateOutcome{
+		tool: "fd", manager: "go", elapsed: 12 * time.Second}).updateOutcomeBlock(), "\n", 2)[0]
+	if !strings.Contains(verdictRow, themeSeq(th.Dim)) {
+		t.Errorf("verdict row = %q, want the manager and duration dim beside the verdict", verdictRow)
+	}
+	if !strings.Contains(verdictRow, themeSeq(th.Ok)) {
+		t.Errorf("verdict row = %q, want the verdict itself in Ok", verdictRow)
+	}
+}
+
+// TestUpdateLogTitleFollowsOutcome: the frame is where a reader who has scrolled
+// away from the end of the log learns the update ended. It stays "update" while
+// one runs — the two existing tests that pin that spelling describe a live log —
+// and names the result once there is one.
+func TestUpdateLogTitleFollowsOutcome(t *testing.T) {
+	tests := []struct {
+		name    string
+		outcome updateOutcome
+		want    string
+	}{
+		{name: "live", want: "[3] update "},
+		{
+			name:    "finished",
+			outcome: updateOutcome{tool: "fd", manager: "go", elapsed: time.Second},
+			want:    "[3] update finished ",
+		},
+		{
+			name:    "failed",
+			outcome: updateOutcome{tool: "fd", manager: "go", elapsed: time.Second, err: errUpdateTest},
+			want:    "[3] update failed ",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := outcomeModel(t, 120, tt.outcome)
+			m.focus = focusHelp
+			panel := stripANSI(m.renderHelp())
+			top := strings.SplitN(panel, "\n", 2)[0]
+			if !strings.Contains(top, tt.want) {
+				t.Errorf("top border = %q, want the title %q", top, tt.want)
+			}
+			// The footer's source cell is the same string, so the two cannot
+			// disagree about whether the update is still running.
+			if !strings.Contains(panel, strings.TrimPrefix(tt.want, "[3] ")) {
+				t.Errorf("panel = %q, want the footer naming the source too", panel)
+			}
+		})
 	}
 }
