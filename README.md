@@ -15,7 +15,7 @@ It keeps your kit in one list: installed and latest versions side by side, repos
 cards, notes and tags — and updates an outdated tool right from the interface.
 Pure TUI, no subcommands; the only flags are `--version` and `--help`.
 
-![keepkit — track a repo by URL, tag it, group the list by tag, run the tool right from the tracker, then refresh the card while the GitHub API gauge counts requests](demo/hero.gif)
+![keepkit — the tool list grouped by tag, a card refreshed past its 24h cache while the GitHub API gauge counts the requests, and panel [3] cycling through the README, the man page and the tool's own --help](demo/hero.gif)
 
 ## Contents
 
@@ -34,8 +34,9 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
 ## Key features
 
 - **Track your tools** — add by GitHub URL or short name, cycle statuses
-  (`active` / `trying` / `inactive`), keep a note and one tag per tool; rename a tool
-  when the binary name differs from the repo name (e.g. `claude-code` → `claude`)
+  (`active` / `trying` / `inactive`), keep a note and one tag per tool; `m` renames a
+  tool when the binary name differs from the repo name (e.g. `claude-code` → `claude`),
+  which is what makes its installed version resolve
 - **Versions at a glance** — every row carries the installed version in its own
   right-hand column (detected locally, with Homebrew and cargo fallbacks for tools
   that won't answer `--version`); the latest release comes from GitHub. Outdated
@@ -155,9 +156,17 @@ scheme, or in SSH form `git@github.com:owner/repo.git`), keepkit puts the short 
 name into `name` and the normalized `github.com/owner/repo` into the `github` field.
 A new tool gets the `trying` status.
 
+The `name` field is also what keepkit probes locally: the installed version comes from
+running `<name> --version`, then `-V`, then the `Caskroom/<name>` / `Cellar/<name>`
+directory, then `cargo install --list`. So when a repo is not named after the binary it
+installs — `anthropics/claude-code` ships `claude` — every probe misses and the row
+carries no version. Press `m` and rename the tool to the binary's own name: `github`
+keeps pointing at the repo, so nothing about the release data changes, while the
+installed version, the `↑` marker and the comparison behind it start working.
+
 ## Updating tools
 
-![in-TUI update — the card shows installed vs latest, enter detects the manager, the log streams into panel [3], refresh confirms the new version](demo/update.gif)
+![in-TUI update — the card puts the installed version against the latest release, enter detects the package manager and asks to confirm its command, and the manager's output streams into panel [3] until it reports the outcome and the version keepkit verified afterwards](demo/update.gif)
 
 When the installed version lags behind the latest release (the `↑` marker), press
 `enter` on the tool card. keepkit detects the package manager the binary was

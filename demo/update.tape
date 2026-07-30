@@ -1,7 +1,9 @@
-# keepkit update demo — agterm has a newer release: the card shows installed vs
-# latest, [u] detects the manager, the log streams into [3], refresh confirms.
+# keepkit update demo — protobuf is two releases behind: the card shows v34.0
+# against v35.1, [enter] detects the package manager and asks to confirm the
+# command, and the manager's output streams into panel [3] until it reports the
+# outcome and the version it verified afterwards.
 # Render: vhs demo/update.tape  (outputs demo/update.gif)
-# Note: this actually runs `brew upgrade agterm`.
+# Note: this actually runs `brew upgrade protobuf`.
 Output demo/update.gif
 Require keepkit
 
@@ -13,36 +15,40 @@ Set Padding 16
 Set Framerate 30
 Set TypingSpeed 35ms
 
+# keep brew's own chatter out of the log: no auto-update pass, no env hints
 Hide
-Type "unset TMUX TERM_PROGRAM KITTY_LISTEN_ON" Enter
-Type "export HOMEBREW_NO_AUTO_UPDATE=1" Enter
+Type "export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1" Enter
 Type "PS1='$ '" Enter
 Type "clear" Enter
 Show
 Sleep 600ms
 
 Type "keepkit" Sleep 300ms Enter
-Sleep 3s
+Sleep 7s
 
-# find agterm: committing the search lands straight on its card
-Type "/" Sleep 300ms
-Type "agterm" Sleep 300ms
-Enter Sleep 3s
+# [1] find protobuf — committing the search lands straight on its card
+Type "/" Sleep 400ms
+Type "protobuf" Sleep 700ms
+Enter Sleep 4s
 
-# the card: installed 0.15.1, latest v0.16.1 with the ↑ marker
-Type "u" Sleep 2.5s
+# [2] installed v34.0 against v35.1 ↑ — enter detects the manager and shows the
+# exact command it is about to run
+Enter Sleep 4s
 
-# [u] detected the manager — run the shown command; the log streams into [3]
-Enter Sleep 5s
+# confirm: `brew upgrade protobuf` starts, its output streams into [3]
+Enter Sleep 1.5s
+Type "3" Sleep 12s
 
-# skip the long middle of the download, come back for the finished log
+# Skip the long middle of the download and install. Deliberately longer than the
+# upgrade needs: overshooting only costs recording time, while undershooting ends
+# the GIF mid-install — and the update is gone, so there is no second take.
 Hide
-Sleep 150s
+Sleep 240s
 Show
-Sleep 3s
 
-# refresh the card: installed == latest now, the ↑ is gone
-Type "r" Sleep 3s
+# [3] update finished — the outcome line, the manager, the elapsed time and the
+# version keepkit re-detected afterwards
+Sleep 7s
 
 Type "q"
 Sleep 1s

@@ -1,5 +1,6 @@
-# keepkit hero demo — track a repo, tag it, group by tag, run the tool from the
-# list, then refresh the card while the GitHub API gauge counts the requests.
+# keepkit hero demo — the three panels in one pass: [space] groups the list by
+# tag, [2] refreshes the card past its 24h cache, and [3] cycles its three
+# sources (README, man page, --help) on the selected tool.
 # Render: vhs demo/hero.tape  (outputs demo/hero.gif)
 Output demo/hero.gif
 Require keepkit
@@ -12,50 +13,45 @@ Set Padding 16
 Set Framerate 30
 Set TypingSpeed 35ms
 
-# clean, neutral prompt; force the in-window launch path regardless of the
-# terminal vhs was started from
+# clean, neutral prompt
 Hide
-Type "unset TMUX TERM_PROGRAM KITTY_LISTEN_ON" Enter
 Type "PS1='$ '" Enter
 Type "clear" Enter
 Show
 Sleep 600ms
 
 Type "keepkit" Sleep 300ms Enter
-Sleep 3s
+# versions, cards and the API gauge land asynchronously — let them all arrive
+Sleep 7s
 
-# track a new tool by GitHub URL
-Type "t" Sleep 300ms
-Type "https://github.com/Epistates/treemd" Sleep 300ms
-Enter Sleep 2.5s
+# [space] groups the list by tag: pending updates head it as their own section,
+# then one section per tag. The selection stays on the tool it was on.
+Space Sleep 3s
 
-# tag it: [2] focuses the card, [t] edits the tag
-Type "2" Sleep 300ms
-Type "t" Sleep 300ms
-Type "viewers" Sleep 300ms
-Enter Sleep 1s
+# walk the cursor across a section boundary and back
+Type "j" Sleep 900ms
+Type "j" Sleep 1.4s
+Type "k" Sleep 700ms
+Type "k" Sleep 1.5s
 
-# back to the list, [space] groups by tag — treemd sits under its new header
-Type "1" Sleep 300ms
-Space Sleep 2s
-Type "k" Sleep 300ms
-Type "j" Sleep 1s
+# [2] the card, [r] re-fetches release, repo card and README ignoring the cache.
+# Twice, because the fetch itself is over in well under a second — what shows the
+# work is the API gauge in the right corner stepping up three requests at a time.
+Type "2" Sleep 1.5s
+Type "r" Sleep 3.5s
+Type "r" Sleep 4.5s
 
-# run it right from keepkit: the prompt is prefilled with the tool name
-Enter Sleep 300ms
-Type " README.md" Sleep 300ms
-Enter Sleep 3.5s
+# [3] the README — the panel's default source
+Type "3" Sleep 2s
+Ctrl+D Sleep 1.6s
+Ctrl+D Sleep 2s
 
-# a couple of moves inside treemd, then quit — keepkit resumes
-Type "j" Sleep 300ms
-Type "j" Sleep 1.2s
-Type "q" Sleep 1.5s
+# [M] the man page
+Type "M" Sleep 5s
+Ctrl+D Sleep 2.5s
 
-# refresh the card a few times — the GitHub API gauge in the corner counts up
-Type "2" Sleep 300ms
-Type "r" Sleep 1.5s
-Type "r" Sleep 1.5s
-Type "r" Sleep 3s
+# [H] the tool's own --help
+Type "H" Sleep 6s
 
 Type "q"
 Sleep 1s
