@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/logx"
 	"github.com/stanlyzoolo/keepkit/internal/updater"
 )
 
@@ -335,6 +336,95 @@ func TestStartUpdateCmdUnstartedReportsZeroElapsed(t *testing.T) {
 	}
 	if done.elapsed != 0 {
 		t.Errorf("elapsed = %v, want 0 for a process that never started", done.elapsed)
+	}
+}
+
+// TestUpdateOutcomeRecordedOnBothResults: every finished session leaves a
+// terminal state behind, success as well as failure — the success case is the
+// whole point, since before it the only sign an update ended was a status
+// message that expires in a second.
+func TestUpdateOutcomeRecordedOnBothResults(t *testing.T) {
+	shrinkStatusTTL(t)
+	logDir := t.TempDir()
+	restore := logx.SetDirForTesting(logDir)
+	defer restore()
+
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{name: "success"},
+		{name: "failure", err: errUpdateTest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := updateDoneModel(t)
+			m2 := mustModel(m.Update(updateDoneMsg{tool: "rg", err: tt.err, elapsed: 12 * time.Second}))
+
+			got := m2.updateOutcome
+			if got.tool != "rg" {
+				t.Errorf("outcome.tool = %q, want rg", got.tool)
+			}
+			if got.manager != "brew" {
+				t.Errorf("outcome.manager = %q, want the plan's manager", got.manager)
+			}
+			if got.elapsed != 12*time.Second {
+				t.Errorf("outcome.elapsed = %v, want the duration off the message", got.elapsed)
+			}
+			if got.err != tt.err {
+				t.Errorf("outcome.err = %v, want %v", got.err, tt.err)
+			}
+			// Read before the version merge: the success path fires
+			// fetchInstalledCmd, whose installedMsg overwrites this very field.
+			if got.was != "1.0.0" {
+				t.Errorf("outcome.was = %q, want the pre-update installed version", got.was)
+			}
+			if got.verified {
+				t.Error("outcome.verified set before any installedMsg landed")
+			}
+		})
+	}
+}
+
+// TestUpdateOutcomeSharedWithSelfPath: keepkit's own update ends through the same
+// recorder as a tool's. The two paths are documented as sharing one definition so
+// they cannot drift, and this is the assertion that says so — the self branch
+// returns before the tool branch is ever reached.
+func TestUpdateOutcomeSharedWithSelfPath(t *testing.T) {
+	shrinkStatusTTL(t)
+	logDir := t.TempDir()
+	restore := logx.SetDirForTesting(logDir)
+	defer restore()
+
+	m := startedSelfUpdate(t, []loader.ToolMeta{{Name: "rg"}}, selfOffered)
+	m.updatePlan = updater.Plan{Manager: "go", Display: "go install …@latest"}
+
+	m2 := mustModel(m.Update(updateDoneMsg{tool: selfToolName, err: nil, elapsed: 8 * time.Second}))
+	if m2.updateOutcome.tool != selfToolName || m2.updateOutcome.manager != "go" {
+		t.Errorf("outcome = %+v, want the self update recorded like any other", m2.updateOutcome)
+	}
+	if m2.updateOutcome.elapsed != 8*time.Second {
+		t.Errorf("outcome.elapsed = %v, want 8s", m2.updateOutcome.elapsed)
+	}
+}
+
+// TestUpdateOutcomeClearedByNextUpdate: the block belongs to the buffer under it,
+// so starting a session drops the previous one's terminal state. A survivor would
+// render "✓ finished" over a log that has just started.
+func TestUpdateOutcomeClearedByNextUpdate(t *testing.T) {
+	shrinkStatusTTL(t)
+	m := updateDoneModel(t)
+	m = mustModel(m.Update(updateDoneMsg{tool: "rg", err: nil, elapsed: time.Second}))
+	if m.updateOutcome.tool == "" {
+		t.Fatal("precondition: the first update must have left an outcome")
+	}
+
+	m.mode = modeConfirmUpdate
+	m.updateTarget = "rg"
+	m.updatePlan = updater.Plan{Manager: "brew", Argv: []string{"true"}, Display: "true"}
+	m2 := mustModel(m.updateConfirmUpdate(tea.KeyMsg{Type: tea.KeyEnter}))
+
+	if m2.updateOutcome != (updateOutcome{}) {
+		t.Errorf("outcome = %+v, want it cleared with the buffer", m2.updateOutcome)
 	}
 }
 

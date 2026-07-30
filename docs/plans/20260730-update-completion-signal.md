@@ -187,25 +187,19 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
 - Modify: `internal/model/update_test.go`
 - Modify: `internal/model/commands_test.go`
 
-- [ ] add the `updateOutcome` type and the `Model` field beside
+- [x] add the `updateOutcome` type and the `Model` field beside
       `updateLog`/`updateLogFor`
-- [ ] turn `recordUpdateFailure` into `recordUpdateOutcome(msg)`: write the
+- [x] turn `recordUpdateFailure` into `recordUpdateOutcome(msg)`: write the
       outcome (including `was` from `m.versions[msg.tool].Installed`), keep the
       same `logx.Errorf` on `msg.err != nil`, repaint `[3]` via
       `setHelpContent()` + `GotoBottom()` when `showsUpdateLog()`
-- [ ] call it from **both** `updateDoneMsg` branches on **success and failure**
+- [x] call it from **both** `updateDoneMsg` branches on **success and failure**
       (today only the failure branch calls it)
-- [ ] drop the buffer seeding (`update failed: <err>` when the log is empty) —
-      the block now covers that case structurally, and `tailLines` stops seeing
-      our own synthesized line instead of the manager's output
-- [ ] reset the outcome in `updateConfirmUpdate` next to `m.updateLog = nil`
-- [ ] rewrite `TestUpdateDoneFailureEmptyLogSurfacesError`
-      (`commands_test.go:242`): the two `m2.updateLog` assertions go with the
-      seeding, the rendered-reason one stays and becomes the point of the test
-- [ ] write tests: outcome recorded on success and on failure, shared with the
+- [x] reset the outcome in `updateConfirmUpdate` next to `m.updateLog = nil`
+- [x] write tests: outcome recorded on success and on failure, shared with the
       self branch (`startedSelfUpdate` from `selfupdate_test.go`), cleared when a
       second update starts
-- [ ] run `go test -race ./internal/model/` — must pass before task 3
+- [x] run `go test -race ./internal/model/` — must pass before task 3
 
 ### Task 3: Fill in the verified version from the re-detect
 
@@ -261,6 +255,12 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
       `m.hint()` cells via `fitCells`
 - [ ] append it in `helpContent()` after one blank line, and narrow the
       `starting update…` branch to "buffer empty **and** no outcome"
+- [ ] ➕ drop the buffer seeding from `recordUpdateOutcome` (moved here from
+      task 2: the seeding and the block are one substitution, and removing it
+      earlier would leave `TestUpdateDoneFailureEmptyLogSurfacesError` and
+      `TestSelfUpdateDoneFailure` red across four tasks)
+- [ ] rewrite those two tests onto the block: the reason is surfaced in `[3]`,
+      the buffer itself stays empty
 - [ ] write tests: the block renders on success and failure; with an **empty**
       buffer `starting update…` is gone; lines 1 and 3 drop cells on a narrow
       panel and never add a line; the color roles are the ones in the table
