@@ -922,11 +922,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		info.InstalledKnown = true
 		info.InstalledPresent = msg.present
 		m.versions[msg.toolName] = info
+		if hasSel {
+			m.metaSelected = m.indexOfMeta(prev.Name)
+		}
 		// Phase 2 of a finished update: this is the re-detect its success path
 		// fired, and the only thing that knows whether the version actually moved
 		// — a manager can exit zero having done nothing. Guarded on the outcome's
 		// own name and on not being answered yet, since this handler fires for
 		// every tracked tool at startup and again on any [r] refresh.
+		//
+		// Strictly *after* the cursor remap above: showsUpdateLog() asks
+		// selectedMeta(), which reads metaSelected against filteredMeta() — and the
+		// merge two lines up is exactly what flips hasUpdate and re-partitions that
+		// list. Evaluated before the remap, the stale index names a different tool,
+		// so the panel repaint is skipped for the tool that just updated (it leaves
+		// the top partition) or fires for one merely sitting at its old row.
 		if m.updateOutcome.tool == msg.toolName && !m.updateOutcome.verified {
 			m.updateOutcome.verified = true
 			m.updateOutcome.now = msg.installed
@@ -935,9 +945,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setHelpContent()
 				m.helpViewport.GotoBottom()
 			}
-		}
-		if hasSel {
-			m.metaSelected = m.indexOfMeta(prev.Name)
 		}
 		m.setToolsContent()
 		m.briefViewport.SetContent(m.renderCard())

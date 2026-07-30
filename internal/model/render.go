@@ -2326,6 +2326,28 @@ func (m Model) updateOutcomeBlock() string {
 	return strings.Join(lines, "\n")
 }
 
+// dimUpdateLog wraps the merged stdout+stderr buffer to the panel and paints it
+// Dim — the transcript is the manager talking, secondary to the outcome block
+// under it. That block is the only thing in [3] that states a verdict, and
+// colour is what says so; left unstyled the buffer read at the terminal's
+// default brightness, louder than the ✓/✕ it sat above.
+//
+// Styling comes last, per whole finished line, after the wrap — never before
+// it. wrapText counts runes and knows nothing about escapes, so styling first
+// would have it measure an invisible sequence as text and cut inside it, which
+// the viewport re-emits to the real terminal verbatim. Nothing is stripped here:
+// the segments were sanitized at the ingest boundary (the updateChunkMsg
+// handler's cleanTerminalOutput), so the buffer holds no escapes of its own for
+// this Dim to fight with — one definition of "the buffer is clean", not two.
+func (m Model) dimUpdateLog(buf string) string {
+	s := m.sty()
+	lines := strings.Split(wrapText(buf, m.helpWrapWidth()), "\n")
+	for i, line := range lines {
+		lines[i] = s.Dim.Render(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m Model) helpContent() string {
 	s := m.sty()
 	// Live update log: while a tool is (or was just) being updated, [3] shows the
@@ -2340,7 +2362,7 @@ func (m Model) helpContent() string {
 		block := m.updateOutcomeBlock()
 		body := ""
 		if len(m.updateLog) > 0 {
-			body = wrapText(strings.Join(m.updateLog, "\n"), m.helpWrapWidth())
+			body = m.dimUpdateLog(strings.Join(m.updateLog, "\n"))
 		}
 		switch {
 		case block == "" && body == "":

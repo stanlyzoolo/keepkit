@@ -221,12 +221,15 @@ closes with what the panel frame now also says, `[3] update finished` or
 R readme · H help · M man
 ```
 
+The log itself is dimmed — it is the manager talking, while these last lines are
+keepkit's own verdict on what the manager did.
+
 The second line is written a moment later, once the version has been re-detected —
 which is also what makes the `↑` marker disappear. It is a separate line because a
 manager exiting successfully is not the same thing as the tool having moved: when
 nothing changed it reads `⚠ fd  still v10.2.0` instead, and if the update left no
 working binary behind, `✕ fd  not on PATH`. A failure prints the reason under the
-first line and has no second one.
+first line and normally stops there, since nothing re-detects after it.
 
 If the manager cannot be detected (manual install), keepkit suggests setting the
 `update_cmd` field or updating manually. `update_cmd` in `meta.yaml` always takes
