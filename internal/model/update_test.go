@@ -428,6 +428,80 @@ func TestUpdateOutcomeClearedByNextUpdate(t *testing.T) {
 	}
 }
 
+// TestUpdateOutcomeVerifiedByInstalledMsg: the re-detect the success path fires
+// is what turns "the command exited zero" into "the tool is at this version".
+// The unrelated-tool and already-verified rows guard the two ways this handler —
+// which fires for every tool at startup and on every [r] — could corrupt an
+// outcome it does not own.
+func TestUpdateOutcomeVerifiedByInstalledMsg(t *testing.T) {
+	shrinkStatusTTL(t)
+
+	for _, tt := range []struct {
+		name         string
+		msg          installedMsg
+		pre          func(*Model)
+		wantVerified bool
+		wantNow      string
+	}{
+		{
+			name:         "the update's own re-detect",
+			msg:          installedMsg{toolName: "rg", installed: "2.0.0", present: true},
+			wantVerified: true,
+			wantNow:      "2.0.0",
+		},
+		{
+			name:         "another tool's re-detect is ignored",
+			msg:          installedMsg{toolName: "fzf", installed: "0.5", present: true},
+			wantVerified: false,
+		},
+		{
+			name: "an answered outcome is not overwritten",
+			msg:  installedMsg{toolName: "rg", installed: "9.9.9", present: true},
+			pre: func(m *Model) {
+				m.updateOutcome.verified = true
+				m.updateOutcome.now = "2.0.0"
+			},
+			wantVerified: true,
+			wantNow:      "2.0.0",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := updateDoneModel(t)
+			m = mustModel(m.Update(updateDoneMsg{tool: "rg", elapsed: time.Second}))
+			if tt.pre != nil {
+				tt.pre(&m)
+			}
+
+			m2 := mustModel(m.Update(tt.msg))
+			if m2.updateOutcome.verified != tt.wantVerified {
+				t.Errorf("verified = %v, want %v", m2.updateOutcome.verified, tt.wantVerified)
+			}
+			if m2.updateOutcome.now != tt.wantNow {
+				t.Errorf("now = %q, want %q", m2.updateOutcome.now, tt.wantNow)
+			}
+		})
+	}
+}
+
+// TestUpdateOutcomeVerifiedKeepsAbsence: a re-detect that finds nothing still
+// answers the outcome. present is the second, independent result of the probe —
+// an update that left no binary on PATH is exactly the case worth reporting, and
+// treating "no version string" as "no answer" would hide it behind a block that
+// never completes.
+func TestUpdateOutcomeVerifiedKeepsAbsence(t *testing.T) {
+	shrinkStatusTTL(t)
+	m := updateDoneModel(t)
+	m = mustModel(m.Update(updateDoneMsg{tool: "rg", elapsed: time.Second}))
+
+	m2 := mustModel(m.Update(installedMsg{toolName: "rg", installed: "", present: false}))
+	if !m2.updateOutcome.verified {
+		t.Error("verified = false, want the absence recorded as an answer")
+	}
+	if m2.updateOutcome.nowPresent {
+		t.Error("nowPresent = true, want the probe's own result")
+	}
+}
+
 // TestHelpKeyDismissesCompletedUpdateLog: the update log is sticky in [3] after
 // completion, but an explicit [H]/[M] is intent to leave it — the key must clear
 // updateLogFor so --help / man is reachable for that tool again.

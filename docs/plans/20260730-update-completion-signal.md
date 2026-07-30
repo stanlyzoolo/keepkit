@@ -207,13 +207,13 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
 - Modify: `internal/model/model.go`
 - Modify: `internal/model/update_test.go`
 
-- [ ] in the `installedMsg` handler, under
+- [x] in the `installedMsg` handler, under
       `m.updateOutcome.tool == msg.toolName && !m.updateOutcome.verified`, set
       `verified`/`now`/`nowPresent` and repaint `[3]` the way phase 1 does
-- [ ] write tests: `updateDoneMsg` → `installedMsg` marks the outcome verified;
+- [x] write tests: `updateDoneMsg` → `installedMsg` marks the outcome verified;
       an unrelated tool's `installedMsg` does not; a second `installedMsg` does
       not overwrite a verified outcome
-- [ ] run `go test -race ./internal/model/` — must pass before task 4
+- [x] run `go test -race ./internal/model/` — must pass before task 4
 
 ### Task 4: Pure helpers for the block's text
 

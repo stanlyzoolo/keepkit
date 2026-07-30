@@ -922,6 +922,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		info.InstalledKnown = true
 		info.InstalledPresent = msg.present
 		m.versions[msg.toolName] = info
+		// Phase 2 of a finished update: this is the re-detect its success path
+		// fired, and the only thing that knows whether the version actually moved
+		// — a manager can exit zero having done nothing. Guarded on the outcome's
+		// own name and on not being answered yet, since this handler fires for
+		// every tracked tool at startup and again on any [r] refresh.
+		if m.updateOutcome.tool == msg.toolName && !m.updateOutcome.verified {
+			m.updateOutcome.verified = true
+			m.updateOutcome.now = msg.installed
+			m.updateOutcome.nowPresent = msg.present
+			if m.showsUpdateLog() {
+				m.setHelpContent()
+				m.helpViewport.GotoBottom()
+			}
+		}
 		if hasSel {
 			m.metaSelected = m.indexOfMeta(prev.Name)
 		}
