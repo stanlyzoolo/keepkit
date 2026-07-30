@@ -221,13 +221,13 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
 - Modify: `internal/model/textutil.go`
 - Modify: `internal/model/textutil_test.go`
 
-- [ ] add `formatElapsed(d time.Duration) string` → `12s`, `1m3s`, `<1s`, and
+- [x] add `formatElapsed(d time.Duration) string` → `12s`, `1m3s`, `<1s`, and
       `""` at zero
-- [ ] add `updateVerifyLine(tool, was, now string, present bool)` returning the
+- [x] add `updateVerifyLine(tool, was, now string, present bool)` returning the
       text and its role for the four phase-2 branches in the table above, with
       versions printed through `version.DisplayVersion`
-- [ ] write table tests for both, covering all four branches and `was == ""`
-- [ ] run `go test -race ./internal/model/` — must pass before task 5
+- [x] write table tests for both, covering all four branches and `was == ""`
+- [x] run `go test -race ./internal/model/` — must pass before task 5
 
 ### Task 5: Extract the cell-dropping helper from `panelFooter`
 
@@ -235,13 +235,13 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/render_test.go`
 
-- [ ] lift the `fit` closure out of `panelFooter` (`render.go:851`) into a
+- [x] lift the `fit` closure out of `panelFooter` (`render.go:851`) into a
       package-level `fitCells(cells []string, sep string, inner, reserve int) string`
-- [ ] call it from `panelFooter` unchanged (`reserve` keeps its meaning)
-- [ ] write a table test for `fitCells` (drops from the right, respects
+- [x] call it from `panelFooter` unchanged (`reserve` keeps its meaning)
+- [x] write a table test for `fitCells` (drops from the right, respects
       `reserve`, returns `""` when even one cell cannot fit)
-- [ ] confirm the existing footer tests still pass untouched
-- [ ] run `go test -race ./internal/model/` — must pass before task 6
+- [x] confirm the existing footer tests still pass untouched
+- [x] run `go test -race ./internal/model/` — must pass before task 6
 
 ### Task 6: Render the terminal block in `[3]`
 

@@ -3,6 +3,7 @@ package model
 import (
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestMdInline(t *testing.T) {
@@ -331,5 +332,83 @@ func TestMarkdownToLinesGitHubBody(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("github release body:\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestFormatElapsed: the three shapes the block can print, and the empty string
+// for a process that never ran — a duration cell reading "0s" would claim the
+// update took no time rather than that it never started.
+func TestFormatElapsed(t *testing.T) {
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"never started", 0, ""},
+		{"negative is not a duration", -time.Second, ""},
+		{"sub-second says so", 400 * time.Millisecond, "<1s"},
+		{"seconds", 12 * time.Second, "12s"},
+		{"rounds to the second", 12*time.Second + 400*time.Millisecond, "12s"},
+		{"minutes", 90 * time.Second, "1m30s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatElapsed(tt.d); got != tt.want {
+				t.Errorf("formatElapsed(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestUpdateVerifyLine: the four results of the post-update re-detect. The
+// "still" row is the one the whole second phase exists for — a manager that
+// exits zero having changed nothing is invisible in every other signal.
+func TestUpdateVerifyLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		was, now string
+		present  bool
+		want     string
+		wantKind outcomeKind
+	}{
+		{
+			name: "version moved", was: "10.2.0", now: "10.3.0", present: true,
+			want: "✓ fd  v10.2.0 → v10.3.0", wantKind: outcomeOk,
+		},
+		{
+			name: "version did not move", was: "10.2.0", now: "10.2.0", present: true,
+			want: "⚠ fd  still v10.2.0", wantKind: outcomeWarn,
+		},
+		{
+			name: "nothing on PATH afterwards", was: "10.2.0", now: "", present: false,
+			want: "✕ fd  not on PATH", wantKind: outcomeBad,
+		},
+		{
+			name: "installed but will not name a version", was: "10.2.0", now: "", present: true,
+			want: "✓ fd  installed", wantKind: outcomeOk,
+		},
+		{
+			name: "nothing was installed before", was: "", now: "10.3.0", present: true,
+			want: "✓ fd  v10.3.0", wantKind: outcomeOk,
+		},
+		{
+			name: "a v-prefixed probe is not double-prefixed", was: "v10.2.0", now: "v10.3.0", present: true,
+			want: "✓ fd  v10.2.0 → v10.3.0", wantKind: outcomeOk,
+		},
+		{
+			name: "a non-semver version passes through", was: "nightly", now: "cli-2.0", present: true,
+			want: "✓ fd  nightly → cli-2.0", wantKind: outcomeOk,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, kind := updateVerifyLine("fd", tt.was, tt.now, tt.present)
+			if got != tt.want {
+				t.Errorf("text = %q, want %q", got, tt.want)
+			}
+			if kind != tt.wantKind {
+				t.Errorf("kind = %v, want %v", kind, tt.wantKind)
+			}
+		})
 	}
 }

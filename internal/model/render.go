@@ -848,17 +848,6 @@ func (m Model) panelFooter(w int, left []string, right string) string {
 	// labels it is supposed to be separating.
 	sep := m.sty().Dim.Render(footerSep)
 
-	fit := func(cells []string, reserve int) string {
-		for len(cells) > 0 {
-			line := strings.Join(cells, sep)
-			if lipgloss.Width(line)+reserve <= inner {
-				return line
-			}
-			cells = cells[:len(cells)-1]
-		}
-		return ""
-	}
-
 	// An absent right cell reserves nothing — not even the gap that would
 	// separate it. [1] and [2] pass "" here, and charging them two cells for a
 	// neighbour that does not exist is what dropped [1]'s last footer cell one
@@ -867,7 +856,7 @@ func (m Model) panelFooter(w int, left []string, right string) string {
 	if right != "" {
 		reserve = rateGaugeMinGap + lipgloss.Width(right)
 	}
-	line := fit(left, reserve)
+	line := fitCells(left, sep, inner, reserve)
 	if right != "" {
 		if gap := inner - lipgloss.Width(line) - lipgloss.Width(right); gap >= rateGaugeMinGap {
 			line += strings.Repeat(" ", gap) + right
@@ -880,6 +869,27 @@ func (m Model) panelFooter(w int, left []string, right string) string {
 	}
 	gutter := strings.Repeat(" ", panelGutter)
 	return "\n" + gutter + line
+}
+
+// fitCells joins already-styled cells with sep and drops them from the right
+// until the line fits inner, reserving reserve cells for whatever is pinned to
+// the far edge. Cells are ordered most-important-first, so what goes is what
+// matters least; "" means not even the first cell fits.
+//
+// Dropping rather than wrapping is the whole point: a cell carries ANSI, so a
+// line built of several of them cannot be handed to wrapText — it counts runes
+// and would cut inside an escape sequence, which the viewport re-emits to the
+// real terminal verbatim. Shared by the panel footers and the update-outcome
+// block in [3], the two places that build a line out of styled pieces.
+func fitCells(cells []string, sep string, inner, reserve int) string {
+	for len(cells) > 0 {
+		line := strings.Join(cells, sep)
+		if lipgloss.Width(line)+reserve <= inner {
+			return line
+		}
+		cells = cells[:len(cells)-1]
+	}
+	return ""
 }
 
 // panelGutter is the blank column a panel keeps between its frame and its own
