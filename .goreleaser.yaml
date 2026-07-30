@@ -56,12 +56,64 @@ checksum:
 
 changelog:
   use: github
+  # Sorts alphabetically by message, not chronologically — deliberate: scoped
+  # subjects like "feat(model):" cluster together inside their group.
   sort: asc
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"
+      - "^chore"
+      - "^ci"
+      - "^build"
+      - "Merge pull request"
+      - "Merge branch"
+      # Anchored: unanchored, this also ate a real subject that merely
+      # mentioned the phrase ("feat: run go mod tidy before build").
+      - "^go mod tidy"
+  # Truncate the commit SHA in each entry. The default (0) prints all 40 hex
+  # characters, which GitHub shortens on the release page but keepkit's own
+  # card does not — panel [2] is ~27 cells, so a full SHA plus the author
+  # suffix ate most of every entry's wrapped lines. 7 stays autolinked.
+  abbrev: 7
+  groups:
+    # Both patterns anchor at ^ against the bare commit subject. A leading
+    # ^.*? here would be wrong, not merely redundant: grouping runs before the
+    # entry is formatted, so it never sees the SHA prefix the rendered line
+    # carries, and the wildcard would degrade these into substring matches —
+    # `git revert` writes `Revert "feat: x"` by default, which then announces
+    # a reverted feature as a new one, sorted to the very top (sort: asc
+    # compares bytes, so `R` precedes `f`). Same for `fixup!`/`squash!`.
+    - title: New features
+      regexp: '^feat(\(.+\))??!?:.+$'
+      order: 100
+    - title: Bug fixes
+      regexp: '^fix(\(.+\))??!?:.+$'
+      order: 200
+    # No regexp: the catch-all. An off-nomenclature subject (refactor:, perf:,
+    # or none at all) stays visible here instead of silently vanishing.
+    - title: Other changes
+      order: 999
 
 release:
   github:
     owner: stanlyzoolo
     name: keepkit
+  # The Install block v0.1.0 carried by hand, now stamped onto every release.
+  # {{ .Tag }} is the only template expression here on purpose — `goreleaser
+  # check` does not validate templates, so a typo surfaces as a failed release
+  # job after the tag is already pushed. .Tag keeps the leading "v", so the
+  # `go install` line names the real released tag.
+  #
+  # Inline code, not a fenced block: this body is also what keepkit renders in
+  # panel [2], where markdownToLines drops inline backticks and the commands
+  # read as prose — a fence would instead land on the card's code plate and
+  # break the sentence across three blocks.
+  footer: |
+    ## Install
+
+    `brew install stanlyzoolo/apps/keepkit`, or
+    `go install github.com/stanlyzoolo/keepkit@{{ .Tag }}`, or grab an archive above.
 
 brews:
   - name: keepkit
