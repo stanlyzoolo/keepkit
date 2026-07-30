@@ -17,6 +17,11 @@ Both ends of that wiring sit in named functions outside `runTUI` — `newRootMod
 and `restartIfRequested(final, restart)` — because `runTUI` needs a terminal and cannot be
 tested, and those two lines are the whole path from the model logic to the user.
 
+Three areas carry more rationale than fits here — updating a tool, self-update, and panel
+`[3]`'s README pipeline. Their full text lives under `docs/design/`:
+[`updating.md`](docs/design/updating.md), [`self-update.md`](docs/design/self-update.md)
+and [`readme-pipeline.md`](docs/design/readme-pipeline.md).
+
 ## Package map
 
 ```mermaid
@@ -323,9 +328,10 @@ lives in `[3] Update` (a ~500-line buffer); the 10-minute deadline ends with
 
 ## Self-update and restart (`U` / `X`)
 
-keepkit watches its own releases and installs one through the same pipeline as `[u]`.
-**The main case is a keepkit that is not tracked**, which is what shapes the design: no
-step in this path may depend on `meta.yaml`, on a selection or on a card.
+keepkit watches its own releases and installs one through the same pipeline as
+`enter` in `[2]`. **The main case is a keepkit that is not tracked**, which is what
+shapes the design: no step in this path may depend on `meta.yaml`, on a selection
+or on a card.
 
 `WithAppVersion(v)` injects the running binary's version (a builder, not a `New`
 parameter — the zero value leaves the feature off, so the hundred-odd existing `New(`
@@ -357,25 +363,25 @@ banner up the key is unbound, and since `selfNone` is the only state a dev build
 reaches, answering there would give a build with the feature off one audible piece of
 it.
 
-Detection, the confirm dialog and the streaming log are the `[u]` machinery, and the way
-the self case fits into it is a **name**, not a parallel path: the detection result
-carries the target, the handler stores it as `updateTarget`, and everything downstream —
-the confirm dialog, its status bar, the log's claim on panel `[3]`, the completion
-handler — keys off that name instead of `selectedMeta()`, which an untracked keepkit (or
-an empty tracker) cannot answer. So an update of keepkit is a self-update whichever key
-started it, `enter` on a tracked keepkit row included — on a build where the feature is
-live; with it gated off that same keypress stays a plain tool update end to end (no
-panel-owning log, no banner, no restart to offer). Two gates still differ: a landed
-detection must match the selection only on the tool path (`acceptsUpdateDetect`; both
-paths refuse while an update runs or an input mode owns the keyboard, since the answer
-can arrive seconds later and a dialog opening under an editor would steal its
-keystrokes), and the completion handler settles the self case ahead of the `toolByName`
-lookup whose early return would otherwise drop the message for an untracked keepkit —
-leaving the update silently finished and `[U] restart` unreachable. Failure writes no
-banner state at all: the banner reappears by itself once the in-flight flag clears, so
-`U` is the retry, a fold stays folded, and an earlier restart offer survives — while
-forcing "offered" there could only walk one of those back, or announce an update with
-no version behind it.
+Detection, the confirm dialog and the streaming log are the tool-update machinery
+(`enter` in `[2]`), and the way the self case fits into it is a **name**, not a
+parallel path: the detection result carries the target, the handler stores it as
+`updateTarget`, and everything downstream — the confirm dialog, its status bar, the
+log's claim on panel `[3]`, the completion handler — keys off that name instead of
+`selectedMeta()`, which an untracked keepkit (or an empty tracker) cannot answer. So an
+update of keepkit is a self-update whichever key started it, `enter` on a tracked
+keepkit row included — on a build where the feature is live; with it gated off that
+same keypress stays a plain tool update end to end (no panel-owning log, no banner, no
+restart to offer). Two gates still differ: a landed detection must match the selection
+only on the tool path (`acceptsUpdateDetect`; both paths refuse while an update runs or
+an input mode owns the keyboard, since the answer can arrive seconds later and a dialog
+opening under an editor would steal its keystrokes), and the completion handler settles
+the self case ahead of the `toolByName` lookup whose early return would otherwise drop
+the message for an untracked keepkit — leaving the update silently finished and `[U]
+restart` unreachable. Failure writes no banner state at all: the banner reappears by
+itself once the in-flight flag clears, so `U` is the retry, a fold stays folded, and an
+earlier restart offer survives — while forcing "offered" there could only walk one of
+those back, or announce an update with no version behind it.
 
 Restart itself is a flag, not an exec: `U` sets `restartRequested` and returns
 `tea.Quit`, and `main` re-execs only after `p.Run()` returned — Bubble Tea has restored

@@ -473,9 +473,9 @@ const updateTimeout = 10 * time.Minute
 // must never run inside Update(), like every other probe. Emits an
 // updateDetectedMsg; the handler enters the confirm mode or shows a hint.
 //
-// self marks a [U] press on the self-update banner rather than a [u] on a tool
-// row: the same detection, but the result belongs to a banner with no row behind
-// it, which is what the handler's relevance gate needs to know (see
+// self marks a [U] press on the self-update banner rather than an enter in [2]
+// on a tool row: the same detection, but the result belongs to a banner with no
+// row behind it, which is what the handler's relevance gate needs to know (see
 // acceptsUpdateDetect).
 func detectUpdateCmd(t loader.Tool, self bool) tea.Cmd {
 	return safeCmd("detectUpdateCmd", func() tea.Msg {
