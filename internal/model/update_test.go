@@ -504,6 +504,124 @@ func TestUpdateOutcomeVerifiedKeepsAbsence(t *testing.T) {
 	}
 }
 
+// reorderModel builds the case every other update fixture misses: a tracker
+// whose updated tool is NOT first in meta.yaml order but IS first on screen,
+// because the update partition floats it there. The installedMsg that answers
+// the outcome is also what drops it out of that partition, so the tool's
+// displayed index moves under the handler — which is the whole point.
+//
+//	meta.yaml [aaa, fd]   displayed while fd has an update [fd, aaa]
+//	                      displayed once fd is current     [aaa, fd]
+func reorderModel(t *testing.T, selected string) Model {
+	t.Helper()
+	m := New([]loader.ToolMeta{
+		{Name: "aaa"},
+		{Name: "fd", GitHub: "github.com/sharkdp/fd"},
+	})
+	m = mustModel(m.Update(tea.WindowSizeMsg{Width: 120, Height: 24}))
+	m.versions["fd"] = VersionInfo{Installed: "10.2.0", Latest: "10.3.0", InstalledKnown: true, InstalledPresent: true}
+	m.updateLogFor = "fd"
+	m.updateLog = []string{"==> Upgrading fd"}
+	m.updateOutcome = updateOutcome{tool: "fd", manager: "brew", elapsed: 12 * time.Second, was: "10.2.0"}
+	m.metaSelected = m.indexOfMeta(selected)
+	m.setHelpContent()
+	return m
+}
+
+// TestUpdateOutcomeVerifiedRepaintsAfterReorder: phase 2 reaches the screen in
+// the feature's own flagship case. The verify line is only worth having if it is
+// painted, and the paint is gated on showsUpdateLog() — which asks
+// selectedMeta(), i.e. metaSelected read against the freshly re-partitioned
+// filteredMeta(). Evaluated before the cursor remap, that index names the wrong
+// tool and the repaint is silently skipped, leaving the block on phase 1 until
+// the user moves the selection away and back.
+func TestUpdateOutcomeVerifiedRepaintsAfterReorder(t *testing.T) {
+	shrinkStatusTTL(t)
+	m := reorderModel(t, "fd")
+	if got := m.indexOfMeta("fd"); got != 0 {
+		t.Fatalf("fd displayed at %d before the merge, want 0 (update partition floats it)", got)
+	}
+
+	m2 := mustModel(m.Update(installedMsg{toolName: "fd", installed: "10.3.0", present: true}))
+
+	if got := m2.indexOfMeta("fd"); got != 1 {
+		t.Fatalf("fd displayed at %d after the merge, want 1 — the fixture must actually reorder", got)
+	}
+	if sel, _ := m2.selectedMeta(); sel.Name != "fd" {
+		t.Fatalf("selected = %q, want the cursor to follow fd", sel.Name)
+	}
+	// The viewport, not renderHelpContent(): the latter recomputes from current
+	// state and would show the line whether or not anything repainted, which is
+	// exactly the mutation this test exists to kill. What the user sees is what
+	// setHelpContent() last wrote.
+	want := "✓ fd  v10.2.0 → v10.3.0"
+	if got := stripANSI(m2.helpViewport.View()); !strings.Contains(got, want) {
+		t.Errorf("[3] viewport = %q, want the phase-2 line %q painted", got, want)
+	}
+}
+
+// TestUpdateOutcomeVerifiedIgnoresUnselectedTool: the mirror. A backgrounded
+// update's re-detect must not seize [3] from whatever tool IS selected. Same
+// stale-index root cause, opposite direction: the pre-remap index lands ON the
+// updated tool while the user is reading another one, so showsUpdateLog() turns
+// into a false positive and paints a log the panel does not own — under a title
+// that, recomputed at View time, reads [3] readme.
+func TestUpdateOutcomeVerifiedIgnoresUnselectedTool(t *testing.T) {
+	shrinkStatusTTL(t)
+	m := reorderModel(t, "aaa")
+	before := m.helpViewport.View()
+
+	m2 := mustModel(m.Update(installedMsg{toolName: "fd", installed: "10.3.0", present: true}))
+
+	if sel, _ := m2.selectedMeta(); sel.Name != "aaa" {
+		t.Fatalf("selected = %q, want the cursor to stay on aaa", sel.Name)
+	}
+	if m2.showsUpdateLog() {
+		t.Fatal("showsUpdateLog() = true with aaa selected, want fd's log unowned")
+	}
+	if got := m2.helpViewport.View(); got != before {
+		t.Errorf("[3] viewport repainted to %q, want it left at %q — fd's log is not aaa's panel", got, before)
+	}
+	if !m2.updateOutcome.verified {
+		t.Error("verified = false, want the outcome answered even though nothing repainted")
+	}
+}
+
+// TestUpdateLogBodyIsDim: the transcript is Dim and the verdict is not. Colour
+// is the only thing separating the manager's own output from the one line in
+// [3] that states an outcome, so an unstyled body — the terminal's default
+// brightness, louder than either — would bury the verdict above it.
+func TestUpdateLogBodyIsDim(t *testing.T) {
+	forceColorProfile(t)
+	m := outcomeModel(t, 120, updateOutcome{
+		tool: "fd", manager: "go", elapsed: 12 * time.Second,
+		was: "10.2.0", verified: true, now: "10.3.0", nowPresent: true,
+	})
+
+	dim, ok2 := themeSeq(ui.Default.Dim), themeSeq(ui.Default.Ok)
+	var body, verdict string
+	for _, l := range strings.Split(m.renderHelpContent(), "\n") {
+		switch {
+		case strings.Contains(stripANSI(l), "go: downloading"):
+			body = l
+		case strings.Contains(stripANSI(l), "✓ finished"):
+			verdict = l
+		}
+	}
+	if body == "" || verdict == "" {
+		t.Fatalf("body = %q, verdict = %q, want both lines present", body, verdict)
+	}
+	if !strings.Contains(body, dim) {
+		t.Errorf("log line = %q, want the Dim role %q", body, dim)
+	}
+	if strings.Contains(body, ok2) {
+		t.Errorf("log line = %q, want no verdict role %q on the transcript", body, ok2)
+	}
+	if !strings.Contains(verdict, ok2) {
+		t.Errorf("verdict = %q, want it to keep %q rather than follow the body to Dim", verdict, ok2)
+	}
+}
+
 // TestHelpKeyDismissesCompletedUpdateLog: the update log is sticky in [3] after
 // completion, but an explicit [H]/[M] is intent to leave it — the key must clear
 // updateLogFor so --help / man is reachable for that tool again.

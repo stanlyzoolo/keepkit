@@ -268,8 +268,13 @@ Key invariants:
   selection (a self-update — keepkit is typically not tracked and the tracker may be
   empty). Both cases are the single argument-less `showsUpdateLog()`, used by the inset
   title, the render branch, the per-chunk repaint, `recordUpdateOutcome`'s repaint, the
-  `setHelpContent` entry gate and the help fetch, so they cannot disagree. Releasing a
-  *completed* self-update's claim is `dismissSelfLog()`. What the title says is a second
+  post-update verify repaint in the `installedMsg` handler, the `setHelpContent` entry
+  gate and the help fetch, so they cannot disagree. That last one reads `metaSelected`,
+  so it must be evaluated *after* the same handler's cursor remap: the version merge
+  preceding it re-partitions the very list the index is resolved against, and the stale
+  order both skips the repaint for the tool that just updated and paints its log over
+  whichever tool now sits at its old row.
+  Releasing a *completed* self-update's claim is `dismissSelfLog()`. What the title says is a second
   single definition, `updateLogTitle()`: `[3] update` while one runs, `[3] update
   finished` / `[3] update failed` once the session left an outcome behind, feeding the
   footer's source cell from the same string.
