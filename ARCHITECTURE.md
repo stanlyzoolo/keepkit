@@ -364,25 +364,24 @@ reaches, answering there would give a build with the feature off one audible pie
 it.
 
 Detection, the confirm dialog and the streaming log are the tool-update machinery
-(`enter` in `[2]`), and the way
-the self case fits into it is a **name**, not a parallel path: the detection result
-carries the target, the handler stores it as `updateTarget`, and everything downstream —
-the confirm dialog, its status bar, the log's claim on panel `[3]`, the completion
-handler — keys off that name instead of `selectedMeta()`, which an untracked keepkit (or
-an empty tracker) cannot answer. So an update of keepkit is a self-update whichever key
-started it, `enter` on a tracked keepkit row included — on a build where the feature is
-live; with it gated off that same keypress stays a plain tool update end to end (no
-panel-owning log, no banner, no restart to offer). Two gates still differ: a landed
-detection must match the selection only on the tool path (`acceptsUpdateDetect`; both
-paths refuse while an update runs or an input mode owns the keyboard, since the answer
-can arrive seconds later and a dialog opening under an editor would steal its
-keystrokes), and the completion handler settles the self case ahead of the `toolByName`
-lookup whose early return would otherwise drop the message for an untracked keepkit —
-leaving the update silently finished and `[U] restart` unreachable. Failure writes no
-banner state at all: the banner reappears by itself once the in-flight flag clears, so
-`U` is the retry, a fold stays folded, and an earlier restart offer survives — while
-forcing "offered" there could only walk one of those back, or announce an update with
-no version behind it.
+(`enter` in `[2]`), and the way the self case fits into it is a **name**, not a
+parallel path: the detection result carries the target, the handler stores it as
+`updateTarget`, and everything downstream — the confirm dialog, its status bar, the
+log's claim on panel `[3]`, the completion handler — keys off that name instead of
+`selectedMeta()`, which an untracked keepkit (or an empty tracker) cannot answer. So an
+update of keepkit is a self-update whichever key started it, `enter` on a tracked
+keepkit row included — on a build where the feature is live; with it gated off that
+same keypress stays a plain tool update end to end (no panel-owning log, no banner, no
+restart to offer). Two gates still differ: a landed detection must match the selection
+only on the tool path (`acceptsUpdateDetect`; both paths refuse while an update runs or
+an input mode owns the keyboard, since the answer can arrive seconds later and a dialog
+opening under an editor would steal its keystrokes), and the completion handler settles
+the self case ahead of the `toolByName` lookup whose early return would otherwise drop
+the message for an untracked keepkit — leaving the update silently finished and `[U]
+restart` unreachable. Failure writes no banner state at all: the banner reappears by
+itself once the in-flight flag clears, so `U` is the retry, a fold stays folded, and an
+earlier restart offer survives — while forcing "offered" there could only walk one of
+those back, or announce an update with no version behind it.
 
 Restart itself is a flag, not an exec: `U` sets `restartRequested` and returns
 `tea.Quit`, and `main` re-execs only after `p.Run()` returned — Bubble Tea has restored

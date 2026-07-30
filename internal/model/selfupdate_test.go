@@ -1275,11 +1275,12 @@ func TestUpdateFailureSeedsOnlyItsOwnLog(t *testing.T) {
 // mid-update is a deliberate "not now"; a pending [U] restart from an earlier
 // successful update is still valid (that binary is on disk either way); and
 // selfNone — reachable with no [U] press at all, since enter in [2] on a tracked
-// keepkit row is a self-update too and hasUpdate comes from the locally detected version,
-// independent of a startup check that may have been rate-limited, offline, or
-// simply said "not newer" — has no version behind it, so forcing "offered" there
-// rendered a banner with a hole in it ("keepkit  available") that no later
-// selfCheckMsg could fill, the handler writing only from selfNone.
+// keepkit row is a self-update too and hasUpdate comes from the locally
+// detected version, independent of a startup check that may have been
+// rate-limited, offline, or simply said "not newer" — has no version behind it,
+// so forcing "offered" there rendered a banner with a hole in it
+// ("keepkit  available") that no later selfCheckMsg could fill, the handler
+// writing only from selfNone.
 func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 	logDir := t.TempDir()
 	restore := logx.SetDirForTesting(logDir)
@@ -1324,13 +1325,14 @@ func TestSelfUpdateDoneFailureKeepsPriorState(t *testing.T) {
 }
 
 // TestKeepkitUpdateSelfHandlingGatedOnBuild: enter in [2] on a tracked keepkit
-// row reaches the completion handler on every build, so the version gate — not the target name
-// — is what decides whether it is treated as a self-update. On a release build it
-// is one (the restart offer appears even though the startup check never got to
-// selfOffered); on a dev build, where the feature is documented as fully off, it
-// stays a plain tool update: no panel-owning log, no banner, no Self group in [?],
-// and [U] raises no restart request — which on such a build would re-exec the
-// working copy and silently hand back the pre-update binary.
+// row reaches the completion handler on every build, so the version gate — not
+// the target name — is what decides whether it is treated as a self-update. On
+// a release build it is one (the restart offer appears even though the startup
+// check never got to selfOffered); on a dev build, where the feature is
+// documented as fully off, it stays a plain tool update: no panel-owning log,
+// no banner, no Self group in [?], and [U] raises no restart request — which on
+// such a build would re-exec the working copy and silently hand back the
+// pre-update binary.
 func TestKeepkitUpdateSelfHandlingGatedOnBuild(t *testing.T) {
 	tests := []struct {
 		name       string
