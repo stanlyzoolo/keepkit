@@ -252,10 +252,17 @@ precedence over auto-detection and runs via the platform shell — `sh -c`, or
 ```
 
 On Windows this means a `winget upgrade --id BurntSushi.ripgrep` or a
-`powershell -NoProfile -Command "…"` command runs as written, with no Git Bash
-installed. If you already have Git Bash and your `update_cmd` relies on `sh`
-syntax (`$(…)`, `$VAR`, single quotes), write it out explicitly —
-`sh -c "…"` — since `cmd /c` still finds `sh` on `PATH`.
+`powershell -NoProfile -File C:\tools\update-mytool.ps1` command runs as
+written, with no Git Bash installed. One limit: the command reaches `cmd /c` as
+a single argument through Go's generic argument quoting, which is not
+`cmd.exe`-aware, so a command that **embeds double quotes** can misparse — put
+anything that needs quoting into a `.ps1`/`.cmd`/`.sh` script and point
+`update_cmd` at the script instead. That is also the migration path if you
+already have Git Bash and your `update_cmd` relies on `sh` syntax (`$(…)`,
+`$VAR`, single quotes): move it into a script and call it quote-free
+(`sh /c/tools/update-mytool.sh`, which needs `sh` on `PATH` — the Git for
+Windows installer only puts it there with the "Unix tools from the Command
+Prompt" option).
 
 ## Updating keepkit itself
 

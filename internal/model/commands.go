@@ -498,6 +498,17 @@ func detectUpdateCmd(t loader.Tool, self bool) tea.Cmd {
 // password prompt — fails fast instead of hanging invisibly. On the 10-minute
 // deadline the whole process group is killed (the child is a session leader,
 // so a plain kill would orphan `sh -c` grandchildren).
+//
+// That last sentence is unix-only, and the difference is load-bearing: on
+// Windows proc.KillGroup degrades to Process.Kill on the direct child, so a
+// deadline kill ends `cmd /c` while the real updater (winget, powershell)
+// survives holding the inherited pipe write handle. Without EOF the drain
+// below never returns, cmd.Wait() is never reached and no done item is ever
+// sent — m.updatingFor stays set for the rest of the session. WaitDelay does
+// not rescue this: StdoutPipe creates no copier goroutine, so os/exec's
+// force-close of parentIOPipes only ever runs from inside Wait(). The real fix
+// is a Windows process tree kill (Job Object) in internal/proc, deferred with
+// the cmd /c quoting caveat until a real Windows report justifies it.
 func startUpdateCmd(plan updater.Plan, tool string) tea.Cmd {
 	return safeCmd("startUpdateCmd", func() tea.Msg {
 		if len(plan.Argv) == 0 {

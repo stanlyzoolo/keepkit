@@ -335,7 +335,12 @@ goroutine reads the merged stdout+stderr to EOF (`streamLines`, splitting on `\n
 is mandatory, `Wait` before the pipe is drained is forbidden by `os/exec`.
 `waitForChunkCmd` does one receive from the channel and re-creates itself. The log
 lives in `[3] Update` (a ~500-line buffer); the 10-minute deadline ends with
-`proc.KillGroup` on the process group.
+`proc.KillGroup` on the process group — on **unix**. On Windows `KillGroup` can only
+kill the direct child, so a deadline kill ends the `cmd /c` wrapper while the real
+updater keeps the pipe open and the drain above never sees EOF: the update wedges
+for the session. Accepted with the `cmd /c` quoting caveat and written up in
+[`docs/design/updating.md`](docs/design/updating.md); the fix is a process-tree kill
+in `internal/proc`.
 
 ## Self-update and restart (`U` / `X`)
 

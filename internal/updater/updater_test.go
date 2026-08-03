@@ -757,27 +757,58 @@ func TestCustomPlan(t *testing.T) {
 func TestDetectUpdateCmdOverride(t *testing.T) {
 	// A tool with UpdateCmd set returns a custom plan even when the binary is
 	// not on PATH — proving detection (LookPath) is skipped entirely.
-	tool := loader.Tool{Name: "definitely-not-a-real-binary-xyz", UpdateCmd: "brew upgrade rg && echo done"}
-	plan, err := Detect(tool)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	//
+	// Driven through the testGOOS seam rather than off runtime.GOOS: the suite
+	// only ever runs on linux (CI cross-compiles Windows but never tests it), so
+	// a runtime.GOOS-derived expectation is a tautology — both sides collapse to
+	// `sh -c` and a Detect that passed a *literal* goos would stay green. That is
+	// the regression this package already shipped once. Expectations stay spelled
+	// out per row, never taken from customPlan.
+	const cmd = "brew upgrade rg && echo done"
+
+	tests := []struct {
+		name      string
+		goos      string
+		wantShell []string
+	}{
+		{"windows wires cmd /c", "windows", []string{"cmd", "/c"}},
+		{"linux wires sh -c", "linux", []string{"sh", "-c"}},
+		{"darwin wires sh -c", "darwin", []string{"sh", "-c"}},
 	}
-	if plan.Manager != "custom" {
-		t.Errorf("Manager = %q, want %q", plan.Manager, "custom")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setTestGOOS(t, tt.goos)
+
+			plan, err := Detect(loader.Tool{Name: "definitely-not-a-real-binary-xyz", UpdateCmd: cmd})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if plan.Manager != "custom" {
+				t.Errorf("Manager = %q, want %q", plan.Manager, "custom")
+			}
+			wantArgv := append(append([]string{}, tt.wantShell...), cmd)
+			if !equalStrings(plan.Argv, wantArgv) {
+				t.Errorf("Argv = %v, want %v", plan.Argv, wantArgv)
+			}
+			if plan.Display != cmd {
+				t.Errorf("Display = %q, want %q", plan.Display, cmd)
+			}
+		})
 	}
-	// Spelled out here rather than taken from customPlan: the expectation has to
-	// stay independent of the code under test, and Detect passes runtime.GOOS,
-	// so the shell is the host's.
-	wantShell := []string{"sh", "-c"}
-	if runtime.GOOS == "windows" {
-		wantShell = []string{"cmd", "/c"}
-	}
-	wantArgv := append(wantShell, "brew upgrade rg && echo done")
-	if !equalStrings(plan.Argv, wantArgv) {
-		t.Errorf("Argv = %v, want %v", plan.Argv, wantArgv)
-	}
-	if plan.Display != "brew upgrade rg && echo done" {
-		t.Errorf("Display = %q, want %q", plan.Display, "brew upgrade rg && echo done")
+}
+
+func TestDetectBlankUpdateCmdFallsThrough(t *testing.T) {
+	// The override gate is TrimSpace'd, so a whitespace-only update_cmd is *not*
+	// an override: it falls through to the detection chain. Weakening the guard
+	// to `!= ""` would build `sh -c "   "` / `cmd /c "   "`, which exits 0
+	// immediately — keepkit would report a successful update that ran nothing,
+	// and detection would be bypassed for that tool forever.
+	setTestBrewPrefix(t, t.TempDir()) // no keg by name either, so the miss is conclusive
+
+	_, err := Detect(loader.Tool{Name: "definitely-not-a-real-binary-xyz", UpdateCmd: "   "})
+	if !errors.Is(err, ErrUnknownManager) {
+		t.Fatalf("err = %v, want ErrUnknownManager (the chain must run, not a custom plan)", err)
 	}
 }
 
@@ -800,6 +831,15 @@ func setTestBrewPrefix(t *testing.T, dir string) {
 	orig := testBrewPrefix
 	testBrewPrefix = dir
 	t.Cleanup(func() { testBrewPrefix = orig })
+}
+
+// setTestGOOS points hostGOOS at goos for the duration of the test, restoring
+// the previous override afterwards (the setTestBrewPrefix shape).
+func setTestGOOS(t *testing.T, goos string) {
+	t.Helper()
+	orig := testGOOS
+	testGOOS = goos
+	t.Cleanup(func() { testGOOS = orig })
 }
 
 func TestBrewNamePlanAt(t *testing.T) {

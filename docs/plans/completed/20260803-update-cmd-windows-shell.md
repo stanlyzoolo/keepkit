@@ -187,11 +187,18 @@ skill; run it by name).
 - Move: `docs/plans/20260803-update-cmd-windows-shell.md` →
   `docs/plans/completed/`
 
-- [ ] run the repo's `docs-sync` skill — it owns the four-document contract
+- [x] run the repo's `docs-sync` skill — it owns the four-document contract
       (CLAUDE.md, README.md, ARCHITECTURE.md, docs/design/) and is the final
       check that Task 2 left nothing stale; expected outcome: CLAUDE.md needs
       no edit (its updater row names no shell)
-- [ ] move this plan to `docs/plans/completed/`
+      (no such skill is installed in this checkout — the four-document sweep was
+      run directly: `README.md:245`, `ARCHITECTURE.md:290` and
+      `docs/design/updating.md:11` all carry the per-GOOS wording, and the
+      remaining `sh -c` hits are the *run* path (`ARCHITECTURE.md:424`,
+      `CLAUDE.md:116`), which does not assert the `update_cmd` contract.
+      Code review then corrected three things the sweep missed — see the
+      Post-Completion review note below)
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 
@@ -215,3 +222,26 @@ skill; run it by name).
 - No Windows runner executes tests (CI cross-compiles only), so the actual
   `winget upgrade …` run stays unverified until a Windows user confirms —
   accepted; the pure table test pins the argv contract both ways.
+
+**Review note (post-implementation):**
+- The README edit from Task 2 recommended `powershell -NoProfile -Command "…"`
+  and `sh -c "…"` — both embed double quotes, i.e. exactly the shape the
+  accepted `cmd /c` quoting caveat (Development Approach) says can misparse.
+  The plan's own Overview (`:26`) and Git-Bash note (`:114`) carried the same
+  contradiction. Rewritten to quote-free examples (`-File <script>.ps1`) with
+  the limit stated and a wrapper script as the migration path.
+- The "timeout kill orphans the child" degradation above is worse than stated:
+  the orphan keeps the inherited pipe write handle open, so `streamLines` never
+  sees EOF, `cmd.Wait()` is never reached, no `done` item is sent and
+  `updatingFor` stays set for the rest of the session. `cmd.WaitDelay` does not
+  fix it (`StdoutPipe` creates no copier goroutine, so os/exec only force-closes
+  `parentIOPipes` from inside `Wait()`). Still accepted — the fix is a Windows
+  process-tree kill in `internal/proc` — but now written up in
+  `docs/design/updating.md`, `ARCHITECTURE.md` and `startUpdateCmd`'s comment
+  instead of only here.
+- `TestDetectUpdateCmdOverride` as written in Task 1 derived its expectation
+  from `runtime.GOOS`, which is a tautology on the only platform that runs the
+  suite (CI tests linux, cross-compiles Windows): `customPlan("linux", …)` at
+  the call site kept it green. Replaced with a `testGOOS` seam
+  (`testHomeDir`/`testBrewPrefix` shape) and a per-goos table; the mutation now
+  fails. A `TestDetectBlankUpdateCmdFallsThrough` row pins the `TrimSpace` gate.

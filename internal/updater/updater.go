@@ -41,6 +41,23 @@ type Plan struct {
 // loader.testConfigDir / version.testCacheDir).
 var testHomeDir string
 
+// testGOOS overrides the host GOOS in tests (the testHomeDir/testBrewPrefix
+// shape). It exists for one reason: no Windows runner ever executes this suite
+// — CI cross-compiles the Windows build but runs `go test` on linux only — so
+// an expectation derived from runtime.GOOS collapses to the host's branch and
+// asserts nothing. customPlan's own table covers the pure core; this seam is
+// what pins the *wiring*, i.e. that Detect passes the host GOOS rather than a
+// literal. Restoring `sh -c` on Windows is the exact regression this package
+// shipped once.
+var testGOOS string
+
+func hostGOOS() string {
+	if testGOOS != "" {
+		return testGOOS
+	}
+	return runtime.GOOS
+}
+
 func homeDir() string {
 	if testHomeDir != "" {
 		return testHomeDir
@@ -239,7 +256,7 @@ func brewNamePlanAt(name, prefix string) (Plan, bool) {
 // "not installed" hint.
 func Detect(t loader.Tool) (Plan, error) {
 	if strings.TrimSpace(t.UpdateCmd) != "" {
-		return customPlan(runtime.GOOS, t.UpdateCmd), nil
+		return customPlan(hostGOOS(), t.UpdateCmd), nil
 	}
 
 	found, err := exec.LookPath(t.Name)
