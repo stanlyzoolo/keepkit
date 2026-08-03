@@ -173,12 +173,12 @@ Two accepted Windows degradations, stated rather than hidden:
 **Files:** none — verification only (the matrix is the repo's `preflight`
 skill; run it by name).
 
-- [ ] `update_cmd` produces `cmd /c` argv on windows and `sh -c` elsewhere,
+- [x] `update_cmd` produces `cmd /c` argv on windows and `sh -c` elsewhere,
       Display unchanged — pinned by `TestCustomPlan` +
       `TestDetectUpdateCmdOverride`
-- [ ] full suite: `go build ./... && go vet ./... && go test -race ./...`
-- [ ] lint: `golangci-lint run`
-- [ ] cross-compile check (the CI step that actually compiles the Windows
+- [x] full suite: `go build ./... && go vet ./... && go test -race ./...`
+- [x] lint: `golangci-lint run`
+- [x] cross-compile check (the CI step that actually compiles the Windows
       branch): `GOOS=windows go build ./... && GOOS=windows go vet ./...`
 
 ### Task 4: [Final] Update documentation
