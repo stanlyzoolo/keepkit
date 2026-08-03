@@ -111,6 +111,9 @@ func startLaunchCmd(plan launcher.Plan, toolName, command string) tea.Cmd {
 // which is not cmd.exe-aware — a command embedding double quotes can misparse
 // there; accepted on the degraded Windows path (the fix, SysProcAttr.CmdLine,
 // needs a per-GOOS file and a real Windows report to justify it).
+// updater.customPlan is the deliberate duplicate of this decision on the update
+// path (updater sits below model in the import graph and may not import it);
+// the two must not drift.
 func shellCommand(goos, cmd string) (string, []string) {
 	if goos == "windows" {
 		return "cmd", []string{"/c", cmd}

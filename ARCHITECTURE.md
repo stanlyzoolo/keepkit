@@ -287,8 +287,11 @@ go, so a brew-installed Go binary is not misrouted to `go install`, and pnpm/bun
 before npm, because both layouts contain `node_modules` segments the npm step would
 otherwise claim (a bun global really did resolve to `npm install -g <pkg>`, which
 installs a duplicate under npm's prefix). `update_cmd` from `meta.yaml` always wins
-and runs via `sh -c`. Detection spawns subprocesses, so it runs as a `tea.Cmd`,
-never inside `Update()`.
+and runs via the platform shell — `sh -c`, or `cmd /c` on Windows, so a
+`winget`/PowerShell command needs no Git Bash (`customPlan(goos, cmd)`, the pure
+goos-parameterized core; `model.shellCommand` is its deliberate sibling on the run
+path). Detection spawns subprocesses, so it runs as a `tea.Cmd`, never inside
+`Update()`.
 
 Five steps are path-convention based (cargo, pipx, uv, pnpm, bun) and take their
 roots from `managerDirsFrom(getenv, home, goos)` (pure core, `resolveManagerDirs()`

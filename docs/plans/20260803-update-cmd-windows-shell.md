@@ -149,22 +149,24 @@ Two accepted Windows degradations, stated rather than hidden:
 - Modify: `README.md`
 - Modify: `ARCHITECTURE.md`
 
-- [ ] extend `shellCommand`'s comment (`commands.go:107-113`) with one line
+- [x] extend `shellCommand`'s comment (`commands.go:107-113`) with one line
       naming `updater.customPlan` as the deliberate duplicate that must not
       drift (mirror of the reference `customPlan` carries back)
-- [ ] update `docs/design/updating.md:11`: "always wins and runs via `sh -c`
+- [x] update `docs/design/updating.md:11`: "always wins and runs via `sh -c`
       (skips detection entirely)" → per-GOOS wording (`sh -c`; `cmd /c` on
       Windows, so a winget/PowerShell `update_cmd` needs no Git Bash)
-- [ ] update `README.md:244-245`: per-GOOS wording plus the two user-facing
+- [x] update `README.md:244-245`: per-GOOS wording plus the two user-facing
       notes — a winget/PowerShell command now works with no Git Bash, and an
       sh-specific command stays reachable by writing `sh -c "…"` explicitly
-- [ ] update `ARCHITECTURE.md:289-290` to the same per-GOOS wording
+- [x] update `ARCHITECTURE.md:289-290` to the same per-GOOS wording
       (`:421`, the run path, is already correct — leave it)
-- [ ] verify no other surface asserts the `sh -c` contract for `update_cmd`:
+- [x] verify no other surface asserts the `sh -c` contract for `update_cmd`:
       `grep -rn 'sh -c' --include='*.md' . | grep -v docs/plans/` plus
       `grep -rn '"sh"' internal/` — the four-document contract is
       CLAUDE.md + README.md + ARCHITECTURE.md + docs/design/ (`docs-sync`)
-- [ ] run tests — `go test -race ./...` must pass before task 3
+      (remaining hits are the run path, `KillGroup`'s grandchildren note and
+      launcher/proc code — none assert the `update_cmd` contract)
+- [x] run tests — `go test -race ./...` must pass before task 3
 
 ### Task 3: Verify acceptance criteria
 

@@ -242,13 +242,20 @@ first line and normally stops there, since nothing re-detects after it.
 
 If the manager cannot be detected (manual install), keepkit suggests setting the
 `update_cmd` field or updating manually. `update_cmd` in `meta.yaml` always takes
-precedence over auto-detection and runs via `sh -c` (pipes and `&&` are fine):
+precedence over auto-detection and runs via the platform shell — `sh -c`, or
+`cmd /c` on Windows (pipes and `&&` are fine either way):
 
 ```yaml
 - name: mytool
   github: github.com/owner/mytool
   update_cmd: mytool self-update
 ```
+
+On Windows this means a `winget upgrade --id BurntSushi.ripgrep` or a
+`powershell -NoProfile -Command "…"` command runs as written, with no Git Bash
+installed. If you already have Git Bash and your `update_cmd` relies on `sh`
+syntax (`$(…)`, `$VAR`, single quotes), write it out explicitly —
+`sh -c "…"` — since `cmd /c` still finds `sh` on `PATH`.
 
 ## Updating keepkit itself
 
