@@ -1,4 +1,4 @@
-keepkit
-keepkit.exe
+/keepkit
+/keepkit.exe
 .claude
 dist/
