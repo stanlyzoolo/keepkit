@@ -27,7 +27,8 @@ import (
 var ErrUnknownManager = errors.New("no known package manager for tool")
 
 // Plan describes how to update a tool. Argv is executed directly (not through a
-// shell) except for the "custom" manager, where it is ["sh", "-c", <cmd>].
+// shell) except for the "custom" manager, where it runs through the platform
+// shell — ["sh", "-c", <cmd>], or ["cmd", "/c", <cmd>] on Windows (customPlan).
 type Plan struct {
 	// Manager names the detected package manager, in chain order:
 	// "brew" | "go" | "cargo" | "pipx" | "uv" | "pnpm" | "bun" | "npm" | "custom".
@@ -225,7 +226,9 @@ func brewNamePlanAt(name, prefix string) (Plan, bool) {
 //
 // Resolution order:
 //  1. An explicit UpdateCmd always wins: it becomes a "custom" plan run through
-//     sh -c (the user may write pipes or &&) and detection is skipped entirely.
+//     the platform shell (the user may write pipes or &&) — sh -c everywhere
+//     except Windows, where cmd /c spares the Git Bash requirement — and
+//     detection is skipped entirely.
 //  2. Otherwise the binary is located via LookPath + EvalSymlinks, Go buildinfo
 //     is collected via `go version -m`, and the pair is fed to detectFromPath.
 //     A cargo hit is refined with the real crate name from `cargo install
@@ -236,11 +239,7 @@ func brewNamePlanAt(name, prefix string) (Plan, bool) {
 // "not installed" hint.
 func Detect(t loader.Tool) (Plan, error) {
 	if strings.TrimSpace(t.UpdateCmd) != "" {
-		return Plan{
-			Manager: "custom",
-			Argv:    []string{"sh", "-c", t.UpdateCmd},
-			Display: t.UpdateCmd,
-		}, nil
+		return customPlan(runtime.GOOS, t.UpdateCmd), nil
 	}
 
 	found, err := exec.LookPath(t.Name)
@@ -514,6 +513,27 @@ func detectFromPath(realPath, buildinfo, shimTarget string, dirs managerDirs) (P
 // autoPlan builds a Plan whose Display is the joined Argv.
 func autoPlan(manager string, argv []string) Plan {
 	return Plan{Manager: manager, Argv: argv, Display: strings.Join(argv, " ")}
+}
+
+// customPlan builds the Plan for an explicit update_cmd override: the command
+// runs through the platform shell (the user may write pipes or &&) — sh -c
+// everywhere except Windows, where cmd /c spares the Git Bash requirement.
+// Goos-parameterized so both branches are table-testable — the updater-side
+// sibling of model's shellCommand, which may not be imported from here (model
+// sits above updater in the import graph); the two must not drift. The cmd /c
+// branch shares shellCommand's accepted quoting caveat: Go's generic argv
+// quoting is not cmd.exe-aware, so a command embedding double quotes can
+// misparse there.
+func customPlan(goos, cmd string) Plan {
+	shell := []string{"sh", "-c"}
+	if goos == "windows" {
+		shell = []string{"cmd", "/c"}
+	}
+	return Plan{
+		Manager: "custom",
+		Argv:    append(shell, cmd),
+		Display: cmd,
+	}
 }
 
 // binaryName returns the file name of a path without directory.

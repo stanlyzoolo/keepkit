@@ -716,6 +716,44 @@ func TestDetectSymlinkedManagerRoot(t *testing.T) {
 	}
 }
 
+func TestCustomPlan(t *testing.T) {
+	// An update_cmd runs through the platform shell: cmd /c on Windows (so a
+	// winget or PowerShell command needs no Git Bash), sh -c everywhere else —
+	// and "everywhere else" is the *default* branch, not two named platforms,
+	// which the plan9 row is what pins.
+	const cmd = "winget upgrade --id BurntSushi.ripgrep && echo done"
+
+	tests := []struct {
+		name      string
+		goos      string
+		wantShell []string
+	}{
+		{"windows", "windows", []string{"cmd", "/c"}},
+		{"linux", "linux", []string{"sh", "-c"}},
+		{"darwin", "darwin", []string{"sh", "-c"}},
+		{"unrecognized goos falls back to sh", "plan9", []string{"sh", "-c"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := customPlan(tt.goos, cmd)
+
+			if plan.Manager != "custom" {
+				t.Errorf("Manager = %q, want %q", plan.Manager, "custom")
+			}
+			wantArgv := append(append([]string{}, tt.wantShell...), cmd)
+			if !equalStrings(plan.Argv, wantArgv) {
+				t.Errorf("Argv = %v, want %v", plan.Argv, wantArgv)
+			}
+			// Display stays the raw command — the confirm dialog shows what the
+			// user wrote, never the shell wrapper.
+			if plan.Display != cmd {
+				t.Errorf("Display = %q, want %q", plan.Display, cmd)
+			}
+		})
+	}
+}
+
 func TestDetectUpdateCmdOverride(t *testing.T) {
 	// A tool with UpdateCmd set returns a custom plan even when the binary is
 	// not on PATH — proving detection (LookPath) is skipped entirely.
@@ -727,7 +765,14 @@ func TestDetectUpdateCmdOverride(t *testing.T) {
 	if plan.Manager != "custom" {
 		t.Errorf("Manager = %q, want %q", plan.Manager, "custom")
 	}
-	wantArgv := []string{"sh", "-c", "brew upgrade rg && echo done"}
+	// Spelled out here rather than taken from customPlan: the expectation has to
+	// stay independent of the code under test, and Detect passes runtime.GOOS,
+	// so the shell is the host's.
+	wantShell := []string{"sh", "-c"}
+	if runtime.GOOS == "windows" {
+		wantShell = []string{"cmd", "/c"}
+	}
+	wantArgv := append(wantShell, "brew upgrade rg && echo done")
 	if !equalStrings(plan.Argv, wantArgv) {
 		t.Errorf("Argv = %v, want %v", plan.Argv, wantArgv)
 	}

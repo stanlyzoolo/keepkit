@@ -123,23 +123,23 @@ Two accepted Windows degradations, stated rather than hidden:
 - Modify: `internal/updater/updater.go`
 - Modify: `internal/updater/updater_test.go`
 
-- [ ] add the pure `customPlan(goos, cmd string) Plan` (comment as drafted in
+- [x] add the pure `customPlan(goos, cmd string) Plan` (comment as drafted in
       Solution Overview) and replace the inline `Plan{…"sh", "-c"…}` literal in
       `Detect` (`updater.go:238-244`) with `customPlan(runtime.GOOS,
       t.UpdateCmd)`
-- [ ] update the two stale doc comments: the `Plan` doc (`updater.go:30`) and
+- [x] update the two stale doc comments: the `Plan` doc (`updater.go:30`) and
       `Detect`'s resolution-order note (`updater.go:227-228`) to the per-GOOS
       wording
-- [ ] write `TestCustomPlan` — table over goos: `windows` → `{"cmd", "/c",
+- [x] write `TestCustomPlan` — table over goos: `windows` → `{"cmd", "/c",
       cmd}`, `linux`/`darwin` → `{"sh", "-c", cmd}`, plus an unrecognized goos
       row (`"plan9"`) pinning that `sh -c` is the *default* branch, not two
       named platforms; every row also pins `Manager == "custom"` and
       `Display == cmd` (raw, unquoted)
-- [ ] update `TestDetectUpdateCmdOverride` (`updater_test.go:719`): derive the
+- [x] update `TestDetectUpdateCmdOverride` (`updater_test.go:719`): derive the
       expected shell prefix from `runtime.GOOS` (a two-line literal switch in
       the test, not a call to `customPlan` — the expectation must stay
       independent) so the test is green on any host
-- [ ] run tests — `go test -race ./internal/updater/` must pass before task 2
+- [x] run tests — `go test -race ./internal/updater/` must pass before task 2
 
 ### Task 2: Cross-reference the sibling and refresh all four doc surfaces
 
