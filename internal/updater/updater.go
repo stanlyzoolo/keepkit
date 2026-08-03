@@ -30,7 +30,7 @@ var ErrUnknownManager = errors.New("no known package manager for tool")
 // shell) except for the "custom" manager, where it is ["sh", "-c", <cmd>].
 type Plan struct {
 	// Manager names the detected package manager, in chain order:
-	// "brew" | "go" | "cargo" | "pipx" | "uv" | "pnpm" | "bun" | "npm" | "custom".
+	// "brew" | "stew" | "go" | "cargo" | "pipx" | "uv" | "pnpm" | "bun" | "npm" | "custom".
 	Manager string
 	Argv    []string // e.g. ["brew", "upgrade", "ripgrep"]
 	Display string   // human-facing command shown in the confirm dialog
@@ -228,6 +228,8 @@ func brewNamePlanAt(name, prefix string) (Plan, bool) {
 //     sh -c (the user may write pipes or &&) and detection is skipped entirely.
 //  2. Otherwise the binary is located via LookPath + EvalSymlinks, Go buildinfo
 //     is collected via `go version -m`, and the pair is fed to detectFromPath.
+//     stew's ownership is decided the same way — its config and lock file are
+//     read once, and the verdict (a bool) rides into the core beside buildinfo.
 //     A cargo hit is refined with the real crate name from `cargo install
 //     --list`. Helper failures degrade softly — a missing `go`/`cargo` just
 //     leaves the corresponding signal empty, never aborting detection.
@@ -271,7 +273,7 @@ func Detect(t loader.Tool) (Plan, error) {
 		shimTarget = readPnpmShim(realPath)
 	}
 
-	plan, err := detectFromPath(realPath, buildinfo, shimTarget, dirs)
+	plan, err := detectFromPath(realPath, buildinfo, shimTarget, stewManaged(realPath), dirs)
 	if err != nil {
 		// The chain can exhaust with the binary found: a Homebrew cask app keeps
 		// its launcher on PATH while the executable lives inside the .app bundle
@@ -429,47 +431,60 @@ var goPathRe = regexp.MustCompile(`(?m)^\s*path\s+(\S+)\s*$`)
 
 // detectFromPath is the pure detection core: given a binary's real (symlink
 // resolved) path, the output of `go version -m <path>` (may be empty), the pnpm
-// cmd-shim target Detect read off that binary (empty when there is none) and
-// the resolved manager directories, it returns the update Plan. It performs no
-// I/O, reads no environment and spawns no subprocesses — every root arrives in
-// dirs — so table tests need no real package managers installed.
+// cmd-shim target Detect read off that binary (empty when there is none),
+// whether stew's lock file names it (Detect's read; the verdict arrives as a
+// bool) and the resolved manager directories, it returns the update Plan. It
+// performs no I/O, reads no environment and spawns no subprocesses — every root
+// and signal arrives in its arguments — so table tests need no real package
+// managers installed.
 //
-// Order matters twice over: brew is checked before go because a brew-installed
-// Go binary carries buildinfo and would otherwise be misrouted to `go install`,
-// and pnpm/bun are checked before npm because their layouts contain
-// node_modules segments the npm step would otherwise claim.
-func detectFromPath(realPath, buildinfo, shimTarget string, dirs managerDirs) (Plan, error) {
+// Order matters twice over: brew and stew are checked before go because a
+// brew/stew-installed Go binary carries buildinfo and would otherwise be
+// misrouted to `go install`, and pnpm/bun are checked before npm because their
+// layouts contain node_modules segments the npm step would otherwise claim.
+func detectFromPath(realPath, buildinfo, shimTarget string, stewManaged bool, dirs managerDirs) (Plan, error) {
 	// 1. Homebrew Cellar.
 	if m := cellarRe.FindStringSubmatch(realPath); m != nil {
 		formula := m[1]
 		return autoPlan("brew", []string{"brew", "upgrade", formula}), nil
 	}
 
-	// 2. Go buildinfo module path.
+	// 2. stew (<stewBin>/<binary>), before go for the buildinfo reason: a
+	// stew-built Go binary carries module metadata the go step would claim and
+	// reroute to `go install`, which installs a duplicate under ~/go/bin while
+	// the stew copy keeps shadowing it on PATH. The verdict is Detect's — it
+	// reads stew.config.json and Stewfile.lock.json — so the core only sees the
+	// bool; the binary name is the upgrade argument (stew upgrades by the
+	// installed binary's name, `stew upgrade rg`).
+	if stewManaged {
+		return autoPlan("stew", []string{"stew", "upgrade", binaryName(realPath)}), nil
+	}
+
+	// 3. Go buildinfo module path.
 	if m := goPathRe.FindStringSubmatch(buildinfo); m != nil {
 		module := m[1]
 		return autoPlan("go", []string{"go", "install", module + "@latest"}), nil
 	}
 
-	// 3. Cargo (~/.cargo/bin). Crate name defaults to the binary name; the OS
+	// 4. Cargo (~/.cargo/bin). Crate name defaults to the binary name; the OS
 	// wrapper refines it via `cargo install --list`.
 	if underDir(realPath, dirs.cargoBin) {
 		crate := binaryName(realPath)
 		return autoPlan("cargo", []string{"cargo", "install", crate}), nil
 	}
 
-	// 4. pipx (~/.local/pipx/venvs/<pkg>/...).
+	// 5. pipx (~/.local/pipx/venvs/<pkg>/...).
 	if pkg := segmentUnder(realPath, dirs.pipxVenvs); pkg != "" {
 		return autoPlan("pipx", []string{"pipx", "upgrade", pkg}), nil
 	}
 
-	// 5. uv (<uvTools>/<pkg>/bin/<binary>, reached through a symlink in uv's own
+	// 6. uv (<uvTools>/<pkg>/bin/<binary>, reached through a symlink in uv's own
 	// bin dir) — the same technique as pipx, one ecosystem tool over.
 	if pkg := segmentUnder(realPath, dirs.uvTools); pkg != "" {
 		return autoPlan("uv", []string{"uv", "tool", "upgrade", pkg}), nil
 	}
 
-	// 6. pnpm globals, before npm because the store path carries node_modules
+	// 7. pnpm globals, before npm because the store path carries node_modules
 	// segments the npm step would otherwise claim. The package name comes from
 	// the shim target Detect read for us (pnpm >= 9) or, for the legacy symlink
 	// layouts, from the resolved path itself. Neither yielding a name means this
@@ -484,7 +499,7 @@ func detectFromPath(realPath, buildinfo, shimTarget string, dirs managerDirs) (P
 		}
 	}
 
-	// 7. bun globals ($BUN_INSTALL/bin/<binary> symlinked into
+	// 8. bun globals ($BUN_INSTALL/bin/<binary> symlinked into
 	// install/global/node_modules/<pkg>/...). Before npm for the same reason as
 	// pnpm, and not merely for tidiness: the npm step used to claim these and
 	// offer `npm install -g <pkg>`, installing a duplicate under npm's prefix.
@@ -496,7 +511,7 @@ func detectFromPath(realPath, buildinfo, shimTarget string, dirs managerDirs) (P
 		}
 	}
 
-	// 8. npm global (.../node_modules/<pkg>/...). A path through pnpm's virtual
+	// 9. npm global (.../node_modules/<pkg>/...). A path through pnpm's virtual
 	// store that got this far is a pnpm layout the pnpm step failed to
 	// attribute — claiming it for npm would offer `npm install -g <pkg>`, which
 	// silently installs a second working copy under npm's prefix while the pnpm

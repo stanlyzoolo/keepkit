@@ -282,13 +282,22 @@ Key invariants:
 ## Updating a tool (`enter` in `[2]`)
 
 `updater.Detect` identifies the manager from the installed binary — the chain is
-brew → go → cargo → pipx → uv → pnpm → bun → npm. Order matters twice: brew before
-go, so a brew-installed Go binary is not misrouted to `go install`, and pnpm/bun
-before npm, because both layouts contain `node_modules` segments the npm step would
-otherwise claim (a bun global really did resolve to `npm install -g <pkg>`, which
-installs a duplicate under npm's prefix). `update_cmd` from `meta.yaml` always wins
-and runs via `sh -c`. Detection spawns subprocesses, so it runs as a `tea.Cmd`,
+brew → stew → go → cargo → pipx → uv → pnpm → bun → npm. Order matters twice: brew
+and stew before go, so a brew/stew-installed Go binary is not misrouted to `go install`,
+and pnpm/bun before npm, because both layouts contain `node_modules` segments the npm
+step would otherwise claim (a bun global really did resolve to `npm install -g <pkg>`,
+which installs a duplicate under npm's prefix). `update_cmd` from `meta.yaml` always
+wins and runs via `sh -c`. Detection spawns subprocesses, so it runs as a `tea.Cmd`,
 never inside `Update()`.
+
+stew is the one manager path cannot prove alone: its binaries land in a shared bin
+dir (`~/.local/bin`) that anyone installs into. `Detect` therefore reads stew's own
+two files — `stew.config.json` (resolving `stewPath`/`stewBinPath` with stew's
+defaults) and `Stewfile.lock.json` — and hands the pure core a `stewManaged bool`.
+Both halves are load-bearing: the lock alone would claim a same-named binary
+shadowing stew's on `PATH`, and the path alone would offer `stew upgrade <name>` for
+a hand-installed file stew refuses. Only `source: "github"` entries are upgradable
+(URL installs are not), and the command is `stew upgrade <binary name>`.
 
 Five steps are path-convention based (cargo, pipx, uv, pnpm, bun) and take their
 roots from `managerDirsFrom(getenv, home, goos)` (pure core, `resolveManagerDirs()`

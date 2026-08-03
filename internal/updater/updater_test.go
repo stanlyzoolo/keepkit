@@ -27,6 +27,7 @@ func TestDetectFromPath(t *testing.T) {
 		realPath    string
 		buildinfo   string
 		shimTarget  string
+		stewManaged bool
 		dirs        managerDirs
 		wantManager string
 		wantArgv    []string
@@ -37,6 +38,48 @@ func TestDetectFromPath(t *testing.T) {
 			realPath:    "/opt/homebrew/Cellar/ripgrep/14.1.0/bin/rg",
 			wantManager: "brew",
 			wantArgv:    []string{"brew", "upgrade", "ripgrep"},
+		},
+		{
+			// stew's verdict is computed in Detect from its config + lock file;
+			// the core just sees the bool. The upgrade argument is the installed
+			// binary's name, which is what `stew upgrade` takes.
+			name:        "stew-managed binary",
+			realPath:    filepath.Join(home, ".local", "bin", "fd"),
+			stewManaged: true,
+			wantManager: "stew",
+			wantArgv:    []string{"stew", "upgrade", "fd"},
+		},
+		{
+			// Ordering: a stew-built Go binary carries buildinfo, and with stew
+			// checked after go it resolved to `go install <module>@latest` — the
+			// wrong manager, installing a duplicate under ~/go/bin while the stew
+			// copy keeps shadowing it on PATH.
+			name:        "order: stew with buildinfo yields stew not go",
+			realPath:    filepath.Join(home, ".local", "bin", "fd"),
+			buildinfo:   goBuildinfo,
+			stewManaged: true,
+			wantManager: "stew",
+			wantArgv:    []string{"stew", "upgrade", "fd"},
+		},
+		{
+			// The verdict is the signal: without it, the path goes to whatever
+			// the rest of the chain can prove. A Go binary here is still go's —
+			// stew's silence means stew has no claim, not that the chain must
+			// return nothing.
+			name:        "stew verdict absent with buildinfo yields go",
+			realPath:    filepath.Join(home, ".local", "bin", "fd"),
+			buildinfo:   goBuildinfo,
+			wantManager: "go",
+			wantArgv:    []string{"go", "install", "github.com/junegunn/fzf@latest"},
+		},
+		{
+			// The honest-degradation half: a plain binary the user dropped into
+			// ~/.local/bin by hand. stew's default bin dir is shared, and without
+			// the lock-file gate this would have claimed it and offered `stew
+			// upgrade fd` for something stew does not manage.
+			name:     "stew verdict absent on a hand-installed binary",
+			realPath: filepath.Join(home, ".local", "bin", "fd"),
+			wantErr:  ErrUnknownManager,
 		},
 		{
 			name:        "go buildinfo module",
@@ -211,7 +254,7 @@ func TestDetectFromPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			plan, err := detectFromPath(tt.realPath, tt.buildinfo, tt.shimTarget, tt.dirs)
+			plan, err := detectFromPath(tt.realPath, tt.buildinfo, tt.shimTarget, tt.stewManaged, tt.dirs)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tt.wantErr)
