@@ -1,6 +1,4 @@
-keepkit
-keepkit.exe
-keeptui
-keeptui.exe
+/keepkit
+/keepkit.exe
 .claude
 dist/
