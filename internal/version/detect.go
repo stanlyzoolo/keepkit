@@ -27,7 +27,12 @@ var versionRe = regexp.MustCompile(`v?(\d+\.\d+[\d.]*)`)
 func InstalledVersion(t loader.Tool) (string, bool) {
 	var candidates [][]string
 
-	if t.VersionCmd != "" {
+	// TrimSpace, matching updater.Detect's update_cmd gate: a whitespace-only
+	// override is no override. Without it strings.Fields yields an empty slice
+	// and the args[0] below panics. VersionCmd has no meta.yaml key today
+	// (ToolsFromMeta never sets it), so this is a latent guard, not a live bug —
+	// but it is the guard that keeps wiring one up from being a crash.
+	if strings.TrimSpace(t.VersionCmd) != "" {
 		parts := strings.Fields(t.VersionCmd)
 		candidates = [][]string{parts}
 	} else {

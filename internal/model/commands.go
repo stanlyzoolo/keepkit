@@ -111,6 +111,9 @@ func startLaunchCmd(plan launcher.Plan, toolName, command string) tea.Cmd {
 // which is not cmd.exe-aware — a command embedding double quotes can misparse
 // there; accepted on the degraded Windows path (the fix, SysProcAttr.CmdLine,
 // needs a per-GOOS file and a real Windows report to justify it).
+// updater.customPlan is the deliberate duplicate of this decision on the update
+// path (updater sits below model in the import graph and may not import it);
+// the two must not drift.
 func shellCommand(goos, cmd string) (string, []string) {
 	if goos == "windows" {
 		return "cmd", []string{"/c", cmd}
@@ -495,6 +498,17 @@ func detectUpdateCmd(t loader.Tool, self bool) tea.Cmd {
 // password prompt — fails fast instead of hanging invisibly. On the 10-minute
 // deadline the whole process group is killed (the child is a session leader,
 // so a plain kill would orphan `sh -c` grandchildren).
+//
+// That last sentence is unix-only, and the difference is load-bearing: on
+// Windows proc.KillGroup degrades to Process.Kill on the direct child, so a
+// deadline kill ends `cmd /c` while the real updater (winget, powershell)
+// survives holding the inherited pipe write handle. Without EOF the drain
+// below never returns, cmd.Wait() is never reached and no done item is ever
+// sent — m.updatingFor stays set for the rest of the session. WaitDelay does
+// not rescue this: StdoutPipe creates no copier goroutine, so os/exec's
+// force-close of parentIOPipes only ever runs from inside Wait(). The real fix
+// is a Windows process tree kill (Job Object) in internal/proc, deferred with
+// the cmd /c quoting caveat until a real Windows report justifies it.
 func startUpdateCmd(plan updater.Plan, tool string) tea.Cmd {
 	return safeCmd("startUpdateCmd", func() tea.Msg {
 		if len(plan.Argv) == 0 {

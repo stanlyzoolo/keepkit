@@ -287,8 +287,11 @@ go, so a brew-installed Go binary is not misrouted to `go install`, and pnpm/bun
 before npm, because both layouts contain `node_modules` segments the npm step would
 otherwise claim (a bun global really did resolve to `npm install -g <pkg>`, which
 installs a duplicate under npm's prefix). `update_cmd` from `meta.yaml` always wins
-and runs via `sh -c`. Detection spawns subprocesses, so it runs as a `tea.Cmd`,
-never inside `Update()`.
+and runs via the platform shell — `sh -c`, or `cmd /c` on Windows, so a
+`winget`/PowerShell command needs no Git Bash (`customPlan(goos, cmd)`, the pure
+goos-parameterized core; `model.shellCommand` is its deliberate sibling on the run
+path). Detection spawns subprocesses, so it runs as a `tea.Cmd`, never inside
+`Update()`.
 
 Five steps are path-convention based (cargo, pipx, uv, pnpm, bun) and take their
 roots from `managerDirsFrom(getenv, home, goos)` (pure core, `resolveManagerDirs()`
@@ -332,7 +335,12 @@ goroutine reads the merged stdout+stderr to EOF (`streamLines`, splitting on `\n
 is mandatory, `Wait` before the pipe is drained is forbidden by `os/exec`.
 `waitForChunkCmd` does one receive from the channel and re-creates itself. The log
 lives in `[3] Update` (a ~500-line buffer); the 10-minute deadline ends with
-`proc.KillGroup` on the process group.
+`proc.KillGroup` on the process group — on **unix**. On Windows `KillGroup` can only
+kill the direct child, so a deadline kill ends the `cmd /c` wrapper while the real
+updater keeps the pipe open and the drain above never sees EOF: the update wedges
+for the session. Accepted with the `cmd /c` quoting caveat and written up in
+[`docs/design/updating.md`](docs/design/updating.md); the fix is a process-tree kill
+in `internal/proc`.
 
 ## Self-update and restart (`U` / `X`)
 

@@ -242,13 +242,27 @@ first line and normally stops there, since nothing re-detects after it.
 
 If the manager cannot be detected (manual install), keepkit suggests setting the
 `update_cmd` field or updating manually. `update_cmd` in `meta.yaml` always takes
-precedence over auto-detection and runs via `sh -c` (pipes and `&&` are fine):
+precedence over auto-detection and runs via the platform shell — `sh -c`, or
+`cmd /c` on Windows (pipes and `&&` are fine either way):
 
 ```yaml
 - name: mytool
   github: github.com/owner/mytool
   update_cmd: mytool self-update
 ```
+
+On Windows this means a `winget upgrade --id BurntSushi.ripgrep` or a
+`powershell -NoProfile -File C:\tools\update-mytool.ps1` command runs as
+written, with no Git Bash installed. One limit: the command reaches `cmd /c` as
+a single argument through Go's generic argument quoting, which is not
+`cmd.exe`-aware, so a command that **embeds double quotes** can misparse — put
+anything that needs quoting into a `.ps1`/`.cmd`/`.sh` script and point
+`update_cmd` at the script instead. That is also the migration path if you
+already have Git Bash and your `update_cmd` relies on `sh` syntax (`$(…)`,
+`$VAR`, single quotes): move it into a script and call it quote-free
+(`sh /c/tools/update-mytool.sh`, which needs `sh` on `PATH` — the Git for
+Windows installer only puts it there with the "Unix tools from the Command
+Prompt" option).
 
 ## Updating keepkit itself
 
