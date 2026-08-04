@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -1657,6 +1658,118 @@ func TestRenderRateGauge(t *testing.T) {
 	})
 }
 
+// TestRenderRateGaugeMarksARejectedToken pins the session-long announcement: the
+// ✕ has to reach BOTH forms, because the compact one is what a narrow bar keeps
+// and is exactly where bare numbers explain themselves least. A healthy session
+// must carry no mark at all — unauthenticated by choice is not degradation.
+func TestRenderRateGaugeMarksARejectedToken(t *testing.T) {
+	rate := version.RateLimit{Known: true, Remaining: 15, Limit: 60}
+
+	for _, compact := range []bool{false, true} {
+		name := "full"
+		if compact {
+			name = "compact"
+		}
+		t.Run(name+" form marks a rejection", func(t *testing.T) {
+			defer armRejectedToken(t)()
+			got := stripANSI(Model{rate: rate}.renderRateGauge(compact))
+			if !strings.HasPrefix(got, "api"+rejectedTokenGlyph+" ") {
+				t.Errorf("%s gauge = %q, want the label to lead with api%s", name, got, rejectedTokenGlyph)
+			}
+			if !strings.Contains(got, "45/60") {
+				t.Errorf("%s gauge = %q, want the numbers kept beside the mark", name, got)
+			}
+		})
+
+		t.Run(name+" form is unmarked when healthy", func(t *testing.T) {
+			got := stripANSI(Model{rate: rate}.renderRateGauge(compact))
+			if strings.Contains(got, rejectedTokenGlyph) {
+				t.Errorf("%s gauge = %q, want no mark without a rejection", name, got)
+			}
+		})
+	}
+
+	t.Run("the mark is styled Danger, not dim like the rest", func(t *testing.T) {
+		forceColorProfile(t)
+		defer armRejectedToken(t)()
+		got := Model{rate: rate, styles: ui.NewStyles(ui.Default)}.renderRateGauge(true)
+		danger := ui.NewStyles(ui.Default).Danger.Render(rejectedTokenGlyph)
+		if !strings.Contains(got, danger) {
+			t.Errorf("gauge = %q, want the mark rendered through Danger (%q)", got, danger)
+		}
+	})
+
+	t.Run("the mark costs exactly one cell", func(t *testing.T) {
+		// The gauge sits at the bar's right edge and its width is what
+		// renderHintsBar reserves, so a two-cell mark would push the bar past the
+		// terminal and scroll the top border off the alt screen.
+		//
+		// Measured under BOTH runewidth conditions, the way langBandGlyph and the
+		// list markers are: lipgloss.Width follows the ambient
+		// RUNEWIDTH_EASTASIAN, and CI runs a plain `go test`, so a check through
+		// it would pass here with U+00D7 — which is exactly the two-cell glyph
+		// this test exists to reject.
+		for _, cond := range []bool{false, true} {
+			c := runewidth.NewCondition()
+			c.EastAsianWidth = cond
+			if got := c.StringWidth(rejectedTokenGlyph); got != 1 {
+				t.Errorf("rejectedTokenGlyph width = %d with EastAsianWidth=%v, want 1", got, cond)
+			}
+		}
+		// And the gauge really spends that one cell, rather than the mark being
+		// width-stable but rendered somewhere the bar does not measure.
+		plain := lipgloss.Width(Model{rate: rate}.renderRateGauge(true))
+		restore := armRejectedToken(t)
+		marked := lipgloss.Width(Model{rate: rate}.renderRateGauge(true))
+		restore()
+		if marked-plain != 1 {
+			t.Errorf("marker costs %d cells, want 1", marked-plain)
+		}
+	})
+}
+
+// TestRenderRateMarkerIsTheLastFormStanding covers the width band the marker's
+// own column created: at the 80-col baseline the marked gauge no longer fits, so
+// without a marker-only form the degraded session would be the one showing
+// nothing. What survives follows the bar's rule — the numbers are a measurement
+// the [a] overlay repeats, the ✕ is the only sign anywhere that requests stopped
+// carrying the token.
+func TestRenderRateMarkerIsTheLastFormStanding(t *testing.T) {
+	rate := version.RateLimit{Known: true, Remaining: 26, Limit: 60}
+
+	t.Run("nothing to report renders nothing", func(t *testing.T) {
+		healthy := Model{rate: rate}
+		if got := healthy.renderRateMarker(); got != "" {
+			t.Errorf("renderRateMarker() = %q, want empty for a healthy session", got)
+		}
+		defer armRejectedToken(t)()
+		noQuota := Model{}
+		if got := noQuota.renderRateMarker(); got != "" {
+			t.Errorf("renderRateMarker() = %q, want empty with no known quota", got)
+		}
+	})
+
+	t.Run("it is narrower than the compact form", func(t *testing.T) {
+		defer armRejectedToken(t)()
+		m := Model{rate: rate}
+		if lipgloss.Width(m.renderRateMarker()) >= lipgloss.Width(m.renderRateGauge(true)) {
+			t.Error("the marker-only form must be the narrowest, or it would never be reached")
+		}
+	})
+
+	t.Run("the bar keeps the mark at the 80-col baseline", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		m := New([]loader.ToolMeta{{Name: "rg", GitHub: "BurntSushi/ripgrep"}}).WithAppVersion("v0.1.0")
+		m = mustModel(m.Update(tea.WindowSizeMsg{Width: 80, Height: 24}))
+		m.rate = rate
+		defer armRejectedToken(t)()
+		bar := stripANSI(m.renderStatusBar())
+		if !strings.Contains(bar, "api"+rejectedTokenGlyph) {
+			t.Errorf("status bar at 80 cols dropped the rejection mark:\n%s", bar)
+		}
+	})
+}
+
 // TestGaugeVisible pins when the gauge is on screen at all: whenever there is a
 // known quota. It is also the only visible sign that keepkit has an API surface,
 // so hiding it at rest hid the [L] overlay along with it — the numbers are the
@@ -2500,15 +2613,90 @@ func TestUpdateInstalledAndRemoteMsgPopulateCaches(t *testing.T) {
 		t.Errorf("reversed order versions[gh] = %+v, want {Installed:1.0 Latest:2.0}", got)
 	}
 
-	// remoteMsg with err set must not touch the caches.
+	// remoteMsg with an error and nothing to show must not touch the caches:
+	// there is no data, so writing would only blank what a previous pass left.
+	m = newModel()
+	updated, _ = m.Update(remoteMsg{toolName: "gh", err: errBoom})
+	nm = updated.(Model)
+	if _, ok := nm.repoCards["gh"]; ok {
+		t.Errorf("repoCards populated by an empty failed remoteMsg")
+	}
+	if got := nm.versions["gh"]; got.Latest != "" {
+		t.Errorf("versions[gh].Latest = %q, want empty on an empty failed remoteMsg", got.Latest)
+	}
+
+	// remoteMsg with an error that still carried data DOES populate: the values
+	// came up from the cache and are what the tool showed a moment ago. Anything
+	// else blanks a tool for a failure it survived.
 	m = newModel()
 	updated, _ = m.Update(remoteMsg{toolName: "gh", latest: "2.0", err: errBoom})
 	nm = updated.(Model)
-	if _, ok := nm.repoCards["gh"]; ok {
-		t.Errorf("repoCards populated despite remoteMsg error")
+	if got := nm.versions["gh"]; got.Latest != "2.0" {
+		t.Errorf("versions[gh].Latest = %q, want 2.0 kept through a failed pass", got.Latest)
 	}
-	if got := nm.versions["gh"]; got.Latest != "" {
-		t.Errorf("versions[gh].Latest = %q, want empty on remoteMsg error", got.Latest)
+}
+
+// TestRemoteMsgNonRateLimitErrorKeepsData pins the rule the caches are written
+// by: a pass that failed but still carried values up from the cache renders
+// them. The error class is deliberately not ErrRateLimited — that was the one
+// class the old predicate admitted, so a 401 or a 5xx blanked a tool whose data
+// the pass had in hand.
+func TestRemoteMsgNonRateLimitErrorKeepsData(t *testing.T) {
+	m := Model{
+		meta:          []loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}},
+		versions:      map[string]VersionInfo{},
+		repoStatus:    map[string]string{},
+		repoCards:     map[string]version.RepoCard{},
+		changelogData: map[string]changelogMsg{},
+	}
+	m.tools = loader.ToolsFromMeta(m.meta)
+
+	updated, _ := m.Update(remoteMsg{
+		toolName:   "gh",
+		latest:     "2.0",
+		repoStatus: "active",
+		card:       version.RepoCard{About: "the github cli"},
+		err:        version.ErrTokenInvalid,
+	})
+	nm := updated.(Model)
+
+	if got := nm.versions["gh"].Latest; got != "2.0" {
+		t.Errorf("versions[gh].Latest = %q, want 2.0", got)
+	}
+	if got := nm.repoStatus["gh"]; got != "active" {
+		t.Errorf("repoStatus[gh] = %q, want active", got)
+	}
+	if got, ok := nm.repoCards["gh"]; !ok || got.About != "the github cli" {
+		t.Errorf("repoCards[gh] = %+v (ok=%v), want the cached card", got, ok)
+	}
+}
+
+// TestRemoteMsgRateLimitedWithNoDataStillFlags verifies the second case is still
+// reachable under the widened first one: a rate-limited pass with nothing to
+// show must land on the "rate limited — press a" marker rather than fall through
+// to the data path and write blanks.
+func TestRemoteMsgRateLimitedWithNoDataStillFlags(t *testing.T) {
+	m := Model{
+		meta:          []loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}},
+		versions:      map[string]VersionInfo{},
+		repoStatus:    map[string]string{},
+		repoCards:     map[string]version.RepoCard{},
+		changelogData: map[string]changelogMsg{},
+	}
+	m.tools = loader.ToolsFromMeta(m.meta)
+
+	updated, _ := m.Update(remoteMsg{
+		toolName:   "gh",
+		repoStatus: "rate-limited",
+		err:        version.ErrRateLimited,
+	})
+	nm := updated.(Model)
+
+	if got := nm.repoStatus["gh"]; got != "rate-limited" {
+		t.Errorf("repoStatus[gh] = %q, want rate-limited", got)
+	}
+	if _, ok := nm.repoCards["gh"]; ok {
+		t.Error("repoCards written by a pass that carried no card")
 	}
 }
 
@@ -2694,6 +2882,213 @@ func TestRenderAPIStatusTokenHint(t *testing.T) {
 	})
 }
 
+// rejectedOverlayModel returns an overlay-mode model with a real config token
+// stored, so the token line has a source and a mask to print. The seam keeps it
+// out of the user's config, and the token is long enough for maskToken to keep
+// its first and last four characters.
+func rejectedOverlayModel(t *testing.T, rejected bool, mode inputMode) Model {
+	t.Helper()
+	restore := version.SetConfigDirForTesting(t.TempDir())
+	t.Cleanup(restore)
+	t.Setenv("GITHUB_TOKEN", "")
+	if err := version.SetToken("ghp_notarealtoken"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = version.ClearToken() })
+	t.Cleanup(version.SetTokenRejectedForTesting(rejected))
+
+	return Model{
+		width: 80, height: 24, mode: mode,
+		tokenInput: textinput.New(),
+		rate:       version.RateLimit{Known: true, Remaining: 26, Limit: 60},
+	}
+}
+
+// TestRenderAPIStatusExplainsARejectedToken pins the surface that always has the
+// answer. The gauge's ✕ is droppable and says only "something is wrong"; this is
+// where the state gets its reason, its consequence and the key that fixes it.
+//
+// The mask is the load-bearing part: it is how the user recognises WHICH
+// credential to replace, and it survives only because version.Token() reads the
+// raw core rather than the suppressed resolveToken (task 4's split).
+func TestRenderAPIStatusExplainsARejectedToken(t *testing.T) {
+	t.Run("the rejected line keeps source and mask", func(t *testing.T) {
+		m := rejectedOverlayModel(t, true, modeAPIStatus)
+		got := stripANSI(m.renderAPIStatus())
+		for _, want := range []string{"token  config", "ghp_", "oken", "rejected (HTTP 401)"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("overlay missing %q:\n%s", want, got)
+			}
+		}
+		if !strings.Contains(got, "requests run unauthenticated") {
+			t.Errorf("overlay does not say what the rejection means for the session:\n%s", got)
+		}
+	})
+
+	t.Run("the rejected line is styled Danger", func(t *testing.T) {
+		forceColorProfile(t)
+		m := rejectedOverlayModel(t, true, modeAPIStatus)
+		m.styles = ui.NewStyles(ui.Default)
+		got := m.renderAPIStatus()
+		if !strings.Contains(got, themeSeq(ui.Default.Danger)) {
+			t.Errorf("overlay carries no Danger run for the rejection:\n%q", got)
+		}
+	})
+
+	t.Run("a healthy token renders neither", func(t *testing.T) {
+		m := rejectedOverlayModel(t, false, modeAPIStatus)
+		got := stripANSI(m.renderAPIStatus())
+		if !strings.Contains(got, "token  config") {
+			t.Fatalf("fixture: the token line is missing:\n%s", got)
+		}
+		for _, unwanted := range []string{"rejected", "unauthenticated", "replace the token"} {
+			if strings.Contains(got, unwanted) {
+				t.Errorf("healthy overlay carries %q:\n%s", unwanted, got)
+			}
+		}
+	})
+
+	t.Run("the nudge tells a rejected user to replace, not to add", func(t *testing.T) {
+		m := rejectedOverlayModel(t, true, modeAPIStatus)
+		got := stripANSI(m.renderAPIStatus())
+		if !strings.Contains(got, "replace the token") {
+			t.Errorf("overlay missing the replace nudge:\n%s", got)
+		}
+		// "add a github token" reads as advice to someone who already did.
+		if strings.Contains(got, "add a github token") {
+			t.Errorf("overlay tells a user who HAS a token to add one:\n%s", got)
+		}
+	})
+
+	t.Run("the nudge stays hidden while entering a token", func(t *testing.T) {
+		m := rejectedOverlayModel(t, true, modeTokenInput)
+		got := stripANSI(m.renderAPIStatus())
+		if strings.Contains(got, "replace the token to restore") {
+			t.Errorf("nudge shown over the open input, which is already the answer:\n%s", got)
+		}
+		// The line itself stays: it is the state, not a prompt.
+		if !strings.Contains(got, "rejected (HTTP 401)") {
+			t.Errorf("the rejected line vanished under the input:\n%s", got)
+		}
+	})
+}
+
+// envRejectedOverlayModel returns an overlay-mode model whose rejected token
+// came from GITHUB_TOKEN. The config-dir seam is still installed, because the
+// [e] path this test is about writes there — the point being that the write
+// changes nothing while the env var stands.
+func envRejectedOverlayModel(t *testing.T) Model {
+	t.Helper()
+	restoreDir := version.SetConfigDirForTesting(t.TempDir())
+	t.Cleanup(restoreDir)
+	t.Setenv("GITHUB_TOKEN", "ghp_E1n2V3t4O5f6G7h8")
+	restoreFlag := version.SetTokenRejectedForTesting(true)
+	t.Cleanup(restoreFlag)
+
+	return Model{
+		width: 80, height: 24, mode: modeAPIStatus,
+		tokenInput: textinput.New(),
+		rate:       version.RateLimit{Known: true, Remaining: 26, Limit: 60},
+	}
+}
+
+// overlayNudgeRow returns the overlay's nudge line — the fourth rendered row,
+// between the title and the token line — with the border and ANSI stripped.
+// Asserted by position rather than by a substring search over the whole modal,
+// because the footer hints carry "e set token" too: a nudge that wrongly
+// offered the key would pass any test that only grepped the output.
+func overlayNudgeRow(t *testing.T, m Model) string {
+	t.Helper()
+	rows := strings.Split(stripANSI(m.renderAPIStatus()), "\n")
+	if len(rows) < 4 {
+		t.Fatalf("overlay has %d rows, too few to hold a nudge:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+	// 0 top border, 1 title, 2 blank, 3 nudge.
+	return rows[3]
+}
+
+// TestAPIStatusNudgeIsEnvAware pins the one rejected state keepkit cannot fix
+// from inside. [e] runs SetToken, which writes the config file, and
+// effectiveToken reads that only when GITHUB_TOKEN is empty — so under env
+// precedence the key saves a credential that never goes on the wire. Offering
+// it there sends the user through a save that changes nothing and, before the
+// handler learned to stop, through a full recovery fan-out at the anonymous
+// 60/h ceiling. [d] has gated on the source for this reason all along.
+func TestAPIStatusNudgeIsEnvAware(t *testing.T) {
+	t.Run("an env rejection names the variable and offers no key", func(t *testing.T) {
+		nudge := overlayNudgeRow(t, envRejectedOverlayModel(t))
+		if !strings.Contains(nudge, "GITHUB_TOKEN") {
+			t.Errorf("nudge row %q does not name the variable the user has to go edit", nudge)
+		}
+		if !strings.Contains(nudge, "shell") {
+			t.Errorf("nudge row %q does not say where the variable lives", nudge)
+		}
+		// The whole point: the key cannot fix this one.
+		if strings.Contains(nudge, "e set") {
+			t.Errorf("nudge row %q offers [e], which writes a config token that env shadows", nudge)
+		}
+		if strings.Contains(nudge, "replace the token to restore") {
+			t.Errorf("nudge row %q is the config wording, which points at [e]", nudge)
+		}
+	})
+
+	t.Run("a config rejection still offers the key", func(t *testing.T) {
+		// The env case is a new first arm of the same switch; it must not swallow
+		// the case that [e] genuinely answers.
+		nudge := overlayNudgeRow(t, rejectedOverlayModel(t, true, modeAPIStatus))
+		if !strings.Contains(nudge, "replace the token to restore") {
+			t.Errorf("nudge row %q lost the config wording", nudge)
+		}
+		if !strings.Contains(nudge, "e set") {
+			t.Errorf("nudge row %q no longer offers [e], which is what fixes a config token", nudge)
+		}
+		if strings.Contains(nudge, "GITHUB_TOKEN") {
+			t.Errorf("nudge row %q names the env var for a config token", nudge)
+		}
+	})
+
+	t.Run("the env nudge is styled Signal like its siblings", func(t *testing.T) {
+		forceColorProfile(t)
+		m := envRejectedOverlayModel(t)
+		m.styles = ui.NewStyles(ui.Default)
+		if !strings.Contains(m.renderAPIStatus(), themeSeq(ui.Default.Signal)) {
+			t.Error("the env nudge carries no Signal run; it must read as the one thing to act on")
+		}
+	})
+
+	t.Run("the env wording stays inside the 80-col budget", func(t *testing.T) {
+		m := envRejectedOverlayModel(t)
+		m.rate.Reset = time.Now().Add(37 * time.Minute)
+		if w := lipgloss.Width(m.renderAPIStatus()); w > 76 {
+			t.Errorf("framed width = %d, want <= 76 (PlaceOverlay clips against an 80-col background)", w)
+		}
+	})
+}
+
+// TestRenderAPIStatusSizeBudget: the overlay composites over the 80x24 layout
+// through PlaceOverlay, which CLIPS rather than wraps — a line past the
+// background width loses its tail silently. The rejected state adds the widest
+// line the overlay has ever carried and nothing pinned its width before.
+func TestRenderAPIStatusSizeBudget(t *testing.T) {
+	for _, mode := range []inputMode{modeAPIStatus, modeTokenInput} {
+		for _, rejected := range []bool{false, true} {
+			m := rejectedOverlayModel(t, rejected, mode)
+			// A reset time is the one field the fixtures above leave out, and it
+			// adds a line — include it so the height budget is measured full.
+			m.rate.Reset = time.Now().Add(37 * time.Minute)
+			overlay := m.renderAPIStatus()
+			if w := lipgloss.Width(overlay); w > 76 {
+				t.Errorf("mode=%v rejected=%v: framed width = %d, want <= 76 (80-col background)",
+					mode, rejected, w)
+			}
+			if h := lipgloss.Height(overlay); h > 20 {
+				t.Errorf("mode=%v rejected=%v: framed height = %d, want <= 20 (24-row background)",
+					mode, rejected, h)
+			}
+		}
+	}
+}
+
 // sgrParamRe captures the parameter list of each SGR escape sequence.
 var sgrParamRe = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
 
@@ -2828,6 +3223,68 @@ func TestTokenValidatedMsgValid(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("valid token should fire the backfill cmd")
+	}
+}
+
+// armRejectedToken stores a token and marks it refused, returning the restore
+// func. internal/model cannot reach version.rejectToken (unexported, and armed
+// only by a real 401), so the exported seam is the only way to render the
+// degraded state in a test that must not touch the network.
+func armRejectedToken(t *testing.T) (restore func()) {
+	t.Helper()
+	t.Setenv("GITHUB_TOKEN", "")
+	restoreDir := version.SetConfigDirForTesting(t.TempDir())
+	if err := version.SetToken("ghp_refusedtoken"); err != nil {
+		t.Fatal(err)
+	}
+	restoreFlag := version.SetTokenRejectedForTesting(true)
+	return func() {
+		restoreFlag()
+		_ = version.ClearToken()
+		restoreDir()
+	}
+}
+
+// TestRejectedTokenHasNoCachedCopy pins the shape the surfaces read from. The
+// rejection was briefly mirrored into a Model field, written from a snapshot
+// remoteCmd/fetchRateCmd took inside the goroutine after the fetch — and that
+// created a window with no upside: a reply in flight across the keystroke that
+// replaced the credential carried a value observed under the OLD token, so it
+// re-armed the flag after the accepted tokenValidatedMsg had cleared it and the
+// overlay redrew "rejected (HTTP 401)" beside the mask of a token that had just
+// validated.
+//
+// There is nothing to go stale now: the two renderers ask version.TokenRejected()
+// at paint time, exactly as the token line beside them already asks
+// version.TokenSource() and version.Token(). This test is what stops the cache
+// from coming back.
+func TestRejectedTokenHasNoCachedCopy(t *testing.T) {
+	restore := armRejectedToken(t)
+	m := Model{width: 80, height: 24, rate: version.RateLimit{Known: true, Limit: 60, Remaining: 26}}
+
+	if !strings.Contains(stripANSI(m.renderStatusBar()), rejectedTokenGlyph) {
+		t.Fatal("fixture: the armed rejection does not reach the bar")
+	}
+
+	// Messages carry no rejection field to go stale with — feeding the handlers
+	// the very messages that used to re-arm it changes nothing.
+	m.versions = map[string]VersionInfo{}
+	m.repoStatus = map[string]string{}
+	m.repoCards = map[string]version.RepoCard{}
+	m.changelogData = map[string]changelogMsg{}
+	m.meta = []loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}}
+	m.tools = loader.ToolsFromMeta(m.meta)
+
+	restore()
+
+	for _, msg := range []tea.Msg{
+		rateMsg{rate: version.RateLimit{Known: true, Limit: 5000, Remaining: 4999}},
+		remoteMsg{toolName: "gh", latest: "v1.0"},
+	} {
+		nm := mustModel(m.Update(msg))
+		if strings.Contains(stripANSI(nm.renderStatusBar()), rejectedTokenGlyph) {
+			t.Errorf("%T left the bar marked after the rejection ended", msg)
+		}
 	}
 }
 
@@ -4317,8 +4774,15 @@ func TestStatusBarNeverWraps(t *testing.T) {
 		selfTag   string
 		updating  bool
 		knownRate bool
+		rejected  bool
 		width     int
 	}{
+		// The rejection marker costs the gauge a column, and the bar is measured
+		// against the whole width: at the baseline it is the last thing added to
+		// a line that already fits exactly.
+		{name: "rejected token", focus: focusTools, helpMode: helpModeHelp, knownRate: true, rejected: true},
+		{name: "rejected token at 80 cols in brief", focus: focusBrief, helpMode: helpModeHelp, knownRate: true, rejected: true, width: 80},
+		{name: "rejected token under a self banner", focus: focusTools, helpMode: helpModeHelp, self: selfOffered, knownRate: true, rejected: true},
 		{name: "tools", focus: focusTools, helpMode: helpModeHelp},
 		{name: "brief", focus: focusBrief, helpMode: helpModeHelp},
 		{name: "help mode", focus: focusHelp, helpMode: helpModeHelp},
@@ -4383,6 +4847,9 @@ func TestStatusBarNeverWraps(t *testing.T) {
 			}
 			if tc.knownRate {
 				m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
+			}
+			if tc.rejected {
+				defer armRejectedToken(t)()
 			}
 
 			if got := lipgloss.Height(m.renderStatusBar()); got != 3 {

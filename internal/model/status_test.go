@@ -7,6 +7,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/stanlyzoolo/keepkit/internal/loader"
+	"github.com/stanlyzoolo/keepkit/internal/version"
 )
 
 // shrinkStatusTTL shortens statusMsgTTL so a test can invoke the tick Cmd that
@@ -219,5 +222,123 @@ func TestStatusBarReturnsHintsAfterExpiry(t *testing.T) {
 	}
 	if !strings.Contains(bar, "t track") {
 		t.Errorf("status bar = %q, want the global hints back", bar)
+	}
+}
+
+// refreshingModel returns a model mid-[r] for the named tool: refreshingFor set,
+// the maps the remoteMsg handler writes through initialised.
+func refreshingModel(t *testing.T, name string) Model {
+	t.Helper()
+	m := New([]loader.ToolMeta{{Name: name, GitHub: "cli/cli"}})
+	m.width, m.height = 80, 24
+	m.focus = focusBrief
+	m.refreshingFor = name
+	return m
+}
+
+// TestRefreshAnswersEveryPress pins the promise [r] makes. Before this, success,
+// a rate limit, a 401, a timeout and a dropped connection were one gesture: the
+// spinner turns and the card does not change, so a user could not tell a tool
+// that is up to date from a tool whose data has not been fetched in a day.
+//
+// The predicate is err, not !conclusive. The broader one reported a network
+// failure that never happened for a ref the version layer refused outright — an
+// unsupported or spoofed host, answered with a bare RepoData and a nil error,
+// no request made — and it contradicted a card the user had just watched update
+// on a partial pass that fetched a new tag and lost only the repo info. Now that
+// every real failure carries a name, the error is the honest question to ask;
+// the two silent rows below are what pin the difference.
+func TestRefreshAnswersEveryPress(t *testing.T) {
+	tests := []struct {
+		name       string
+		msg        remoteMsg
+		wantStatus string
+	}{
+		{
+			name:       "rate limited names the key that raises the ceiling",
+			msg:        remoteMsg{toolName: "gh", err: version.ErrRateLimited},
+			wantStatus: "refresh failed: rate limited — press [a]",
+		},
+		{
+			name:       "a rejected token is not called out separately",
+			msg:        remoteMsg{toolName: "gh", err: version.ErrTokenInvalid},
+			wantStatus: "refresh failed: network error",
+		},
+		{
+			name:       "a transient failure reads the same whatever it was",
+			msg:        remoteMsg{toolName: "gh", err: errBoom},
+			wantStatus: "refresh failed: network error",
+		},
+		{
+			// The version layer refuses an unsupported or spoofed host before
+			// making any request and answers a bare RepoData — no error, not
+			// conclusive. Nothing failed to fetch, so claiming a network error
+			// would name a cause that never existed.
+			name:       "a ref the version layer refused says nothing",
+			msg:        remoteMsg{toolName: "gh"},
+			wantStatus: "",
+		},
+		{
+			// A partial pass: the release fetch landed a new tag, only the repo
+			// card was lost. Conclusive is false (CheckedAt stays stale for the
+			// refill) but the card visibly updated, so the bar must not
+			// contradict what the user just watched happen.
+			name:       "a partial pass that fetched a tag says nothing",
+			msg:        remoteMsg{toolName: "gh", latest: "v2.0.0"},
+			wantStatus: "",
+		},
+		{
+			name:       "a conclusive pass stays silent — the repainted card is the answer",
+			msg:        remoteMsg{toolName: "gh", latest: "v2.0.0", conclusive: true},
+			wantStatus: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The tick is constructed inside Update, so the TTL must shrink first.
+			shrinkStatusTTL(t)
+			m := refreshingModel(t, "gh")
+			updated, cmd := m.Update(tt.msg)
+			nm := updated.(Model)
+
+			if nm.statusMsg != tt.wantStatus {
+				t.Errorf("statusMsg = %q, want %q", nm.statusMsg, tt.wantStatus)
+			}
+			if nm.refreshingFor != "" {
+				t.Errorf("refreshingFor = %q, want cleared whatever the outcome", nm.refreshingFor)
+			}
+			if tt.wantStatus == "" {
+				if cmd != nil {
+					t.Errorf("a silent success returned a cmd (%T), want none", cmd())
+				}
+				return
+			}
+			// Nothing may ride along: [r] answering is a message, not a retry.
+			assertOnlyExpiryTick(t, cmd)
+		})
+	}
+}
+
+// TestRefreshStatusOnlyForTheRefreshedTool: the background passes Init fires are
+// inconclusive all the time (offline start, rate limit) and must not put a
+// "refresh failed" message on the bar for a gesture the user never made.
+func TestRefreshStatusOnlyForTheRefreshedTool(t *testing.T) {
+	shrinkStatusTTL(t)
+	m := refreshingModel(t, "gh")
+	m.meta = append(m.meta, loader.ToolMeta{Name: "rg", GitHub: "BurntSushi/ripgrep"})
+	m.tools = loader.ToolsFromMeta(m.meta)
+
+	updated, cmd := m.Update(remoteMsg{toolName: "rg", err: version.ErrRateLimited})
+	nm := updated.(Model)
+
+	if nm.statusMsg != "" {
+		t.Errorf("statusMsg = %q, want silence for a tool nobody refreshed", nm.statusMsg)
+	}
+	if nm.refreshingFor != "gh" {
+		t.Errorf("refreshingFor = %q, want gh still in flight", nm.refreshingFor)
+	}
+	if cmd != nil {
+		t.Errorf("returned a cmd (%T), want none", cmd())
 	}
 }

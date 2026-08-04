@@ -564,3 +564,141 @@ func TestInitHelpProbeFollowsHelpMode(t *testing.T) {
 		t.Errorf("Init queued %d cmds in help mode and %d in readme mode, want exactly one more (the --help probe)", help, readme)
 	}
 }
+
+// TestTokenAcceptedRefetchesEveryRepo pins the recovery a new token buys. The
+// degraded window leaves every tool holding stale-but-present data, and
+// needsRemote answers false for exactly that shape — a card exists, Latest is
+// non-empty — so the predicate here is Init's (`t.GitHub != ""`), not
+// needsRemote's. Backfilling only the selected tool left the other 33 frozen
+// until a restart.
+func TestTokenAcceptedRefetchesEveryRepo(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	restore := version.SetConfigDirForTesting(t.TempDir())
+	t.Cleanup(restore)
+	t.Cleanup(func() { _ = version.ClearToken() })
+
+	newModel := func() Model {
+		m := New([]loader.ToolMeta{
+			{Name: "gh", GitHub: "cli/cli"},
+			{Name: "rg", GitHub: "BurntSushi/ripgrep"},
+			{Name: "fd", GitHub: "sharkdp/fd"},
+			{Name: "localtool"}, // no repo: nothing to refetch
+		})
+		m.width, m.height = 80, 24
+		// The state a degraded session ends in: every repo tool answered and
+		// carrying a card, which is what makes needsRemote the wrong predicate.
+		for _, name := range []string{"gh", "rg", "fd"} {
+			m.remoteAnswered[name] = true
+			m.repoCards[name] = version.RepoCard{About: "stale", Latest: "v1.0.0"}
+			m.versions[name] = VersionInfo{Latest: "v1.0.0"}
+		}
+		return m
+	}
+
+	t.Run("an accepted token clears remoteAnswered", func(t *testing.T) {
+		nm := mustModel(newModel().Update(tokenValidatedMsg{token: "ghp_goodtoken1234"}))
+		if len(nm.remoteAnswered) != 0 {
+			t.Errorf("remoteAnswered = %v, want cleared: nothing settled under the old credential is settled under the new one", nm.remoteAnswered)
+		}
+	})
+
+	t.Run("every repo tool is in the batch, populated card or not", func(t *testing.T) {
+		m := newModel()
+		_, cmd := m.Update(tokenValidatedMsg{token: "ghp_goodtoken1234"})
+		if cmd == nil {
+			t.Fatal("an accepted token returned no commands")
+		}
+		batch, ok := cmd().(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("cmd produced %T, want a tea.BatchMsg", cmd())
+		}
+		// autoFetchCmdsForSelected's own batch plus one fetchRemoteCmd per repo
+		// tool. Asserting the count rather than executing the leaves keeps the
+		// test off the network: internal/model cannot redirect testAPIBase.
+		if len(batch) != 1+3 {
+			t.Errorf("batch has %d commands, want 1 backfill + 3 repo refetches", len(batch))
+		}
+	})
+
+	t.Run("the selected tool is fetched once, not twice", func(t *testing.T) {
+		// The cold-cache shape, which is the harsher of the two degraded states
+		// and the one the fixture above deliberately does not cover: with no
+		// card at all, needsRemote answers TRUE once remoteAnswered is cleared,
+		// so autoFetchCmdsForSelected dispatches the selected tool's repo pass —
+		// and a loop that also dispatched it would spend six requests on one repo
+		// and race two updateCacheEntry writes for the same entry.
+		m := New([]loader.ToolMeta{
+			{Name: "gh", GitHub: "cli/cli"},
+			{Name: "rg", GitHub: "BurntSushi/ripgrep"},
+			{Name: "fd", GitHub: "sharkdp/fd"},
+		})
+		m.width, m.height = 80, 24
+		sel, ok := m.selectedTool()
+		if !ok || !m.needsRemote(sel) {
+			t.Fatal("fixture: the selected tool must need a remote pass, else this asserts nothing")
+		}
+
+		_, cmd := m.Update(tokenValidatedMsg{token: "ghp_goodtoken1234"})
+		if cmd == nil {
+			t.Fatal("an accepted token returned no commands")
+		}
+		batch, ok := cmd().(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("cmd produced %T, want a tea.BatchMsg", cmd())
+		}
+		// The backfill covers the selected tool, so the loop contributes the
+		// other two only.
+		if len(batch) != 1+2 {
+			t.Errorf("batch has %d commands, want 1 backfill + 2 refetches — "+
+				"the selected tool must not be dispatched by both", len(batch))
+		}
+	})
+
+	t.Run("a refused token changes neither", func(t *testing.T) {
+		m := newModel()
+		updated, cmd := m.Update(tokenValidatedMsg{token: "ghp_bad", err: version.ErrTokenInvalid})
+		nm := updated.(Model)
+		if len(nm.remoteAnswered) != 3 {
+			t.Errorf("remoteAnswered = %v, want untouched by a refused token", nm.remoteAnswered)
+		}
+		if cmd != nil {
+			t.Errorf("a refused token returned a cmd (%T), want none", cmd())
+		}
+	})
+
+	// A token GITHUB_TOKEN shadows validates and saves like any other — the
+	// candidate goes to /rate_limit under an explicit header, so the 200 says
+	// nothing about whether the session will use it. It will not: SetToken writes
+	// the config file and effectiveToken reads that only when the env var is
+	// empty. Recovering on that basis is the expensive half of the mistake — a
+	// three-request pass per tool, dispatched at the anonymous 60/h ceiling
+	// because resolveToken still suppresses the rejected env credential. With a
+	// few dozen tools the one gesture the overlay offers as the way out of a
+	// degraded session spends the rest of the hour and leaves it worse off.
+	t.Run("a token shadowed by GITHUB_TOKEN recovers nothing", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "ghp_envtoken12345678")
+		m := newModel()
+		updated, cmd := m.Update(tokenValidatedMsg{
+			token: "ghp_goodtoken1234",
+			rate:  version.RateLimit{Known: true, Remaining: 5000, Limit: 5000},
+		})
+		nm := updated.(Model)
+
+		if cmd != nil {
+			t.Errorf("a shadowed token dispatched %T, want no fan-out at the anonymous ceiling", cmd())
+		}
+		if len(nm.remoteAnswered) != 3 {
+			t.Errorf("remoteAnswered = %v, want untouched: nothing was recovered", nm.remoteAnswered)
+		}
+		// The candidate's snapshot describes a limit the session does not have.
+		if nm.rate.Limit == 5000 {
+			t.Error("the gauge took the candidate's 5000 limit while requests keep running at 60")
+		}
+		if nm.tokenError == "" {
+			t.Error("the overlay reports nothing, so the save reads as having worked")
+		}
+		if !strings.Contains(nm.tokenError, "GITHUB_TOKEN") {
+			t.Errorf("tokenError = %q, want it to name what takes precedence", nm.tokenError)
+		}
+	})
+}

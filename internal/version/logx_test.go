@@ -91,6 +91,42 @@ func TestClassifyStatusGenericForbiddenLogs(t *testing.T) {
 	}
 }
 
+// TestClassifyStatusUnauthorizedLogs verifies a 401 writes a line naming the
+// code and the path — it is neither conclusive like a 404 nor normal, and it is
+// the one status the user can fix — while a 404 stays silent, so a stale repo
+// ref does not re-create a session log on every launch.
+func TestClassifyStatusUnauthorizedLogs(t *testing.T) {
+	logDir := t.TempDir()
+	restore := logx.SetDirForTesting(logDir)
+	defer restore()
+
+	err := classifyStatus(respWith(t, http.StatusUnauthorized, "4999", "/repos/cli/cli"))
+	if !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("expected ErrTokenInvalid, got %v", err)
+	}
+	out := logx.ReadAllForTesting(logDir)
+	if !strings.Contains(out, "http=401") || !strings.Contains(out, "/repos/cli/cli") {
+		t.Errorf("log missing code/path, got:\n%s", out)
+	}
+	if strings.Contains(out, "rate limited") {
+		t.Errorf("a 401 must not be labelled rate limited, got:\n%s", out)
+	}
+}
+
+func TestClassifyStatusNotFoundStaysSilent(t *testing.T) {
+	logDir := t.TempDir()
+	restore := logx.SetDirForTesting(logDir)
+	defer restore()
+
+	err := classifyStatus(respWith(t, http.StatusNotFound, "4999", "/repos/cli/cli"))
+	if err == nil || errors.Is(err, ErrTokenInvalid) || errors.Is(err, ErrRateLimited) {
+		t.Fatalf("classifyStatus(404) = %v, want a generic error", err)
+	}
+	if out := logx.ReadAllForTesting(logDir); out != "" {
+		t.Errorf("a 404 must leave no log line, got:\n%s", out)
+	}
+}
+
 func TestDoGHNeverLogsToken(t *testing.T) {
 	// Clear env precedence and route the config token through the seam.
 	t.Setenv("GITHUB_TOKEN", "")

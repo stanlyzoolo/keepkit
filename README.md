@@ -324,6 +324,32 @@ with `0600` permissions; an environment token is never written to disk. When the
 quota is exhausted, already-loaded cards are not erased, and a card with no data
 shows the `rate limited — press a` hint.
 
+**A token that expires does not black the app out.** GitHub answers `401` to every
+request a dead credential carries, while the very same URLs work fine with no token at
+all — so keepkit retries once without it and carries on unauthenticated at 60
+requests per hour. The token file is left alone; it is simply unused until you replace
+it. The state is visible rather than silent: the gauge gains a `✕` (`api✕ ▮▮▮▮░░░░░░░░
+34/60`, or just `api✕` when the bar is narrow), and `a` explains it —
+`token config (ghp_••••••••3f2a) — rejected (HTTP 401)`, with the mask kept so you can
+tell which credential to swap. Enter a working one with `[e]` and every card refetches
+at once, without a restart, at the restored 5000 per hour.
+
+One case `[e]` cannot fix: a token from `GITHUB_TOKEN`. The variable always wins over
+the file, so a replacement entered in the TUI is saved and then shadowed by the dead
+one — keepkit says `saved — GITHUB_TOKEN still takes precedence` and changes nothing
+else, rather than refetching the whole list on a credential it will not be sending.
+Replace or unset the variable in the shell instead; the overlay says so.
+
+The degraded session itself is where the ceiling bites: a large tool list costs more
+than 60 requests, so on a cold cache expect a partial fill until the hour turns. Cards
+that were already loaded keep showing what they had.
+
+`[r]` in the brief panel now answers every press. A refresh that failed says so —
+`refresh failed: rate limited — press [a]` or `refresh failed: network error` — while
+one that fetched something stays silent, because the repainted card is the answer.
+Before, success and every kind of failure looked identical: the spinner turned and
+nothing changed.
+
 ## Data storage
 
 The tool list lives in `~/.config/keepkit/meta.yaml` — one entry per tool (`name`,
