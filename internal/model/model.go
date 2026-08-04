@@ -66,9 +66,15 @@ type remoteMsg struct {
 	err        error
 	// conclusive mirrors version.RepoData.Conclusive: the pass settled this tool
 	// for the cache window. It is what remoteAnswered is written from, because
-	// err cannot answer that — it carries ErrRateLimited or nil, so an offline
-	// start and a 5xx both arrive here with a nil error.
+	// err cannot answer that even now that every failure class arrives named:
+	// a repo with no releases settles the tool with a nil err, and a pass that
+	// served a stale card under a rate limit settles nothing while carrying one.
 	conclusive bool
+	// tokenRejected is version.TokenRejected() snapshotted in the command
+	// goroutine after the fetch, the same shape rate uses. Reading the package
+	// global from a renderer instead would make the frame depend on when a
+	// goroutine happened to write, and would be unsettable in a model test.
+	tokenRejected bool
 }
 
 // rateMsg carries a rate-limit snapshot fetched from GET /rate_limit, which
@@ -77,6 +83,10 @@ type remoteMsg struct {
 type rateMsg struct {
 	rate version.RateLimit
 	err  error
+	// tokenRejected is snapshotted in the command goroutine, like remoteMsg's.
+	// A rate seed is the one message a warm-cache start is guaranteed to send,
+	// so it is also the path that arms the degraded UI when nothing else fires.
+	tokenRejected bool
 }
 
 type changelogMsg struct {
@@ -135,6 +145,21 @@ const updateLogMaxLines = 500
 // runs (one at a time, no queue). Shared so the two refusals cannot word it
 // differently.
 const updateBusyStatus = "another update is running"
+
+// refreshFailedStatus names why an [r] settled nothing. The taxonomy is
+// deliberately two-tier: a rate limit has an answer the user can act on — wait,
+// or raise the ceiling from the [a] overlay — while a 401, a 5xx, a timeout and
+// a dropped connection all mean "try later" and the UI has nothing to tell them
+// apart with. In particular there is no token wording here: by the time a fetch
+// fails, doGH has already retried a rejected token anonymously, so a refresh
+// that failed did not fail *because of* the token — and the gauge and the [a]
+// overlay are where that state is reported anyway.
+func refreshFailedStatus(err error) string {
+	if errors.Is(err, version.ErrRateLimited) {
+		return "refresh failed: rate limited — press [a]"
+	}
+	return "refresh failed: network error"
+}
 
 // selfToolName is the name keepkit uses for itself inside the update pipeline:
 // the updater's detection target, the updatingFor/updateLogFor guard value and
@@ -396,16 +421,21 @@ type Model struct {
 	// two selection moves onto the same tool inside that window (j then k, a
 	// click back) would each spend a GitHub request. Cleared by readmeMsg.
 	readmeLoading map[string]bool
-	// remoteAnswered holds the tools whose network pass came back WITHOUT an
-	// error — a conclusive answer, even when it carried no Latest (a repo with
-	// neither releases nor tags). needsRemote's empty-Latest clause would
-	// otherwise re-dispatch the whole pass on every cursor visit. The honest
-	// cost of that is a goroutine and a cache.json read, not API quota:
-	// errNoReleases is already conclusive on the version side, so the repeat
-	// was served from cache. Session-scoped, and deliberately keyed off the
-	// error rather than off m.repoStatus — a rate-limited pass carrying a stale
-	// card writes "active"/"archived" there, so that marker would suppress a
-	// retry the predicate still wants.
+	// remoteAnswered holds the tools whose network pass the version layer called
+	// CONCLUSIVE — it settled the tool for the cache window, even when it
+	// carried no Latest (a repo with neither releases nor tags). needsRemote's
+	// empty-Latest clause would otherwise re-dispatch the whole pass on every
+	// cursor visit. The honest cost of that is a goroutine and a cache.json
+	// read, not API quota: errNoReleases is already conclusive on the version
+	// side, so the repeat was served from cache.
+	//
+	// Session-scoped, and written from msg.conclusive rather than from the error
+	// or from m.repoStatus. Neither of those can answer it: a repo with no
+	// releases settles the tool with a nil error, a rate-limited pass that
+	// served a stale card settles nothing while carrying one, and that same pass
+	// writes "active"/"archived" into repoStatus. Cleared wholesale when a new
+	// token validates — nothing settled under the old credential is settled
+	// under the new one.
 	remoteAnswered map[string]bool
 	// readmeRender memoizes the last glamour render (see readme.go).
 	readmeRender readmeRenderCache
@@ -439,6 +469,15 @@ type Model struct {
 	// fetchRateCmd and refreshed by remote fetches. A Known==false snapshot
 	// never overwrites a previously-known value.
 	rate version.RateLimit
+
+	// tokenRejected mirrors version.TokenRejected(): GitHub refused the
+	// configured credential and every request since goes out unauthenticated.
+	// It is a model field rather than a call into version from View() for two
+	// reasons — a package global cannot be set in a model test without the
+	// network, and a render must not depend on when a goroutine happened to
+	// write. It rides in on remoteMsg/rateMsg exactly as rate does, and the
+	// tokenValidatedMsg success path clears it.
+	tokenRejected bool
 
 	// tokenInput is the overlay's masked token field (modeTokenInput) and
 	// tokenError holds the inline "token invalid" message.
@@ -997,12 +1036,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.rate.Known {
 			m.rate = msg.rate
 		}
-		// Data is displayable when the fetch succeeded, or when a rate-limit error
-		// still carried usable cache values: a fresh tag from a partial fetch, or
-		// the stale card kept on a total failure. In those cases render the data so
-		// known tags/cards survive the outage. Only a rate-limit failure with
-		// nothing to show falls back to the "rate limited — press a" hint. A
-		// generic error carries no data and must not touch the caches.
+		// Written unconditionally, in both directions: the flag is the state of
+		// the session's credential, not a property of this pass, and a pass that
+		// ran after a token was replaced is exactly the one that should clear it.
+		m.tokenRejected = msg.tokenRejected
+		// Data is displayable when the fetch succeeded, or when it failed but still
+		// carried usable cache values: a fresh tag from a partial fetch, or the
+		// stale card kept on a total failure. In those cases render the data so
+		// known tags/cards survive the outage.
 		hasData := msg.latest != "" || msg.card.About != ""
 		// Only a pass the version layer calls conclusive is an answer: it stamped
 		// (or found) a fresh cache entry. A rate-limited pass may still have
@@ -1015,7 +1056,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.remoteAnswered[msg.toolName] = true
 		}
 		switch {
-		case msg.err == nil, errors.Is(msg.err, version.ErrRateLimited) && hasData:
+		// The predicate is about data, not about the error class: what decides
+		// whether the caches are written is whether the pass came back with
+		// something to write. Gating the stale-data path on ErrRateLimited alone
+		// meant a 401 or a 5xx dropped a card the pass had actually carried up
+		// from the cache — the tool went blank for a failure it survived.
+		case hasData || msg.err == nil:
 			info := m.versions[msg.toolName]
 			info.Latest = msg.latest
 			m.versions[msg.toolName] = info
@@ -1040,6 +1086,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.toolName == m.refreshingFor {
 			m.refreshingFor = ""
 			m.briefViewport.SetContent(m.renderCard())
+			// [r] used to answer nothing at all: success, a rate limit, a 401, a
+			// timeout and a dropped connection were one gesture — the spinner
+			// turns, the card does not change. A pass the version layer calls
+			// inconclusive fetched nothing and wrote nothing, so it needs to say
+			// so; a conclusive one stays silent, because the repainted card IS
+			// the answer.
+			if !msg.conclusive {
+				return m, m.setStatus(refreshFailedStatus(msg.err))
+			}
 		}
 		return m, nil
 
@@ -1048,6 +1103,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil && msg.rate.Known {
 			m.rate = msg.rate
 		}
+		// The rejection is written whatever the snapshot did: a failed rate fetch
+		// is precisely a run where the credential may have been refused, and
+		// suppressing the flag with the numbers would hide the reason along with
+		// them.
+		m.tokenRejected = msg.tokenRejected
 		return m, nil
 
 	case selfCheckMsg:
@@ -1100,6 +1160,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tokenInput.Blur()
 		m.tokenInput.SetValue("")
 		m.tokenError = ""
+		// This message is the one proof a credential works — FetchRateWithToken
+		// bypasses doGH precisely so a 401 cannot be retried away here. Clear the
+		// rejection explicitly rather than waiting for the next fetch to report
+		// it: the handler returns straight to modeAPIStatus, so the overlay would
+		// otherwise redraw "rejected (HTTP 401)" against the token that just
+		// validated.
+		m.tokenRejected = false
 		if msg.rate.Known {
 			m.rate = msg.rate
 		}
@@ -1112,8 +1179,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delete(m.readmeData, name)
 			}
 		}
-		// Backfill cards now that the higher limit is available.
-		return m, m.autoFetchCmdsForSelected()
+		// Refetch every tool with a repo, not just the selected one. The predicate
+		// is Init's — `t.GitHub != ""` — and deliberately NOT needsRemote, which
+		// returns false as soon as a card exists with a non-empty Latest: that is
+		// true for precisely the tools that rendered stale-but-present data
+		// through the degraded window, the ones this recovery exists for. Clearing
+		// remoteAnswered first is the other half; a tool the layer settled under
+		// the old credential is not settled under the new one.
+		//
+		// The cost is a goroutine plus a cache.json read per tool, not API quota:
+		// the version layer still serves a fresh entry from cache without a
+		// request, and a stale one is exactly what needs refetching.
+		clear(m.remoteAnswered)
+		cmds := []tea.Cmd{m.autoFetchCmdsForSelected()}
+		for _, t := range m.tools {
+			if t.GitHub != "" {
+				cmds = append(cmds, fetchRemoteCmd(t))
+			}
+		}
+		return m, tea.Batch(cmds...)
 
 	case openURLMsg:
 		if msg.err != nil {

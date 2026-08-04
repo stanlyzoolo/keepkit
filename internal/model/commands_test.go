@@ -564,3 +564,71 @@ func TestInitHelpProbeFollowsHelpMode(t *testing.T) {
 		t.Errorf("Init queued %d cmds in help mode and %d in readme mode, want exactly one more (the --help probe)", help, readme)
 	}
 }
+
+// TestTokenAcceptedRefetchesEveryRepo pins the recovery a new token buys. The
+// degraded window leaves every tool holding stale-but-present data, and
+// needsRemote answers false for exactly that shape — a card exists, Latest is
+// non-empty — so the predicate here is Init's (`t.GitHub != ""`), not
+// needsRemote's. Backfilling only the selected tool left the other 33 frozen
+// until a restart.
+func TestTokenAcceptedRefetchesEveryRepo(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	restore := version.SetConfigDirForTesting(t.TempDir())
+	t.Cleanup(restore)
+	t.Cleanup(func() { _ = version.ClearToken() })
+
+	newModel := func() Model {
+		m := New([]loader.ToolMeta{
+			{Name: "gh", GitHub: "cli/cli"},
+			{Name: "rg", GitHub: "BurntSushi/ripgrep"},
+			{Name: "fd", GitHub: "sharkdp/fd"},
+			{Name: "localtool"}, // no repo: nothing to refetch
+		})
+		m.width, m.height = 80, 24
+		// The state a degraded session ends in: every repo tool answered and
+		// carrying a card, which is what makes needsRemote the wrong predicate.
+		for _, name := range []string{"gh", "rg", "fd"} {
+			m.remoteAnswered[name] = true
+			m.repoCards[name] = version.RepoCard{About: "stale", Latest: "v1.0.0"}
+			m.versions[name] = VersionInfo{Latest: "v1.0.0"}
+		}
+		return m
+	}
+
+	t.Run("an accepted token clears remoteAnswered", func(t *testing.T) {
+		nm := mustModel(newModel().Update(tokenValidatedMsg{token: "ghp_goodtoken1234"}))
+		if len(nm.remoteAnswered) != 0 {
+			t.Errorf("remoteAnswered = %v, want cleared: nothing settled under the old credential is settled under the new one", nm.remoteAnswered)
+		}
+	})
+
+	t.Run("every repo tool is in the batch, populated card or not", func(t *testing.T) {
+		m := newModel()
+		_, cmd := m.Update(tokenValidatedMsg{token: "ghp_goodtoken1234"})
+		if cmd == nil {
+			t.Fatal("an accepted token returned no commands")
+		}
+		batch, ok := cmd().(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("cmd produced %T, want a tea.BatchMsg", cmd())
+		}
+		// autoFetchCmdsForSelected's own batch plus one fetchRemoteCmd per repo
+		// tool. Asserting the count rather than executing the leaves keeps the
+		// test off the network: internal/model cannot redirect testAPIBase.
+		if len(batch) != 1+3 {
+			t.Errorf("batch has %d commands, want 1 backfill + 3 repo refetches", len(batch))
+		}
+	})
+
+	t.Run("a refused token changes neither", func(t *testing.T) {
+		m := newModel()
+		updated, cmd := m.Update(tokenValidatedMsg{token: "ghp_bad", err: version.ErrTokenInvalid})
+		nm := updated.(Model)
+		if len(nm.remoteAnswered) != 3 {
+			t.Errorf("remoteAnswered = %v, want untouched by a refused token", nm.remoteAnswered)
+		}
+		if cmd != nil {
+			t.Errorf("a refused token returned a cmd (%T), want none", cmd())
+		}
+	})
+}

@@ -293,9 +293,13 @@ func (m Model) renderHintsBar(style lipgloss.Style, cells []string) string {
 		hints = truncateToWidth(stripANSI(hints), inner)
 	}
 
-	// The gauge takes whatever is left over, widest form first.
+	// The gauge takes whatever is left over, widest form first. The marker-only
+	// form is last because it is the least informative — and it exists because
+	// the marker costs a column: without it, arming the degraded state at the
+	// 80-column baseline pushed the whole gauge off the bar, so the session that
+	// most needs announcing was the one that announced nothing.
 	right := ""
-	for _, g := range []string{m.renderRateGauge(false), m.renderRateGauge(true)} {
+	for _, g := range []string{m.renderRateGauge(false), m.renderRateGauge(true), m.renderRateMarker()} {
 		if g != "" && claim(left)+lipgloss.Width(hints)+claim(g) <= inner {
 			right = g
 			break
@@ -432,6 +436,13 @@ const (
 // a token, <15 without one.
 const gaugeDangerRemaining = 100
 
+// rejectedTokenGlyph marks a session whose stored credential GitHub refused. It
+// is the same ✕ the [a] overlay's exhausted-quota icon uses, deliberately: both
+// mean "this is broken and it is not going to fix itself", and the two never
+// appear on the same surface. Width-stable (1 cell under both runewidth
+// conditions), which the gauge's right-edge arithmetic requires.
+const rejectedTokenGlyph = "✕"
+
 // gaugeVisible reports whether there is a quota to show. The gauge is on screen
 // for the whole session once the rate is known: it is also the only place the
 // API surface is visible at all, so hiding it at rest hid the [a] overlay with
@@ -449,6 +460,17 @@ func gaugeVisible(r version.RateLimit) bool {
 // itself still lives only in the [a] overlay, which the [?] overlay documents —
 // the bar spends no columns advertising a key. compact drops the bar, keeping
 // "api used/limit" for narrow terminals.
+//
+// A rejected token adds a ✕ to the label in both forms — this is the primary
+// place the degraded session is announced, and the compact form is the one a
+// narrow bar keeps, so dropping the marker there would hide the state exactly
+// where the numbers alone are least explicable. It is a suffix rather than a
+// relabel to "anon" because a user with no token is also anonymous and that is
+// not degradation: the ✕ says a credential was refused, and the limit beside it
+// says what is left. One column, sheds with the gauge, and no collision with the
+// ⚠/✕ usage-threshold icons, which live only in the [a] overlay. U+2715 measures
+// one cell under both runewidth conditions (unlike U+00D7, which is East-Asian
+// Ambiguous), so the bar's width arithmetic is unaffected.
 func (m Model) renderRateGauge(compact bool) string {
 	s := m.sty()
 	r := m.rate
@@ -456,7 +478,11 @@ func (m Model) renderRateGauge(compact bool) string {
 		return ""
 	}
 	used := usedOf(r)
-	label := s.Dim.Render("api ")
+	label := s.Dim.Render("api")
+	if m.tokenRejected {
+		label += s.Danger.Render(rejectedTokenGlyph)
+	}
+	label += s.Dim.Render(" ")
 	nums := s.Dim.Render(fmt.Sprintf("%d/%d", used, r.Limit))
 	if compact {
 		return label + nums
@@ -469,6 +495,25 @@ func (m Model) renderRateGauge(compact bool) string {
 	bar := fill.Render(strings.Repeat(gaugeFillGlyph, filled)) +
 		s.GaugeTrack.Render(strings.Repeat(gaugeTrackGlyph, gaugeCells-filled))
 	return label + bar + " " + nums
+}
+
+// renderRateMarker is the gauge's narrowest form: the rejection alone, with no
+// numbers. It exists for one width band — the marker costs a column, and at the
+// 80-column baseline that column is what decided between "api 34/60" and no
+// gauge at all, which would have hidden the degraded state at exactly the
+// default terminal size.
+//
+// Which half survives follows the bar's own rule, that what sheds is what is
+// least actionable: the numbers are a measurement the [a] overlay repeats, the
+// ✕ is the only sign anywhere on the screen that requests stopped carrying the
+// user's token. It returns "" when there is no rejection to report, so a healthy
+// session never gains a form the gauge did not have before.
+func (m Model) renderRateMarker() string {
+	if !m.tokenRejected || !gaugeVisible(m.rate) {
+		return ""
+	}
+	s := m.sty()
+	return s.Dim.Render("api") + s.Danger.Render(rejectedTokenGlyph)
 }
 
 // usedOf returns consumed requests (Limit-Remaining) clamped to [0,Limit], the
@@ -559,25 +604,48 @@ func maskToken(t string) string {
 }
 
 // renderAPIStatus builds the API-status overlay body: an optional add-token
-// nudge (when none is configured), the token source (masked), used/limit with
-// the shared icon, and the reset time.
+// nudge (when none is configured or the configured one was refused), the token
+// source (masked), used/limit with the shared icon, and the reset time.
+//
+// This is the surface that always has the answer. The gauge announces a rejected
+// token but is droppable under width pressure and invisible before the first
+// rate snapshot; here the state gets its reason (HTTP 401), its consequence
+// (requests run unauthenticated) and the key that fixes it, on a modal nothing
+// competes with for room.
 func (m Model) renderAPIStatus() string {
 	s := m.sty()
 	var b strings.Builder
 	b.WriteString(s.EmphasisBold.Render("github api usage") + "\n\n")
 
 	source := version.TokenSource()
-	// Nudge the user to add a token when none is configured — it lifts the hourly
-	// limit from 60 to 5000. Hidden once a token exists or while entering one.
-	if source == "none" && m.mode != modeTokenInput {
-		b.WriteString(s.Signal.Render("add a github token to raise the limit (60 → 5000/h)  ") + m.hint("e", "set") + "\n\n")
+	// Nudge the user when there is a token to add or to replace — either way the
+	// hourly limit is 60 and a working token lifts it to 5000. A rejected token
+	// needs different wording: "add" reads as advice to someone who has already
+	// done it, and the thing to do is swap the credential, not create one.
+	// Hidden while entering one, when the input below is the whole answer.
+	if m.mode != modeTokenInput {
+		switch {
+		case m.tokenRejected:
+			b.WriteString(s.Signal.Render("replace the token to restore the 5000/h limit  ") + m.hint("e", "set") + "\n\n")
+		case source == "none":
+			b.WriteString(s.Signal.Render("add a github token to raise the limit (60 → 5000/h)  ") + m.hint("e", "set") + "\n\n")
+		}
 	}
 
 	tokenLine := "token  " + source
 	if tok := version.Token(); tok != "" {
 		tokenLine += " (" + maskToken(tok) + ")"
 	}
-	b.WriteString(s.Text.Render(tokenLine) + "\n")
+	// The mask is what the user recognises the dead credential by, which is why
+	// version.Token() reads the raw core and not the suppressed resolveToken:
+	// blanking the value in exactly the state this line exists to describe would
+	// leave "token  config — rejected" naming no token at all.
+	if m.tokenRejected {
+		b.WriteString(s.Danger.Render(tokenLine+" — rejected (HTTP 401)") + "\n")
+		b.WriteString(s.Dim.Render("requests run unauthenticated") + "\n")
+	} else {
+		b.WriteString(s.Text.Render(tokenLine) + "\n")
+	}
 
 	if m.rate.Known {
 		icon := rateIcon(s, m.rate)
