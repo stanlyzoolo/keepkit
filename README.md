@@ -344,11 +344,11 @@ The degraded session itself is where the ceiling bites: a large tool list costs 
 than 60 requests, so on a cold cache expect a partial fill until the hour turns. Cards
 that were already loaded keep showing what they had.
 
-`[r]` in the brief panel now answers every press. A refresh that settled nothing says
-so — `refresh failed: rate limited — press [a]` or `refresh failed: network error` —
-while a successful one stays silent, because the repainted card is the answer. Before,
-success and every kind of failure looked identical: the spinner turned and nothing
-changed.
+`[r]` in the brief panel now answers every press. A refresh that failed says so —
+`refresh failed: rate limited — press [a]` or `refresh failed: network error` — while
+one that fetched something stays silent, because the repainted card is the answer.
+Before, success and every kind of failure looked identical: the spinner turned and
+nothing changed.
 
 ## Data storage
 

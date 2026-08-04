@@ -241,10 +241,13 @@ func refreshingModel(t *testing.T, name string) Model {
 // spinner turns and the card does not change, so a user could not tell a tool
 // that is up to date from a tool whose data has not been fetched in a day.
 //
-// The predicate is conclusive, not err: a pass can fail and still have settled
-// nothing to say (a repo with no releases answers with a nil error), and a
-// rate-limited pass that served a stale card carries an error while settling
-// nothing.
+// The predicate is err, not !conclusive. The broader one reported a network
+// failure that never happened for a ref the version layer refused outright — an
+// unsupported or spoofed host, answered with a bare RepoData and a nil error,
+// no request made — and it contradicted a card the user had just watched update
+// on a partial pass that fetched a new tag and lost only the repo info. Now that
+// every real failure carries a name, the error is the honest question to ask;
+// the two silent rows below are what pin the difference.
 func TestRefreshAnswersEveryPress(t *testing.T) {
 	tests := []struct {
 		name       string

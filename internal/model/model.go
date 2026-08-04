@@ -137,7 +137,7 @@ const updateLogMaxLines = 500
 // differently.
 const updateBusyStatus = "another update is running"
 
-// refreshFailedStatus names why an [r] settled nothing. The taxonomy is
+// refreshFailedStatus names why an [r] failed. The taxonomy is
 // deliberately two-tier: a rate limit has an answer the user can act on — wait,
 // or raise the ceiling from the [a] overlay — while a 401, a 5xx, a timeout and
 // a dropped connection all mean "try later" and the UI has nothing to tell them
