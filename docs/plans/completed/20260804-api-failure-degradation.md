@@ -312,16 +312,18 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/version/github.go`
 - Modify: `internal/version/github_test.go`
 
-- [ ] add a `http.StatusUnauthorized` branch to `classifyStatus` returning
+- [x] add a `http.StatusUnauthorized` branch to `classifyStatus` returning
       `ErrTokenInvalid`, placed before the generic `HTTP %d` return
-- [ ] extend the doc comment on `ErrTokenInvalid`: it is no longer produced only
+- [x] extend the doc comment on `ErrTokenInvalid`: it is no longer produced only
       by `FetchRateWithToken`, and after task 5 it is a defensive classification
       rather than a hot path
-- [ ] write a test: a 401 response classifies as `ErrTokenInvalid`
-- [ ] write tests for the neighbours that must not change: 403 with
+- [x] write a test: a 401 response classifies as `ErrTokenInvalid`
+      (`TestClassifyStatusTaxonomy`, `TestClassifyStatusUnauthorizedLogs`)
+- [x] write tests for the neighbours that must not change: 403 with
       `remaining=0` → `ErrRateLimited`, 403 with `remaining>0` → generic, 404 →
-      generic and unlogged
-- [ ] run `go test -race ./internal/version/` — must pass before task 2
+      generic and unlogged (`TestClassifyStatusTaxonomy`,
+      `TestClassifyStatusNotFoundStaysSilent`)
+- [x] run `go test -race ./internal/version/` — must pass before task 2
 
 ### Task 2: Render cached data on any error, not only on a nil one
 
@@ -329,20 +331,22 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/model/model.go`
 - Modify: `internal/model/render_test.go`
 
-- [ ] rewrite the first `remoteMsg` case as `case hasData || msg.err == nil:`
-- [ ] update the branch comment to say the predicate is about data, not about
+- [x] rewrite the first `remoteMsg` case as `case hasData || msg.err == nil:`
+- [x] update the branch comment to say the predicate is about data, not about
       the error class
-- [ ] **amend the existing assertion this falsifies**: the "remoteMsg with err
+- [x] **amend the existing assertion this falsifies**: the "remoteMsg with err
       set must not touch the caches" block in
       `TestUpdateInstalledAndRemoteMsgPopulateCaches`
       (`internal/model/render_test.go:2503-2512`) feeds `latest: "2.0"`, which
       makes `hasData` true. Split it: an error with **no** data still populates
       nothing; an error **with** data now populates
-- [ ] write a test: `remoteMsg` carrying a non-rate-limit error plus a populated
+- [x] write a test: `remoteMsg` carrying a non-rate-limit error plus a populated
       card merges `versions`, `repoCards` and `repoStatus`
-- [ ] write a test: `remoteMsg` with no data and `repoStatus == "rate-limited"`
+      (`TestRemoteMsgNonRateLimitErrorKeepsData`)
+- [x] write a test: `remoteMsg` with no data and `repoStatus == "rate-limited"`
       still reaches the second case
-- [ ] run `go test -race ./internal/model/` — must pass before task 3
+      (`TestRemoteMsgRateLimitedWithNoDataStillFlags`)
+- [x] run `go test -race ./internal/model/` — must pass before task 3
 
 ### Task 3: Propagate the classified error out of getRepoData
 
@@ -350,24 +354,26 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/version/github.go`
 - Modify: `internal/version/github_test.go`
 
-- [ ] add a helper that picks the more actionable of two errors —
-      `ErrRateLimited` over transient — ignoring `errNoReleases`
-- [ ] replace `var rlErr error` and both `d.Err = rlErr` sites (`github.go:480`
+- [x] add a helper that picks the more actionable of two errors —
+      `ErrRateLimited` over transient — ignoring `errNoReleases` (`pickFetchErr`)
+- [x] replace `var rlErr error` and both `d.Err = rlErr` sites (`github.go:480`
       and `:547`) with the helper
-- [ ] update the `RepoData.Err` doc comment: it no longer carries only
-      `ErrRateLimited`
-- [ ] **amend the existing assertion this falsifies**:
+- [x] update the `RepoData.Err` doc comment: it no longer carries only
+      `ErrRateLimited` (and the `Conclusive` comment, whose rationale rested on
+      the same claim)
+- [x] **amend the existing assertion this falsifies**:
       `TestRepoDataConclusive/total failure is not conclusive`
       (`internal/version/github_test.go:1281-1284`) fatals on a non-nil `Err`
       with the premise *"a 5xx reaches the caller as a nil error"*. Invert it and
       rewrite the function's rationale comment (`:1252-1257`), which states the
       same now-false claim — the test's real subject (`Conclusive`, not `Err`, is
       the retry marker) survives
-- [ ] write tests for the pick order, driving an `httptest` server that answers
-      403+remaining=0 / 500 per endpoint
-- [ ] write a test: a repo with no releases still reports `Err == nil` and
-      `Conclusive == true`
-- [ ] run `go test -race ./...` — must pass before task 4
+- [x] write tests for the pick order, driving an `httptest` server that answers
+      403+remaining=0 / 500 per endpoint (`TestRepoDataErrPickOrder`, 7 rows)
+- [x] write a test: a repo with no releases still reports `Err == nil` and
+      `Conclusive == true` (`TestRepoDataConclusive/no releases is conclusive
+      with no error`)
+- [x] run `go test -race ./...` — must pass before task 4
 
 ### Task 4: Split the token accessors and record a rejected value
 
@@ -375,24 +381,35 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/version/token.go`
 - Modify: `internal/version/token_test.go`
 
-- [ ] extract `effectiveToken()` (env, else `tokenMem`) as the raw core and
+- [x] extract `effectiveToken()` (env, else `tokenMem`) as the raw core and
       point `Token()` and `TokenSource()` at it — they must keep answering for a
       rejected token, or the overlay loses the mask it is meant to show
-- [ ] add `rejectedToken string` under `tokenMu` and `rejectToken(tok string)`
+      (`TokenSource` reads the raw state directly: it must tell env from config,
+      which the core's single return value cannot, so it is pointed at the same
+      state rather than at the function, with a comment saying why)
+- [x] add `rejectedToken string` under `tokenMu` and `rejectToken(tok string)`
       writing it, with exactly one `logx` line on the transition
-- [ ] make `resolveToken()` the suppressing wrapper — `""` while the effective
+- [x] make `resolveToken()` the suppressing wrapper — `""` while the effective
       token equals `rejectedToken` — and document that `doGH` is its only caller
-- [ ] add `TokenRejected() bool` as
+- [x] add `TokenRejected() bool` as
       `rejectedToken != "" && effectiveToken() == rejectedToken`
-- [ ] extend `resetTokenState` (`token_test.go:12-27`) to clear `rejectedToken`
+- [x] extend `resetTokenState` (`token_test.go:12-27`) to clear `rejectedToken`
       in **both** its setup and its `t.Cleanup`
-- [ ] write tests: rejecting suppresses `resolveToken` but not `Token`,
+- [x] write tests: rejecting suppresses `resolveToken` but not `Token`,
       `TokenSource` or the mask; a different token via `SetToken` resolves again;
       `ClearToken` leaves nothing resolvable
-- [ ] write a test: with **no** token configured, `TokenRejected()` is false —
+      (`TestRejectTokenSuppressesOnlyTheRequestPath`,
+      `TestRejectTokenNewTokenResolvesAgain`,
+      `TestRejectTokenClearLeavesNothingResolvable`)
+- [x] write a test: with **no** token configured, `TokenRejected()` is false —
       the empty-equals-empty degenerate case
-- [ ] write a test: `rejectToken` called twice for the same value logs once
-- [ ] run `go test -race ./internal/version/` — must pass before task 5
+      (`TestTokenRejectedWithNoTokenConfigured`)
+- [x] write a test: `rejectToken` called twice for the same value logs once
+      (`TestRejectTokenLogsOnceForTheSameValue`, which also pins that the token
+      never reaches the log)
+- ➕ `TestTokenRejectedEnvToken` — a bad `GITHUB_TOKEN` cannot be unset, and the
+      same comparison is what suppresses it; worth its own case
+- [x] run `go test -race ./internal/version/` — must pass before task 5
 
 ### Task 5: Retry once without the token on a 401 in doGH
 
@@ -400,26 +417,29 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/version/github.go`
 - Modify: `internal/version/github_test.go`
 
-- [ ] in `doGH`, remember whether an `Authorization` header was set; on a 401
+- [x] in `doGH`, remember whether an `Authorization` header was set; on a 401
       response drain and close the body, call `rejectToken`, clone the request
       without the header and retry exactly once
-- [ ] account the retry's response through `updateRateFromHeaders` like any
+- [x] account the retry's response through `updateRateFromHeaders` like any
       other response
-- [ ] document on `FetchRateWithToken` that bypassing `doGH` is load-bearing,
+- [x] document on `FetchRateWithToken` that bypassing `doGH` is load-bearing,
       not incidental — the retry would otherwise answer an anonymous 200 and a
       dead token would be persisted
-- [ ] route every new 401 test through `resetTokenState` so the rejection cannot
+- [x] route every new 401 test through `resetTokenState` so the rejection cannot
       leak into later tests in the same binary
-- [ ] write a test: server answers 401 with `Authorization` and 200 without →
+- [x] write a test: server answers 401 with `Authorization` and 200 without →
       two requests, the second header-less, the call succeeds,
-      `TokenRejected()` is true
-- [ ] write a test: after the rejection, later requests go out header-less on
-      the first attempt with no second retry
-- [ ] write a test: `FetchRateWithToken` against an always-401 server returns
+      `TokenRejected()` is true (`TestDoGHRetriesUnauthenticatedOn401`, which
+      also asserts the retry's 60-limit headers are what the gauge ends up with)
+- [x] write a test: after the rejection, later requests go out header-less on
+      the first attempt with no second retry (`TestDoGHSkipsTokenAfterRejection`)
+- [x] write a test: `FetchRateWithToken` against an always-401 server returns
       `ErrTokenInvalid` and never an anonymous 200
-- [ ] write a test: a 401 for a request that carried no token is classified,
-      not retried
-- [ ] run `go test -race ./...` — must pass before task 6
+      (`TestFetchRateWithTokenNeverSeesTheRetry`, which also pins that
+      validating a candidate does not arm the session-wide suppression)
+- [x] write a test: a 401 for a request that carried no token is classified,
+      not retried (`TestDoGHDoesNotRetryATokenlessRequest`)
+- [x] run `go test -race ./...` — must pass before task 6
 
 ### Task 6: Carry the rejected state to the model on messages
 
@@ -428,18 +448,22 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/model/commands.go`
 - Modify: `internal/model/render_test.go`
 
-- [ ] add `tokenRejected bool` to `remoteMsg` and `rateMsg`, documenting that it
+- [x] add `tokenRejected bool` to `remoteMsg` and `rateMsg`, documenting that it
       is snapshotted in the command goroutine like `rate`
-- [ ] set it in `remoteCmd` and `fetchRateCmd` from `version.TokenRejected()`
+- [x] set it in `remoteCmd` and `fetchRateCmd` from `version.TokenRejected()`
       after the fetch returns
-- [ ] add `m.tokenRejected` to `Model` and write it from both handlers
-- [ ] clear `m.tokenRejected` in the `tokenValidatedMsg` success path, before it
+- [x] add `m.tokenRejected` to `Model` and write it from both handlers
+      (unconditionally and in both directions — the flag is the state of the
+      session's credential, not a property of one pass, and a `rateMsg` whose
+      numbers the non-clobber merge drops must still carry the reason)
+- [x] clear `m.tokenRejected` in the `tokenValidatedMsg` success path, before it
       returns to `modeAPIStatus`
-- [ ] write tests: a `remoteMsg` and a `rateMsg` with `tokenRejected: true` each
-      set the field
-- [ ] write a test: an accepted `tokenValidatedMsg` clears it, and a failed one
-      leaves it alone
-- [ ] run `go test -race ./internal/model/` — must pass before task 7
+- [x] write tests: a `remoteMsg` and a `rateMsg` with `tokenRejected: true` each
+      set the field (`TestTokenRejectedRidesOnMessages`, 4 rows including the
+      clear direction and a failed `rateMsg`)
+- [x] write a test: an accepted `tokenValidatedMsg` clears it, and a failed one
+      leaves it alone (`TestTokenValidatedMsgClearsRejection`)
+- [x] run `go test -race ./internal/model/` — must pass before task 7
 
 ### Task 7: Mark the rejected token on the status-bar gauge
 
@@ -447,17 +471,40 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/render_test.go`
 
-- [ ] render the gauge label as `api✕ ` with the `✕` in `Danger` when
+- [x] render the gauge label as `api✕ ` with the `✕` in `Danger` when
       `m.tokenRejected`, in both the full and the `compact` form
-- [ ] extend the `renderRateGauge` doc comment with the new state and with why
+- [x] extend the `renderRateGauge` doc comment with the new state and with why
       the suffix is not a relabel to `anon`
-- [ ] write a test: the gauge carries `✕` when rejected and does not when not
-- [ ] write a test: `TestStatusBarNeverWraps` stays green at the 80×24 baseline
-      with the rejected state on
-- [ ] write a test: the compact form keeps the marker (it is the form a narrow
+- [x] write a test: the gauge carries `✕` when rejected and does not when not
+      (`TestRenderRateGaugeMarksARejectedToken`)
+- [x] write a test: `TestStatusBarNeverWraps` stays green at the 80×24 baseline
+      with the rejected state on (three rows added: plain, in `focusBrief`, and
+      under a self banner)
+- [x] write a test: the compact form keeps the marker (it is the form a narrow
       bar keeps) — note the shed order is *version cell first, gauge after*
       (`render.go:284-303`), so no test may claim the opposite
-- [ ] run `go test -race ./internal/model/` — must pass before task 8
+- ⚠️ **the plan's "the suffix costs one column, sheds with the gauge" was one
+      step short.** The marker does not merely shed *with* the gauge — it makes
+      the gauge shed *earlier*. Measured: with the six-hint bar and a 60-limit
+      snapshot the gauge survived down to ≤78 columns before, and only to 81
+      after, so **at the 80×24 baseline arming the degraded state removed the
+      announcement entirely** — the session that most needs announcing was the
+      one showing nothing. Fixed inside this task with a third, narrowest form:
+      **`renderRateMarker()`** — `api✕` with no numbers, tried last in
+      `renderHintsBar`'s widest-form-first loop, `""` when there is no rejection
+      (so a healthy bar gains no form it did not have). Which half survives
+      follows the bar's own shed rule: the numbers are a measurement `[a]`
+      repeats, the `✕` is the only sign anywhere that requests stopped carrying
+      the token. Pinned by `TestRenderRateMarkerIsTheLastFormStanding`
+- ➕ `TestRenderRateGaugeMarksARejectedToken/the mark costs exactly one cell` —
+      the gauge's width is what `renderHintsBar` reserves at the right edge, so a
+      two-cell glyph would push the bar past the terminal and scroll the top
+      border off the alt screen. U+2715 measures 1 under both runewidth
+      conditions; U+00D7 would have measured 2 under `RUNEWIDTH_EASTASIAN=1`
+- [x] mutation-checked (per the `tui-render` skill): removing the label marker,
+      dropping the marker-only form from the fit loop, and restyling the mark
+      `Dim` each turn the new assertions red
+- [x] run `go test -race ./internal/model/` — must pass before task 8
 
 ### Task 8: Explain the rejection in the [a] overlay
 
@@ -465,21 +512,35 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/render_test.go`
 
-- [ ] render the token line as `token  <source> (<masked>) — rejected (HTTP
+- [x] render the token line as `token  <source> (<masked>) — rejected (HTTP
       401)` in `Danger` when `m.tokenRejected`, with
       `requests run unauthenticated` under it
-- [ ] widen the `add a github token…` nudge condition from
+- [x] widen the `add a github token…` nudge condition from
       `source == "none"` to also cover the rejected case, with wording about
-      replacing it
-- [ ] write a test: the rejected token line renders **with its mask intact**
+      replacing it (the two are a `switch`, not one widened condition: "add a
+      github token" reads as advice to someone who already has one, so the
+      rejected case gets `replace the token to restore the 5000/h limit`)
+- [x] write a test: the rejected token line renders **with its mask intact**
       (the task 4 split is what makes this possible) plus the unauthenticated
-      note
-- [ ] write a test: the nudge appears for a rejected token and stays hidden
-      while `modeTokenInput` is open
-- [ ] write a test: a healthy token renders neither
-- [ ] write a size-budget test for the overlay at 80×24 — this task adds its
+      note (`TestRenderAPIStatusExplainsARejectedToken`). Note the mask
+      invariant is pinned **one layer down**, in
+      `TestRejectTokenSuppressesOnlyTheRequestPath`: `internal/model` cannot
+      reach the unexported `rejectToken`, so a model test can only prove the
+      overlay prints what `version.Token()` returns, not that `Token()` still
+      returns it under a rejection. Mutation-verified there — reverting `Token`
+      to delegate to `resolveToken` turns that test red
+- [x] write a test: the nudge appears for a rejected token and stays hidden
+      while `modeTokenInput` is open (and the *line* stays under the input — it
+      is the state, not a prompt)
+- [x] write a test: a healthy token renders neither
+- [x] write a size-budget test for the overlay at 80×24 — this task adds its
       longest line so far and nothing pins its width today
-- [ ] run `go test -race ./internal/model/` — must pass before task 9
+      (`TestRenderAPIStatusSizeBudget`, both modes × both states, with a reset
+      time so the height is measured full; the widest framed form is 56 cells
+      against the 76 budget)
+- [x] mutation-checked: removing the rejected line and removing the replace
+      nudge each turn the new assertions red
+- [x] run `go test -race ./internal/model/` — must pass before task 9
 
 ### Task 9: Make [r] answer every press
 
@@ -487,20 +548,29 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/model/model.go`
 - Modify: `internal/model/status_test.go`
 
-- [ ] in the `remoteMsg` handler, where `refreshingFor` is cleared, return
-      `setStatus` with a reason when `!msg.conclusive`
-- [ ] map the reason from `msg.err`: `ErrRateLimited` →
+- [x] in the `remoteMsg` handler, where `refreshingFor` is cleared, return
+      `setStatus` with a reason when `!msg.conclusive` (inside the
+      `msg.toolName == m.refreshingFor` branch, so the background passes `Init`
+      fires — inconclusive all the time on an offline start — never put a
+      "refresh failed" on the bar for a gesture nobody made)
+- [x] map the reason from `msg.err`: `ErrRateLimited` →
       `refresh failed: rate limited — press [a]`, anything else →
       `refresh failed: network error` (no token wording — see the two-tier note
-      in Solution Overview)
-- [ ] keep success silent — the card repaint is the answer
-- [ ] write a table test over the reasons asserting the status text, shrinking
+      in Solution Overview), in the single `refreshFailedStatus(err)` helper
+- [x] keep success silent — the card repaint is the answer
+- [x] write a table test over the reasons asserting the status text, shrinking
       `statusMsgTTL` first as the sibling helpers require
       (`status_test.go:44-45`) so the tick does not add a real second per case
-- [ ] write a test using `assertOnlyExpiryTick` (`status_test.go:27`) that no
-      fetch command rode along
-- [ ] write a test: a conclusive pass sets no status
-- [ ] run `go test -race ./internal/model/` — must pass before task 10
+      (`TestRefreshAnswersEveryPress`, 5 rows)
+- [x] write a test using `assertOnlyExpiryTick` (`status_test.go:27`) that no
+      fetch command rode along (asserted on every failing row of the table)
+- [x] write a test: a conclusive pass sets no status
+- ➕ `TestRefreshStatusOnlyForTheRefreshedTool` — the ownership half: a failing
+      pass for a *different* tool leaves both the status and `refreshingFor`
+      alone
+- [x] mutation-checked: removing the answer, and collapsing the rate-limit tier
+      into the generic one, each turn the table red
+- [x] run `go test -race ./internal/model/` — must pass before task 10
 
 ### Task 10: Refetch everything when a good token is accepted
 
@@ -508,56 +578,94 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
 - Modify: `internal/model/model.go`
 - Modify: `internal/model/commands_test.go`
 
-- [ ] in the `tokenValidatedMsg` success path, clear `m.remoteAnswered` before
+- [x] in the `tokenValidatedMsg` success path, clear `m.remoteAnswered` before
       building commands
-- [ ] fan out `fetchRemoteCmd` for every tool with `t.GitHub != ""` — `Init`'s
+- [x] fan out `fetchRemoteCmd` for every tool with `t.GitHub != ""` — `Init`'s
       predicate, **not** `needsRemote`, which returns false for exactly the
       tools that rendered stale-but-present data and therefore need it most
-- [ ] document the choice and its cost inline (a goroutine plus a `cache.json`
+- [x] document the choice and its cost inline (a goroutine plus a `cache.json`
       read per tool, not API quota)
-- [ ] write a test: an accepted token clears `remoteAnswered` and returns a
+- [x] write a test: an accepted token clears `remoteAnswered` and returns a
       batch sized for every tool with a GitHub ref
-- [ ] write a test: a tool whose card is already populated is still in the batch
-      (the regression `needsRemote` would cause)
-- [ ] write a test: a rejected validation (`msg.err != nil`) changes neither
-- [ ] run `go test -race ./...` — must pass before task 11
+      (`TestTokenAcceptedRefetchesEveryRepo`; the fixture seeds the state a
+      degraded session ends in — every repo tool answered and carrying a card)
+- [x] write a test: a tool whose card is already populated is still in the batch
+      (the regression `needsRemote` would cause) — mutation-verified: swapping
+      the predicate for `needsRemote` turns that subtest red
+- [x] write a test: a rejected validation (`msg.err != nil`) changes neither
+- [x] run `go test -race ./...` — must pass before task 11
 
 ### Task 11: Verify acceptance criteria
 
-- [ ] verify all requirements from Overview are implemented: 401 named, error
-      propagated, retry degrades to anonymous, three surfaces present, `[r]`
-      always answers
-- [ ] verify edge cases: a 401 on a token-less request, a rejected env token, a
-      re-entered identical bad token, and **no** token at all (must not read as
-      degraded)
-- [ ] verify the two `doGH` consumers whose negatives outlive the degraded
-      window: a README negative cached under the new error class is **not**
-      cleared by the `tokenValidatedMsg` cleanup, which drops only rate-limited
-      entries (`model.go:1110-1114`); and `SelfLatest` has no force variant, so a
-      self-check that failed while degraded stays failed until the next launch.
-      Decide per case: fix here, or record as known and out of scope
-- [ ] run the full suite: `go test -race ./...`
-- [ ] run the `preflight` skill (build / vet / `go test -race` / golangci-lint)
-- [ ] verify no test reaches a real config path (the `TestConfigDirIsolated`
-      tests stay green)
+- [x] verify all requirements from Overview are implemented: 401 named (task 1),
+      error propagated (task 3, plus task 2 so the propagation does not blank a
+      card), retry degrades to anonymous (task 5), three surfaces present
+      (tasks 7/8/9), `[r]` always answers (task 9)
+- [x] verify edge cases: a 401 on a token-less request
+      (`TestDoGHDoesNotRetryATokenlessRequest`), a rejected env token
+      (`TestTokenRejectedEnvToken`), a re-entered identical bad token
+      (`TestRejectedTokenReenteredStaysSuppressed`), and **no** token at all
+      (`TestTokenRejectedWithNoTokenConfigured` — the `rejectedToken != ""`
+      guard, so an unauthenticated-by-choice session shows no `✕` and no
+      rejection text)
+- [x] verify the two `doGH` consumers whose negatives outlive the degraded
+      window. **Both recorded as known and out of scope**, and neither is made
+      worse by this change:
+  - **README.** The `tokenValidatedMsg` cleanup drops only content-less
+    `ErrRateLimited` entries, so a README that failed with a *transient* error
+    stays a session-scoped dead end recoverable by `[r]` alone. That was already
+    true before this change and the retry makes the new class unreachable in
+    practice: a 401 is consumed by `doGH` and answered by the anonymous
+    response, and GitHub does not 401 a credential-less request — so no README
+    can be cached under `ErrTokenInvalid` outside a proxy/enterprise host that
+    401s anonymously. Widening the cleanup to any content-less non-`ErrNoReadme`
+    entry is a behaviour change beyond this plan's scope.
+  - **`SelfLatest`.** Still no force variant, so a self-check that failed while
+    degraded has no banner until the next launch. It does **not** poison the
+    cache — a transient failure stamps no timestamp — so the next launch
+    retries, which is the documented design. Left as is.
+- [x] run the full suite: `go test -race ./...`
+- [x] run the `preflight` skill (build / vet / `go test -race` / golangci-lint —
+      all four green, lint reports 0 issues), plus CI's cross-compile step
+      (`GOOS=windows build`+`vet`, `GOOS=darwin build`)
+- [x] verify no test reaches a real config path (the `TestConfigDirIsolated`
+      tests stay green in all four packages that carry one)
 
 ### Task 12: [Final] Update documentation
 
-- [ ] update the **GitHub API** section of `CLAUDE.md`: `doGH` now retries
+- [x] update the **GitHub API** section of `CLAUDE.md`: `doGH` now retries
       without the token on a 401, and `RepoData.Err` no longer carries only
-      `ErrRateLimited`
-- [ ] update the **Async fetch responsibility split** sentence in `CLAUDE.md`
+      `ErrRateLimited` (plus the value-not-bool rejection state and the
+      `effectiveToken`/`resolveToken` split, and the `FetchRateWithToken` bypass
+      promoted from an incidental detail to a pinned invariant)
+- [x] update the **Async fetch responsibility split** sentence in `CLAUDE.md`
       that reads *"`Err` carries `ErrRateLimited` or nil, so an offline start and
       a 5xx both arrive with a nil error"* — the second half stops being true
-- [ ] update the **status bar** and **API-status overlay** paragraphs of
-      `CLAUDE.md` with the `api✕` state and the rejected-token line
-- [ ] update the two in-code comments that assert the same obsolete claim and
+- [x] update the **status bar** and **API-status overlay** paragraphs of
+      `CLAUDE.md` with the `api✕` state and the rejected-token line (plus the
+      `renderRateMarker` third form, the replace-vs-add nudge, the recovery
+      fan-out, and `[r]`'s answer under **Refresh**)
+- [x] update the two in-code comments that assert the same obsolete claim and
       that `docs-sync` cannot see: the `remoteMsg.conclusive` field doc
       (`internal/model/model.go:67-71`) and the `remoteAnswered` field doc
       (`:399-408`)
-- [ ] run the `docs-sync` skill to catch anything else that drifted
-- [ ] update `README.md` only if it documents the token flow
-- [ ] move this plan to `docs/plans/completed/`
+- [x] run the `docs-sync` skill to catch anything else that drifted. Found and
+      fixed three more in **`ARCHITECTURE.md`** (the same now-false `Err` claim
+      in the async-fetch section, the `ErrRateLimited`/`doGH` bullets in the
+      GitHub API section, and the status-bar shed order), plus a new note in both
+      `CLAUDE.md` and `ARCHITECTURE.md` that **`version.rejectedToken` is
+      process-global state a test can leak** — `resetTokenState` is its seam.
+      Verified unchanged: the mermaid import graph (21 edges, no new package
+      edge — `version` already imported `logx`), the 12-value `inputMode` enum,
+      the README key tables, `go.mod` vs README **Stack**, the storage-path
+      table, every timeout/limit, and all three `docs/design/` files (none makes
+      a claim this change falsifies; `self-update.md`'s "no release published
+      arrives as a nil error" is still exactly true)
+- [x] update `README.md` only if it documents the token flow — it does, so the
+      **GitHub API and token** section gained the expired-token degradation, the
+      `api✕`/overlay surfaces, the one-press recovery, the honest cold-cache
+      caveat, and `[r]`'s new answer
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 

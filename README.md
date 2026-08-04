@@ -324,6 +324,23 @@ with `0600` permissions; an environment token is never written to disk. When the
 quota is exhausted, already-loaded cards are not erased, and a card with no data
 shows the `rate limited — press a` hint.
 
+**A token that expires does not black the app out.** GitHub answers `401` to every
+request a dead credential carries, while the very same URLs work fine with no token at
+all — so keepkit retries once without it and carries on unauthenticated at 60
+requests per hour. The token file is left alone; it is simply unused until you replace
+it. The state is visible rather than silent: the gauge reads `api✕`, and `a` explains
+it — `token config (ghp_••••••••3f2a) — rejected (HTTP 401)`, with the mask kept so you
+can tell which credential to swap. Enter a working one with `[e]` and every card
+refetches at once, without a restart. Note that on a *cold* cache this is a partial
+recovery: a large tool list needs more than 60 requests, so expect some cards to fill
+and the rest to report `refresh failed: rate limited — press [a]` until the hour turns.
+
+`[r]` in the brief panel now answers every press. A refresh that settled nothing says
+so — `refresh failed: rate limited — press [a]` or `refresh failed: network error` —
+while a successful one stays silent, because the repainted card is the answer. Before,
+success and every kind of failure looked identical: the spinner turned and nothing
+changed.
+
 ## Data storage
 
 The tool list lives in `~/.config/keepkit/meta.yaml` — one entry per tool (`name`,

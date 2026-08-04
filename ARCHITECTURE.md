@@ -120,9 +120,17 @@ marks a tool in `m.remoteAnswered` when the version layer reports the pass as
 conclusive (`RepoData.Conclusive` — the entry is fresh), because an empty `latest` is
 itself the answer for a repo with neither releases nor tags and the missing-`Latest`
 clause would otherwise re-dispatch on every cursor visit. The flag has to come from
-that layer: `Err` holds `ErrRateLimited` or nil, so an offline start reaches the model
-as a nil error, and `m.repoStatus` is no better — a rate-limited pass carrying a stale
-card writes a status there too.
+that layer, and `Err` cannot stand in for it even now that every failure class arrives
+named: a repo with no releases settles the tool with a nil `Err`, while a rate-limited
+pass that served a stale card carries one while settling nothing. `m.repoStatus` is no
+better — that same pass writes a status there too. A validated token clears the whole
+marker set and refetches every tool with a repo, since nothing settled under the old
+credential is settled under the new one.
+
+The handler's data path is gated on `hasData || err == nil` — on *data*, not on the
+error class. A pass that failed but still carried values up from the cache renders
+them; gating on `ErrRateLimited` alone meant a 401 or a 5xx blanked a card the pass
+had in hand.
 
 Two commands in the `Init()` batch belong to no tool: `fetchRateCmd` (seeds the quota
 gauge — warm-cache starts make no other request) and, on release builds only,
@@ -251,6 +259,12 @@ Key invariants:
   subject that names what is being updated. Under pressure the bar sheds in order of
   how actionable a thing is: trailing hints, then the gauge, then the version, then the
   self cell — and the leading hint is truncated rather than allowed to wrap.
+  A **rejected token** marks the gauge `api✕` (`Danger` `✕`, one cell under both
+  runewidth conditions) in every form, since that is where a degraded session is
+  announced for its whole life. The mark costs a column, so the gauge has a third,
+  narrowest form — `renderRateMarker`, the mark with no numbers — without which arming
+  the state at the 80-column baseline pushed the whole gauge off the bar and the
+  session that most needed announcing showed nothing.
   All three panels reserve the same `panelFooterRows` and keep the same `panelGutter` —
   one blank column between the frame and everything the panel draws, which in `[2]` and
   `[3]` is *all* content: `cardWidth()` and `helpWrapWidth()` are the single definitions
@@ -461,13 +475,29 @@ makes the check free. Token: `GITHUB_TOKEN` from the environment always wins ove
 `/rate_limit` request before being written to disk.
 
 - **`doGH(req)`** — the single auth point: headers, the 5-second client, reading the
-  rate-limit headers of every response.
+  rate-limit headers of every response. **On a 401 to a request that carried a token
+  it marks the credential rejected and retries the same request once without it.** An
+  expired token is strictly worse than no token — the same URLs answer 200
+  unauthenticated — so a blackout degrades into a working 60 req/h session instead.
+  `FetchRateWithToken` deliberately bypasses `doGH`: validation is the one caller that
+  must observe a 401 rather than survive it, or a dead token would be persisted.
+- **The rejection is a value, not a bool** (`rejectedToken`), so it needs no lifecycle:
+  a new token differs from it, a cleared one is empty, and a bad `GITHUB_TOKEN` that
+  cannot be unset is suppressed by the same comparison. Only `resolveToken` (whose sole
+  caller is `doGH`) applies it; `Token`/`TokenSource` read the raw core, so the `[a]`
+  overlay keeps the source and the mask that identify which credential to replace. The
+  token file is never deleted.
 - **The rate-limit snapshot** is updated through `mergeRateObservation`: an
   "optimistic" observation from `/rate_limit` cannot roll back the per-request
   header readings within the same window.
-- **`ErrRateLimited`** — a typed error for 403/429 with `X-RateLimit-Remaining: 0`
-  from the response's own headers; the card shows "rate limited — press [a]",
-  already-loaded data is not erased.
+- **The failure taxonomy is closed.** `ErrRateLimited` for 403/429 with
+  `X-RateLimit-Remaining: 0` from the response's own headers, `ErrTokenInvalid` for a
+  401, a generic `HTTP %d` for everything else — "transient" is the absence of a name,
+  since 5xx, timeout and DNS all mean "try later" and the UI cannot tell them apart.
+  `RepoData.Err` carries the more actionable of the two core fetches' errors
+  (`pickFetchErr`: rate limit outranks transient, `errNoReleases` never participates);
+  it used to carry `ErrRateLimited` or nil, which is how a dead token stayed invisible.
+  The card shows "rate limited — press [a]" and already-loaded data is not erased.
 - **The cache** (`cache.json`, 24h TTL): every read-modify-write goes through
   `updateCacheEntry(repo, mutate)` — under a mutex, re-read from disk, merge, write
   back; parallel startup goroutines never clobber each other's repositories. `mutate`
@@ -547,8 +577,14 @@ instead of `keepkitStyle`; an unknown name forces the glamour construction failu
 which is how the plain-text fallback is covered). `testAPIBase` is private to `version`, so a `model`
 test cannot redirect a fetch at an httptest server — a network command is executed
 there only when the cache can answer it (`seedSelfReleaseCache` for the self-check);
-otherwise `Init` batches are asserted by length, never run. The races are real (mutexes
-in `version`, `logx`), so tests always run with `-race`:
+otherwise `Init` batches are asserted by length, never run.
+
+Config paths are not the only leakable process-global state. `version.rejectedToken`
+is the other: a test that leaves a rejection standing strips `Authorization` from every
+later test in the same binary, which is deterministic contamination rather than a
+flake. `resetTokenState` clears it on both ends and every test that provokes a 401 goes
+through it. The races are real (mutexes in `version`, `logx`), so tests always run with
+`-race`:
 
 ```bash
 go test -race ./...
