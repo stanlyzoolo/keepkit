@@ -115,7 +115,12 @@ Each tool has five data sources, split so local detection never waits on the net
 Message handlers merge without clobbering (installed never resets latest and vice
 versa). On selection change `autoFetchCmdsForSelected()` fills in what's missing —
 the pure predicates `needsInstalled`/`needsRemote`/`needsReadme` skip what is already
-cached.
+cached. `needsRemote` also settles on a **conclusive** answer: the `remoteMsg` handler
+marks a tool in `m.remoteAnswered` when the pass returned no error, because an empty
+`latest` is itself the answer for a repo with neither releases nor tags and the
+missing-`Latest` clause would otherwise re-dispatch on every cursor visit. The marker
+is the error, never `m.repoStatus` — a rate-limited pass carrying a stale card writes
+a status there and would suppress a retry that is still wanted.
 
 Two commands in the `Init()` batch belong to no tool: `fetchRateCmd` (seeds the quota
 gauge — warm-cache starts make no other request) and, on release builds only,
@@ -170,8 +175,8 @@ tool, and defaults to the README). Focus moves with `→`/`←`, the digits
 `1`/`2`/`3`, or a mouse click; everything goes through `setFocus(f)`, which repaints
 the tools list — the only viewport whose content depends on focus.
 
-All modal state is a single field `m.mode inputMode` (13 values: `modeNormal`, `modeSearch`,
-`modeHelpSearch`, `modeEditNote`, `modeEditTags`, `modeTrack`, `modeConfirmUntrack`, `modeRename`,
+All modal state is a single field `m.mode inputMode` (12 values: `modeNormal`, `modeSearch`,
+`modeEditNote`, `modeEditTags`, `modeTrack`, `modeConfirmUntrack`, `modeRename`,
 `modeRunInput`, `modeConfirmUpdate`, `modeAPIStatus`, `modeTokenInput`, `modeHotkeys`). Exactly one mode is active at
 a time; `Update()` dispatches via `switch m.mode`, so keys that open other modes
 structurally cannot fire inside another mode's input.
@@ -232,7 +237,7 @@ Key invariants:
   exactly when it does the same thing in every focus, and six do: `t` track, `u`
   untrack, `m` rename, `a` api, `?` keys, `q` quit (`globalHints`). `enter` and `/`
   failed that test — `enter` runs a tool in `[1]`, installs a release in `[2]` and does
-  nothing in `[3]`; `/` filters the list in `[1]` but searches `[3]`'s text from `[2]`
+  nothing in `[3]`; `/` filters the list in `[1]` and is bound nowhere else at all
   — so both sit in `[1]`'s footer with `space` group, next to the panel where their
   meaning is fixed. Everything else panel-local (the card's actions, `[3]`'s paging and
   entry cursor) sits in that panel's footer for the same reason.
@@ -259,7 +264,7 @@ Key invariants:
   navigation (`j`/`k`, `parseHelpEntries`, the `applySpotlight` spotlight) is
   recomputed only where the visible text actually changed; style-only repaints never
   reset the cursor. In README mode there are no entries — the glamour output is
-  already styled, so `j`/`k` scroll and `/` is a no-op.
+  already styled, so `j`/`k` scroll.
 - **`m.helpCache` is a `map[string][2]string` whose values are indexed by `m.helpMode`.** README content lives in
   a separate map (`m.readmeData`), so every index site is guarded by a README branch
   first — mode `2` would otherwise run off the end of the array.
@@ -435,7 +440,8 @@ exit of the tool itself is a status message only — never logged.
 ## GitHub API
 
 Without a token — 60 requests/hour per IP, with a token — 5000. A tool with `github`
-costs 3 requests at startup, plus one lazy request for the README of the tool opened
+costs 3 requests at startup (a 4th for a repo whose `/releases/latest` answers 404 —
+the tags fallback below), plus one lazy request for the README of the tool opened
 in panel `[3]` (`GET /repos/{owner}/{repo}/readme` with
 `Accept: application/vnd.github.raw+json` — `doGH` only defaults `Accept` when the
 caller left it empty). On a release build the self-check adds one release-only request
@@ -468,6 +474,16 @@ makes the check free. Token: `GITHUB_TOKEN` from the environment always wins ove
   the contract) and never by clearing the release tuple the card shows, so the self-check's
   banner goes quiet while a tracked keepkit keeps its `latest:` line, its date and its
   changelog.
+- **A repo with tags but no release still gets a `latest`.** On `errNoReleases` — and
+  only after the total-failure return, so a rate-limited pass spends nothing —
+  `fetchLatestTag` reads the first page of `/tags` and takes the semver maximum (that
+  list is ordered by creation, so `v1.9.0` precedes `v1.10.0`). The tag fills `Latest`
+  alone, beside `applyReleaseOutcome` and never through it: `ReleaseMissing` stays true
+  (a tag is not a release, so the self-check keeps quiet), the write is skipped when the
+  entry still carries a release tuple (a tag over preserved notes would render a hybrid
+  card), and a failed tags request has no vote in the `conclusive` decision, degrading
+  to the previous blank-`Latest` outcome instead of re-spending the card requests every
+  launch.
   Force refresh (`r`) skips only the freshness check, keeping the merge and the
   guard against poisoning the cache with an empty response.
 

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -157,6 +158,45 @@ func TestToggleGroupByTagSetsExpiringStatus(t *testing.T) {
 		t.Errorf("statusMsg = %q, want %q", m.statusMsg, "flat list")
 	}
 	assertExpiryTickSeq(t, cmd, m.statusSeq)
+}
+
+// TestInFlightStatusSurvivesStaleExpiry drives the real sequence a user can
+// produce in under statusMsgTTL: a transient status (the group toggle), then a
+// launch dispatch whose "launching …" message reports work still in progress.
+// The transient's timer is still in flight when the launch message lands, and it
+// must not take it down — the in-flight status is extinguished by launchDoneMsg,
+// not by the clock, and losing it hides the only sign the adapter is busy for up
+// to launchTimeout. A direct m.statusMsg assignment leaves statusSeq unbumped,
+// so the stale timer's seq still matches and the expiry handler wipes it; the
+// bump is what setStickyStatus exists for.
+func TestInFlightStatusSurvivesStaleExpiry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the adapter path needs a unix tmux environment")
+	}
+	shrinkStatusTTL(t)
+	clearTerminalEnv(t)
+	t.Setenv("TMUX", "/nonexistent/keepkit-test-socket,99999,0")
+
+	m := groupTestModel(t)
+	m.focus = focusTools
+	toggleCmd := m.toggleGroupByTag()
+	staleSeq := m.statusSeq
+	if toggleCmd == nil {
+		t.Fatal("toggle returned no expiry tick")
+	}
+
+	// The launch dispatch: an adapter plan, so the status is the in-flight one.
+	nm, _ := enterRun(m, "git status")
+	if !strings.Contains(nm.statusMsg, "launching") {
+		t.Fatalf("statusMsg = %q, want the in-flight launch feedback", nm.statusMsg)
+	}
+	inFlight := nm.statusMsg
+
+	// The toggle's timer fires now — it belongs to a message already replaced.
+	after := mustModel(nm.Update(statusExpiredMsg{seq: staleSeq}))
+	if after.statusMsg != inFlight {
+		t.Errorf("statusMsg = %q after the stale expiry, want the in-flight %q", after.statusMsg, inFlight)
+	}
 }
 
 // TestStatusBarReturnsHintsAfterExpiry: while a transient status is live the bar

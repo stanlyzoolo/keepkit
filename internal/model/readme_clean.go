@@ -27,7 +27,7 @@ type rcSegment struct {
 
 var (
 	// A fenced-code opener: 3+ backticks or 3+ tildes, an info string allowed
-	// after them. The indent is deliberately unconstrained, like mdFenceRe's —
+	// after them. The indent is deliberately unconstrained, like mdFenceOpenRe's —
 	// 4+ spaces would mean an indented code block, which this pass does not
 	// implement, so CommonMark's 3-space limit would only mis-read a fence
 	// nested under a list item.

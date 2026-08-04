@@ -329,9 +329,17 @@ func (m *Model) needsInstalled(t loader.Tool) bool {
 
 // needsRemote reports whether the network pass for t must still run.
 // Requires a GitHub ref (matching the Init() guard) and either an unknown
-// latest tag or a missing repo card.
+// latest tag or a missing repo card — unless the pass already came back clean,
+// which is an answer even when it carried no tag at all (a repo with neither
+// releases nor tags). Without that marker the empty-Latest clause re-dispatched
+// the pass on every cursor visit; see the remoteAnswered field doc for why the
+// marker is the error and not m.repoStatus, and for the honest cost of the
+// repeat (a goroutine and a cache read, not API quota).
 func (m *Model) needsRemote(t loader.Tool) bool {
 	if t.GitHub == "" {
+		return false
+	}
+	if m.remoteAnswered[t.Name] {
 		return false
 	}
 	if _, ok := m.repoCards[t.Name]; !ok {

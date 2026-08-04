@@ -23,7 +23,6 @@ type inputMode int
 const (
 	modeNormal         inputMode = iota
 	modeSearch                   // "/" in focusTools: filter the tool list
-	modeHelpSearch               // "/" in focusBrief/focusHelp: search the help viewport
 	modeEditNote                 // "e" in focusBrief
 	modeEditTags                 // "#" in focusBrief
 	modeTrack                    // "t", global
@@ -149,15 +148,30 @@ func trackTool(meta []loader.ToolMeta, input string) ([]loader.ToolMeta, string)
 		return meta, ""
 	}
 	name, github, _ := loader.ParseToolRef(input)
-	status := ""
-	if loader.FindMeta(meta, name) != nil {
-		status = "already tracked"
-	}
 	entry := loader.ToolMeta{
 		Name:   name,
 		GitHub: github,
 		Status: loader.StatusTrying,
 		Added:  loader.TodayDate(),
+	}
+	status := ""
+	// UpsertMeta replaces the record wholesale, so a re-track must carry the
+	// existing user-authored fields forward or SaveMeta makes their loss
+	// permanent behind an "already tracked" that reads as a no-op. The status
+	// reset to trying is the one deliberate change: re-tracking is "I'm trying
+	// this again". A ref-less input keeps the known GitHub ref — typing the
+	// bare name is not a request to forget the repo.
+	if prev := loader.FindMeta(meta, name); prev != nil {
+		status = "already tracked"
+		entry.Note = prev.Note
+		entry.Tags = prev.Tags
+		entry.UpdateCmd = prev.UpdateCmd
+		if github == "" {
+			entry.GitHub = prev.GitHub
+		}
+		if prev.Added != "" {
+			entry.Added = prev.Added
+		}
 	}
 	return loader.UpsertMeta(meta, entry), status
 }
@@ -176,12 +190,10 @@ func (m Model) updateTrackInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.meta, status = trackTool(m.meta, input)
 		loader.SaveMeta(m.meta) //nolint:errcheck
 		m.tools = loader.ToolsFromMeta(m.meta)
-		for i, mt := range m.meta {
-			if mt.Name == name {
-				m.metaSelected = i
-				break
-			}
-		}
+		// metaSelected is an index into filteredMeta(), whose update partition
+		// reorders rows relative to m.meta — a raw m.meta index lands the
+		// cursor on a foreign tool (updateTagsEdit's idiom).
+		m.metaSelected = m.indexOfMeta(name)
 		m.setToolsContent()
 		m.briefViewport.GotoTop()
 		m.briefViewport.SetContent(m.renderCard())
@@ -285,13 +297,11 @@ func (m Model) updateRenameInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		delete(m.changelogData, old)
 		delete(m.readmeData, old)
 		delete(m.readmeLoading, old)
+		delete(m.remoteAnswered, old)
 		delete(m.lastRun, old)
-		for i, e := range m.meta {
-			if e.Name == newName {
-				m.metaSelected = i
-				break
-			}
-		}
+		// Displayed index, not a raw m.meta one — the update partition can
+		// reorder rows between the two (same rule as updateTrackInput).
+		m.metaSelected = m.indexOfMeta(newName)
 		m.setToolsContent()
 		m.briefViewport.GotoTop()
 		m.briefViewport.SetContent(m.renderCard())
@@ -335,11 +345,12 @@ func (m Model) updateRunInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// stops a second enter+enter from dispatching concurrently. The
 		// command is deliberately not recorded in lastRun — it never ran.
 		if m.launchingFor != "" {
-			// Deliberately a direct assignment, not setStatus: this reports a
-			// launch that is *still in progress* (overwritten by launchDoneMsg).
-			// Letting a timer expire it mid-flight would hide the only sign the
-			// adapter is busy for up to launchTimeout.
-			m.statusMsg = "still launching " + m.launchingFor
+			// Sticky, not setStatus: this reports a launch that is *still in
+			// progress* (overwritten by launchDoneMsg). Letting a timer expire it
+			// mid-flight would hide the only sign the adapter is busy for up to
+			// launchTimeout — including a timer armed by a transient status set
+			// moments earlier, which is why the helper bumps statusSeq.
+			m.setStickyStatus("still launching " + m.launchingFor)
 			return m, nil
 		}
 		m.lastRun[mt.Name] = command
@@ -352,11 +363,12 @@ func (m Model) updateRunInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, execToolCmd(mt.Name, command)
 		}
 		// In-flight feedback: the adapter can block for seconds, and without a
-		// statusMsg the prompt just closes and nothing visibly happens. A direct
-		// assignment, not setStatus: this must not expire mid-flight — it is
-		// extinguished by launchDoneMsg, not the clock.
+		// statusMsg the prompt just closes and nothing visibly happens. Sticky,
+		// not setStatus: this must not expire mid-flight — it is extinguished by
+		// launchDoneMsg, not the clock, and a still-armed transient timer must
+		// not retire it either (setStickyStatus bumps the seq for that).
 		m.launchingFor = mt.Name
-		m.statusMsg = "launching " + mt.Name + " in " + plan.Terminal + "…"
+		m.setStickyStatus("launching " + mt.Name + " in " + plan.Terminal + "…")
 		return m, startLaunchCmd(plan, mt.Name, command)
 	case "esc":
 		m.mode = modeNormal

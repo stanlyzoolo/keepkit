@@ -73,7 +73,10 @@ func updateVerifyLine(tool, was, now string, present bool) (string, outcomeKind)
 // formatStars formats a star count with K suffix for thousands.
 func formatStars(n int) string {
 	if n >= 1000 {
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
+		// TrimSuffix mirrors formatShare: only a literal ".0" tail is cut, so a
+		// real fraction survives (46200 → 46.2k) while GitHub's own spelling of a
+		// round count is matched (46000 → 46k, not 46.0k).
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/1000), ".0") + "k"
 	}
 	return fmt.Sprintf("%d", n)
 }
@@ -334,7 +337,6 @@ var (
 	mdImageRe    = regexp.MustCompile(`!\[([^\]]*)\]\(` + mdDest + `\)`)
 	mdLinkRe     = regexp.MustCompile(`\[([^\]]*)\]\(` + mdDest + `\)`)
 	mdAutolinkRe = regexp.MustCompile(`<((?:https?|ftp|mailto):[^>\s]+)>`)
-	mdHTMLTagRe  = regexp.MustCompile(`<[^<>]*>`)
 
 	mdStrongStarRe  = regexp.MustCompile(`\*\*([^\s*](?:[^*]*[^\s*])?)\*\*`)
 	mdStrongUnderRe = regexp.MustCompile(`__([^\s_](?:[^_]*[^\s_])?)__`)
@@ -342,34 +344,65 @@ var (
 	mdEmUnderRe     = regexp.MustCompile(`(^|[^\p{L}\p{N}_])_([^\s_](?:[^_]*[^\s_])?)_([^\p{L}\p{N}_]|$)`)
 )
 
-// mdInline reduces one line of markdown to plain text. Order is load-bearing:
-// images before links (otherwise the link pattern eats "[alt](url)" out of an
-// image and leaves a stray '!'), autolinks before the HTML-tag strip (which
-// would otherwise swallow "<https://…>" whole — the bug this replaces), and
-// emphasis last, after every construct whose delimiters could contain '*'/'_'.
-// A malformed construct (unclosed '[', a lone '<') simply matches nothing and
-// is left as written.
+// mdInline reduces one line of markdown to plain text. Inline code is masked
+// first (rcMaskSpans — the README preprocessor's own mechanism), so no rule can
+// rewrite what the author meant verbatim: `--output <path>` used to lose its
+// argument to the HTML strip, and emphasis fired across two spans (`a*b` beside
+// `c*d`). On what is left the order is load-bearing: images before links
+// (otherwise the link pattern eats "[alt](url)" out of an image and leaves a
+// stray '!'), autolinks before the HTML-tag strip (which would otherwise swallow
+// "<https://…>" whole — the bug this replaces), and emphasis last, after every
+// construct whose delimiters could contain '*'/'_'. The HTML strip is
+// rcHTMLTagRe's allowlist, not a generic <…> eater: release prose carries
+// Vec<String> and <user@host>, which are not markup (the reasoning
+// readme_clean.go documents). A malformed construct (unclosed '[', a lone '<')
+// simply matches nothing and is left as written.
+//
+// Two gaps are known and left open, both from where the masking can reach:
+// mdCutComments runs upstream in markdownToLines' line loop and still cuts an
+// HTML comment written inside a span; and mdInline is called per source line, so
+// a span split across two source lines is not masked (both as before this
+// change). Closing either one means masking before the line loop, which the kind
+// detection (fences, headings, lists) is not ready for.
 func mdInline(s string) string {
-	s = mdImageRe.ReplaceAllString(s, "$1")
-	s = mdLinkRe.ReplaceAllString(s, "$1")
-	s = mdAutolinkRe.ReplaceAllString(s, "$1")
-	s = mdHTMLTagRe.ReplaceAllString(s, "")
-	s = mdStrongStarRe.ReplaceAllString(s, "$1")
-	s = mdStrongUnderRe.ReplaceAllString(s, "$1")
-	s = mdEmStarRe.ReplaceAllString(s, "$1")
+	masked, spans := rcMaskSpans(s)
+	masked = mdImageRe.ReplaceAllString(masked, "$1")
+	masked = mdLinkRe.ReplaceAllString(masked, "$1")
+	masked = mdAutolinkRe.ReplaceAllString(masked, "$1")
+	masked = rcHTMLTagRe.ReplaceAllString(masked, "")
+	masked = mdStrongStarRe.ReplaceAllString(masked, "$1")
+	masked = mdStrongUnderRe.ReplaceAllString(masked, "$1")
+	masked = mdEmStarRe.ReplaceAllString(masked, "$1")
 	// The underscore pattern is the one that matches its own boundaries, and a
 	// match consumes them: in "_a_ _b_" the separating space goes with the
 	// first span, leaving the second with no boundary to match against (RE2 has
 	// no lookaround). A second pass reaches it. Each pass either drops two
 	// delimiters or changes nothing, so this terminates.
 	for {
-		next := mdEmUnderRe.ReplaceAllString(s, "${1}${2}${3}")
-		if next == s {
+		next := mdEmUnderRe.ReplaceAllString(masked, "${1}${2}${3}")
+		if next == masked {
 			break
 		}
-		s = next
+		masked = next
 	}
-	return strings.ReplaceAll(s, "`", "")
+	// Unpaired backticks are stripped while the real spans are still masked, so
+	// a backtick that is span content survives; the spans return with their
+	// delimiter runs cut and their body verbatim.
+	masked = strings.ReplaceAll(masked, "`", "")
+	for i, sp := range spans {
+		spans[i] = mdSpanBody(sp)
+	}
+	return rcUnmaskSpans(masked, spans)
+}
+
+// mdSpanBody strips the delimiter runs off a span rcMaskSpans captured —
+// rcSpanEnd guarantees runs of equal length at both ends.
+func mdSpanBody(sp string) string {
+	run := 0
+	for run < len(sp) && sp[run] == '`' {
+		run++
+	}
+	return sp[run : len(sp)-run]
 }
 
 // mdLineKind tags a converted line for the styling the consumer applies to it.
@@ -404,7 +437,11 @@ var (
 	// nested under a list item ("1. " content aligns at column 4) — the
 	// language tag leaked out as a body line reading "go" and the sample lost
 	// its verbatim treatment.
-	mdFenceRe   = regexp.MustCompile("^[ \t]*(?:```|~~~)")
+	// The capture is what the closer is matched against: a fence closes on its
+	// own marker character and a run at least as long (rcFenceCloses, shared
+	// with the README pass), so a ~~~ block wrapping ``` samples — how a README
+	// documents markdown itself — stays one block.
+	mdFenceOpenRe = regexp.MustCompile("^[ \t]*(`{3,}|~{3,})")
 	mdHeadingRe = regexp.MustCompile(`^ {0,3}#{1,6}[ \t]+(.*)$`)
 	// A rule line: a thematic break (---, ***, ___) or a setext underline
 	// (===). Both are dropped to a blank. Full setext support — retagging the
@@ -441,6 +478,12 @@ func markdownToLines(s string, width int) []mdLine {
 	// of the body as code.
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
+	// mdInline masks inline code with a NUL-bracketed placeholder (rcSpanMark).
+	// The README path runs cleanTerminalOutput before masking; this one takes
+	// the GitHub API body raw, so a hostile release note could otherwise forge
+	// a placeholder and have rcUnmaskSpans substitute another span's text into
+	// it. Dropping NUL loses nothing an honest body carries.
+	s = strings.ReplaceAll(s, "\x00", "")
 
 	var out []mdLine
 	emit := func(text string, kind mdLineKind) {
@@ -455,12 +498,14 @@ func markdownToLines(s string, width int) []mdLine {
 	}
 
 	inCode, inComment := false, false
+	fenceMarker := ""
 	for _, raw := range strings.Split(s, "\n") {
 		line := strings.TrimRight(raw, " \t")
 
 		if inCode {
-			if mdFenceRe.MatchString(line) {
+			if rcFenceCloses(line, fenceMarker) {
 				inCode = false
+				fenceMarker = ""
 				continue
 			}
 			switch {
@@ -486,8 +531,9 @@ func markdownToLines(s string, width int) []mdLine {
 			continue
 		}
 
-		if mdFenceRe.MatchString(line) {
+		if m := mdFenceOpenRe.FindStringSubmatch(line); m != nil {
 			inCode = true // the fence line, language tag and all, is dropped
+			fenceMarker = m[1]
 			continue
 		}
 
@@ -838,34 +884,6 @@ func parseHelpEntries(raw string, width int) []entryRange {
 // indent or shallower can start the next one.
 func continuesEntry(line string, indent int) bool {
 	return !isHelpSectionHeader(line) && helpIndent(line) > indent
-}
-
-func findMatches(text, query string) []int {
-	if query == "" {
-		return nil
-	}
-	lq := strings.ToLower(query)
-	var matches []int
-	for i, line := range strings.Split(strings.ToLower(text), "\n") {
-		if strings.Contains(line, lq) {
-			matches = append(matches, i)
-		}
-	}
-	return matches
-}
-
-func highlightMatch(s *ui.Styles, line, query string) string {
-	if query == "" {
-		return line
-	}
-	lr := []rune(line)
-	qr := []rune(strings.ToLower(query))
-	idx := runeIndexFold(lr, qr)
-	if idx < 0 {
-		return line
-	}
-	end := idx + len(qr)
-	return string(lr[:idx]) + s.AccentBold.Render(string(lr[idx:end])) + string(lr[end:])
 }
 
 // runeIndexFold returns the rune index of the first occurrence of query

@@ -265,7 +265,7 @@ func execMsgIn(msg tea.Msg) bool {
 // point: a statusMsg set at gate time is shadowed by the mode's own
 // status-bar branch and wiped by the blanket KeyMsg reset.
 func TestLaunchDoneMsgModeGateDefersFallback(t *testing.T) {
-	for _, mode := range []inputMode{modeEditNote, modeSearch, modeHelpSearch, modeAPIStatus, modeTrack, modeRunInput, modeHotkeys} {
+	for _, mode := range []inputMode{modeEditNote, modeSearch, modeAPIStatus, modeTrack, modeRunInput, modeHotkeys} {
 		m := newTestModel(focusTools)
 		m.mode = mode
 		m.launchingFor = "git"

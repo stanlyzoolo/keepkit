@@ -42,8 +42,6 @@ func TestModeEnterAndEsc(t *testing.T) {
 		want  inputMode
 	}{
 		{"slash in tools opens search", focusTools, keyRunes("/"), modeSearch},
-		{"slash in brief opens help search", focusBrief, keyRunes("/"), modeHelpSearch},
-		{"slash in help opens help search", focusHelp, keyRunes("/"), modeHelpSearch},
 		{"e in brief opens note edit", focusBrief, keyRunes("e"), modeEditNote},
 		{"# in brief opens tags edit", focusBrief, keyRunes("#"), modeEditTags},
 		{"t in tools opens track", focusTools, keyRunes("t"), modeTrack},
@@ -215,6 +213,57 @@ func TestRenameCommit(t *testing.T) {
 	}
 	if _, ok := nm.helpCache["git"]; ok {
 		t.Errorf("stale helpCache entry survived the rename")
+	}
+}
+
+// TestTrackCommitCursorUsesDisplayedIndex pins that the post-track cursor
+// remap resolves the displayed index (indexOfMeta over filteredMeta), not a
+// raw m.meta one. The two orders diverge on a re-track with the update
+// partition active: the re-tracked tool keeps its m.meta slot while an
+// outdated tool floats above it, and the raw index used to land the cursor on
+// that tool. (A fresh add cannot catch this — append is last in both orders.)
+func TestTrackCommitCursorUsesDisplayedIndex(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := New([]loader.ToolMeta{{Name: "ripgrep"}, {Name: "fd"}})
+	m.width, m.height = 80, 24
+	m.focus = focusTools
+	// fd has an update → displayed order [fd, ripgrep] vs meta [ripgrep, fd].
+	m.versions["fd"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	m.mode = modeTrack
+	m.trackInput.SetValue("ripgrep")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	nm := updated.(Model)
+	if sel, ok := nm.selectedMeta(); !ok || sel.Name != "ripgrep" {
+		name := "<none>"
+		if ok {
+			name = sel.Name
+		}
+		t.Errorf("selection = %q, want the re-tracked ripgrep", name)
+	}
+}
+
+// TestRenameCommitCursorUsesDisplayedIndex is the same rule for rename: with
+// the update partition floating fd to the top, the renamed tool's raw m.meta
+// index points at fd in display order.
+func TestRenameCommitCursorUsesDisplayedIndex(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := New([]loader.ToolMeta{{Name: "ripgrep"}, {Name: "fd"}})
+	m.width, m.height = 80, 24
+	m.focus = focusTools
+	m.versions["fd"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	m.metaSelected = m.indexOfMeta("ripgrep")
+	m.mode = modeRename
+	m.nameInput.SetValue("rg")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	nm := updated.(Model)
+	if sel, ok := nm.selectedMeta(); !ok || sel.Name != "rg" {
+		name := "<none>"
+		if ok {
+			name = sel.Name
+		}
+		t.Errorf("selection = %q, want the renamed rg", name)
 	}
 }
 
@@ -1431,18 +1480,6 @@ func TestHelpNavIdxResetTriggers(t *testing.T) {
 			t.Errorf("helpNavIdx = %d, want -1 after focus moved away", nm.helpNavIdx)
 		}
 	})
-	t.Run("help search entry", func(t *testing.T) {
-		m := helpNavModel()
-		m.helpNavIdx = 0
-		updated, _ := m.Update(keyRunes("/"))
-		nm := updated.(Model)
-		if nm.mode != modeHelpSearch {
-			t.Fatalf("mode = %d, want modeHelpSearch", nm.mode)
-		}
-		if nm.helpNavIdx != -1 {
-			t.Errorf("helpNavIdx = %d, want -1 after entering help search", nm.helpNavIdx)
-		}
-	})
 }
 
 // TestReadmeIsDefaultHelpMode: New starts panel [3] on the README — the only
@@ -1591,17 +1628,38 @@ func TestReadmeKeyUpdateLogPriority(t *testing.T) {
 	})
 }
 
-// TestHelpSearchNoOpInReadmeMode: glamour output is ANSI that highlightMatch
-// would tear apart, so / does nothing in README mode — from both entry
-// focuses. The tool-list search in [1] is unaffected.
-func TestHelpSearchNoOpInReadmeMode(t *testing.T) {
+// TestSlashIsToolsOnly pins what is left of `/` after the help/man search was
+// removed: it is the [1] list filter and nothing else. Outside focusTools it
+// must not open a mode *and* must not fall through into the tool-list search
+// entry below it — the shared case's brief/help branch used to return in both
+// sub-paths, so deleting it would have made `/` from [2]/[3] open modeSearch
+// over an unfocused list. The status bar is the surface the removed feature's
+// N/M counter lived on: it must read as the plain global hint line.
+func TestSlashIsToolsOnly(t *testing.T) {
 	for _, focus := range []int{focusBrief, focusHelp} {
-		t.Setenv("HOME", t.TempDir())
-		m := newTestModel(focus)
-		m.helpMode = helpModeReadme
-		nm := mustModel(m.Update(keyRunes("/")))
-		if nm.mode != modeNormal {
-			t.Errorf("focus %d: mode = %d, want modeNormal (/ is a no-op in README mode)", focus, nm.mode)
+		for _, mode := range []int{helpModeReadme, helpModeHelp, helpModeMan} {
+			t.Setenv("HOME", t.TempDir())
+			m := newTestModel(focus)
+			m.width, m.height = 80, 24
+			m.helpMode = mode
+			m.helpCache["git"] = [2]string{"--flag  does a thing", "MAN PAGE"}
+			nm := mustModel(m.Update(keyRunes("/")))
+			if nm.mode != modeNormal {
+				t.Errorf("focus %d helpMode %d: mode = %d, want modeNormal", focus, mode, nm.mode)
+			}
+			bar := nm.renderStatusBar()
+			for _, want := range []string{"t track", "u untrack", "q quit"} {
+				if !strings.Contains(bar, want) {
+					t.Errorf("focus %d helpMode %d: status bar = %q, missing the global hint %q", focus, mode, bar, want)
+				}
+			}
+			// n/N carried the match navigation; both are unbound now.
+			for _, k := range []string{"n", "N"} {
+				after := mustModel(nm.Update(keyRunes(k)))
+				if after.mode != modeNormal {
+					t.Errorf("focus %d: %q left mode %d, want modeNormal", focus, k, after.mode)
+				}
+			}
 		}
 	}
 	m := newTestModel(focusTools)

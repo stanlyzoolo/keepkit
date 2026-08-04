@@ -90,11 +90,11 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/render_test.go`
 - Modify: `internal/model/mode_test.go`
 
-- [ ] write failing test `TestTrackToolRetrackPreservesFields` (render_test.go): re-track by bare name keeps Note/Tags/UpdateCmd/Added/GitHub, resets Status to trying; a ref-carrying re-track updates GitHub and keeps the rest
-- [ ] write failing tests `TestTrackCommitCursorUsesDisplayedIndex` / `TestRenameCommitCursorUsesDisplayedIndex` (mode_test.go): with the update partition floating another tool to the top, the cursor lands on the tracked/renamed tool (the track case must use a *re-track* — a fresh add is last in both orders and cannot catch the bug)
-- [ ] implement the merge in `trackTool` (carry user fields; keep GitHub on ref-less input; keep non-empty Added)
-- [ ] replace both `for i, mt := range m.meta` remap loops with `m.metaSelected = m.indexOfMeta(name)`
-- [ ] run tests — `go test -race ./internal/model/` must pass before task 2
+- [x] write failing test `TestTrackToolRetrackPreservesFields` (render_test.go): re-track by bare name keeps Note/Tags/UpdateCmd/Added/GitHub, resets Status to trying; a ref-carrying re-track updates GitHub and keeps the rest
+- [x] write failing tests `TestTrackCommitCursorUsesDisplayedIndex` / `TestRenameCommitCursorUsesDisplayedIndex` (mode_test.go): with the update partition floating another tool to the top, the cursor lands on the tracked/renamed tool (the track case must use a *re-track* — a fresh add is last in both orders and cannot catch the bug)
+- [x] implement the merge in `trackTool` (carry user fields; keep GitHub on ref-less input; keep non-empty Added)
+- [x] replace both `for i, mt := range m.meta` remap loops with `m.metaSelected = m.indexOfMeta(name)`
+- [x] run tests — `go test -race ./internal/model/` must pass before task 2
 
 ### Task 2: remove the help/man search feature (№3)
 
@@ -106,13 +106,13 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/mode_test.go`, `internal/model/launch_test.go`, `internal/model/textutil_test.go`, `internal/model/render_test.go`, `internal/model/scroll_test.go` (wherever `modeHelpSearch`/`findMatches`/`highlightMatch` appear)
 - Modify: `CLAUDE.md`, `ARCHITECTURE.md`
 
-- [ ] grep-inventory every reference to `modeHelpSearch`, `helpSearch`, `helpMatches`, `helpMatchIdx`, `findMatches`, `highlightMatch` — the removal list is the inventory, not this plan's guess
-- [ ] write/adjust tests first: `/` in `focusBrief`/`focusHelp` leaves the mode `modeNormal` **and** the status bar showing the global hints (`renderStatusBar` assertion — this is the surface the `N/M` counter lived on); `/` still opens `modeSearch` in `focusTools`; `n`/`N` in `[3]` are plain no-ops
-- [ ] **add a `focusTools` guard to the shared `case "/"`** (model.go:1706) — bare deletion of the brief/help branch would let `/` from `[2]`/`[3]` fall into the tool-list-search entry below
-- [ ] remove the mode member, its `Update` dispatch, the model fields, the `helpContent()` search branch, the `renderStatusBar` branch, and the now-unreferenced `findMatches`/`highlightMatch`
-- [ ] update `flushPendingLaunch`'s funnel comment/list; **move the `/` row in the `[?]` overlay from the global group (render.go:723) to the `[1] tools` group** and reword its description to name the list filter — after the removal `/` is `[1]`-only, and the global group is the on-screen statement of the "same in every focus" rule (same column, so the size budget and `TestRenderHotkeysSizeBudget` are unaffected)
-- [ ] update `CLAUDE.md` (input-modes list, status-bar rationale for `/`, help-navigation `/`-entry path, `clearHelpNav` wording) and `ARCHITECTURE.md` (:174 mode enum, :235 status-bar `/` sentence)
-- [ ] run tests — full `go test -race ./...` (removal can break any panel test) before task 3
+- [x] grep-inventory every reference to `modeHelpSearch`, `helpSearch`, `helpMatches`, `helpMatchIdx`, `findMatches`, `highlightMatch` — the removal list is the inventory, not this plan's guess
+- [x] write/adjust tests first: `/` in `focusBrief`/`focusHelp` leaves the mode `modeNormal` **and** the status bar showing the global hints (`renderStatusBar` assertion — this is the surface the `N/M` counter lived on); `/` still opens `modeSearch` in `focusTools`; `n`/`N` in `[3]` are plain no-ops
+- [x] **add a `focusTools` guard to the shared `case "/"`** (model.go:1706) — bare deletion of the brief/help branch would let `/` from `[2]`/`[3]` fall into the tool-list-search entry below
+- [x] remove the mode member, its `Update` dispatch, the model fields, the `helpContent()` search branch, the `renderStatusBar` branch, and the now-unreferenced `findMatches`/`highlightMatch`
+- [x] update `flushPendingLaunch`'s funnel comment/list; **move the `/` row in the `[?]` overlay from the global group (render.go:723) to the `[1] tools` group** and reword its description to name the list filter — after the removal `/` is `[1]`-only, and the global group is the on-screen statement of the "same in every focus" rule (same column, so the size budget and `TestRenderHotkeysSizeBudget` are unaffected)
+- [x] update `CLAUDE.md` (input-modes list, status-bar rationale for `/`, help-navigation `/`-entry path, `clearHelpNav` wording) and `ARCHITECTURE.md` (:174 mode enum, :235 status-bar `/` sentence)
+- [x] run tests — full `go test -race ./...` (removal can break any panel test) before task 3
 
 ### Task 3: mask inline code and allowlist the HTML strip in the card converter (№4, №5)
 
@@ -121,12 +121,12 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/textutil_test.go`
 - Modify: `CLAUDE.md`
 
-- [ ] write failing `TestMdInline` cases: `` use `--output <path>` here `` keeps the argument; `` `a*b` and `c*d` `` does not fuse; `` ``a`b`` `` keeps the content backtick; `` `_private_field` `` untouched; `changed Vec<String> to Vec<Bytes>` and `contact <support@example.com>` survive in prose
-- [ ] rewrite `mdInline`: `rcMaskSpans` first, rules on the masked text, strip unpaired backticks while masked, restore via `rcUnmaskSpans` with `mdSpanBody`-trimmed spans; replace `mdHTMLTagRe` with `rcHTMLTagRe`; delete `mdHTMLTagRe`
-- [ ] add the NUL-drop at `markdownToLines` entry (the card body, unlike the README, never passes `cleanTerminalOutput` — a hostile body could forge mask placeholders)
-- [ ] document the two known gaps side by side in the `mdInline` doc comment: `mdCutComments` upstream still cuts a comment inside a span; per-line invocation leaves a span split across source lines unmasked (same as today)
-- [ ] update `CLAUDE.md`'s "Card changelog body" inline-order sentence ("images → links → **autolinks before the HTML-tag strip** → emphasis", generic strip) to the new reality: span masking first, then the rules, the strip is the `rcHTMLNames` allowlist
-- [ ] run tests — must pass before task 4
+- [x] write failing `TestMdInline` cases: `` use `--output <path>` here `` keeps the argument; `` `a*b` and `c*d` `` does not fuse; `` ``a`b`` `` keeps the content backtick; `` `_private_field` `` untouched; `changed Vec<String> to Vec<Bytes>` and `contact <support@example.com>` survive in prose
+- [x] rewrite `mdInline`: `rcMaskSpans` first, rules on the masked text, strip unpaired backticks while masked, restore via `rcUnmaskSpans` with `mdSpanBody`-trimmed spans; replace `mdHTMLTagRe` with `rcHTMLTagRe`; delete `mdHTMLTagRe`
+- [x] add the NUL-drop at `markdownToLines` entry (the card body, unlike the README, never passes `cleanTerminalOutput` — a hostile body could forge mask placeholders)
+- [x] document the two known gaps side by side in the `mdInline` doc comment: `mdCutComments` upstream still cuts a comment inside a span; per-line invocation leaves a span split across source lines unmasked (same as today)
+- [x] update `CLAUDE.md`'s "Card changelog body" inline-order sentence ("images → links → **autolinks before the HTML-tag strip** → emphasis", generic strip) to the new reality: span masking first, then the rules, the strip is the `rcHTMLNames` allowlist
+- [x] run tests — must pass before task 4
 
 ### Task 4: fence close must match the opening marker (№11)
 
@@ -135,9 +135,9 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/textutil_test.go`
 - Modify: `internal/model/readme_clean.go` (comment only — :30 references `mdFenceRe` by name)
 
-- [ ] write failing test: `~~~` / code / ``` ``` `` / code / ``` ``` `` / `~~~` / tail — everything between the `~~~` pair is code, `tail` is body
-- [ ] add `mdFenceOpenRe` (captures the run), track the open marker, close via `rcFenceCloses(line, marker)`; remove `mdFenceRe` and fix the `readme_clean.go:30` comment that names it
-- [ ] run tests — must pass before task 5
+- [x] write failing test: `~~~` / code / ``` ``` `` / code / ``` ``` `` / `~~~` / tail — everything between the `~~~` pair is code, `tail` is body
+- [x] add `mdFenceOpenRe` (captures the run), track the open marker, close via `rcFenceCloses(line, marker)`; remove `mdFenceRe` and fix the `readme_clean.go:30` comment that names it
+- [x] run tests — must pass before task 5
 
 ### Task 5: changelog block wraps to cardWidth (№6)
 
@@ -146,10 +146,10 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/render_test.go`
 - Modify: `CLAUDE.md`
 
-- [ ] extend `TestPanelsKeepTheirGutter` (render_test.go:4862, failing first): seed `changelogData` for the selected tool with a body containing a code fence — the padded plate must respect the right gutter (on main it renders `briefW-1` cells against a `briefW-2` budget)
-- [ ] change `renderChangelogBlock` to `inner := max(m.cardWidth(), 10)`
-- [ ] fix the `CLAUDE.md` "Card changelog body" sentence that documents `max(m.briefW-2, 10)` (the panelGutter section's "no branch can render flush against the frame" becomes true again)
-- [ ] run tests — must pass before task 6
+- [x] extend `TestPanelsKeepTheirGutter` (render_test.go:4862, failing first): seed `changelogData` for the selected tool with a body containing a code fence — the padded plate must respect the right gutter (on main it renders `briefW-1` cells against a `briefW-2` budget)
+- [x] change `renderChangelogBlock` to `inner := max(m.cardWidth(), 10)`
+- [x] fix the `CLAUDE.md` "Card changelog body" sentence that documents `max(m.briefW-2, 10)` (the panelGutter section's "no branch can render flush against the frame" becomes true again)
+- [x] run tests — must pass before task 6
 
 ### Task 6: bounded theme repaint of glamour's Chroma (№7)
 
@@ -158,12 +158,12 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/readme_style_test.go`
 - Modify: `CLAUDE.md`, `docs/design/readme-pipeline.md`
 
-- [ ] write failing struct-level test (**dark variant only** — every CodeBlock override sits after the `if !dark` early return): `keepkitStyle(t, true).CodeBlock.Chroma` is a fresh pointer (plain pointer comparison against `styles.DarkStyleConfig.CodeBlock.Chroma`), its `Background` background and `Text` color/background carry `t.Surface`/`t.Emphasis`, every other token entry equals the stock one; the **light** config's `CodeBlock.Chroma` still **aliases** `styles.LightStyleConfig`'s (the light palette deliberately stays stock); `TestKeepkitStyleLeavesGlobalsUntouched` (readme_style_test.go:114) stays green
-- [ ] clone `cfg.CodeBlock.Chroma` by value into a fresh pointer; repaint exactly `Chroma.Background` (background → `t.Surface`) and `Chroma.Text` (color → `t.Emphasis`, background → `t.Surface`); inherit the rest unchanged — no per-token judgement calls
-- [ ] keep the `StyleBlock` `Color`/`BackgroundColor` overrides and rewrite the comment to name both render paths: Chroma when `ColorProfile != Ascii` (live sessions), StyleBlock for Ascii/`NO_COLOR` and this package's tests
-- [ ] document the process-global one-shot `"charm"` registration (first render wins; struct-level assertion is the only reliable one; a mid-session theme switch cannot repaint fences — consistent with `m.darkBG` resolved once at construction)
-- [ ] update `CLAUDE.md` (readme_style.go row) and `docs/design/readme-pipeline.md` ("CodeBlock on the same Surface background", "Chroma … deliberately untouched" — both need the two-path truth)
-- [ ] run tests — must pass before task 7
+- [x] write failing struct-level test (**dark variant only** — every CodeBlock override sits after the `if !dark` early return): `keepkitStyle(t, true).CodeBlock.Chroma` is a fresh pointer (plain pointer comparison against `styles.DarkStyleConfig.CodeBlock.Chroma`), its `Background` background and `Text` color/background carry `t.Surface`/`t.Emphasis`, every other token entry equals the stock one; the **light** config's `CodeBlock.Chroma` still **aliases** `styles.LightStyleConfig`'s (the light palette deliberately stays stock); `TestKeepkitStyleLeavesGlobalsUntouched` (readme_style_test.go:114) stays green
+- [x] clone `cfg.CodeBlock.Chroma` by value into a fresh pointer; repaint exactly `Chroma.Background` (background → `t.Surface`) and `Chroma.Text` (color → `t.Emphasis`, background → `t.Surface`); inherit the rest unchanged — no per-token judgement calls
+- [x] keep the `StyleBlock` `Color`/`BackgroundColor` overrides and rewrite the comment to name both render paths: Chroma when `ColorProfile != Ascii` (live sessions), StyleBlock for Ascii/`NO_COLOR` and this package's tests
+- [x] document the process-global one-shot `"charm"` registration (first render wins; struct-level assertion is the only reliable one; a mid-session theme switch cannot repaint fences — consistent with `m.darkBG` resolved once at construction)
+- [x] update `CLAUDE.md` (readme_style.go row) and `docs/design/readme-pipeline.md` ("CodeBlock on the same Surface background", "Chroma … deliberately untouched" — both need the two-path truth)
+- [x] run tests — must pass before task 7
 
 ### Task 7: sticky statuses must invalidate pending expiry timers (№8)
 
@@ -172,20 +172,20 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/mode.go`
 - Modify: `internal/model/status_test.go` (or launch_test.go, wherever the launch statuses are pinned)
 
-- [ ] **investigate first** (owner's directive): write the reproducing test before any fix — shrink `statusMsgTTL`, drive `setStatus` (e.g. the group toggle), then the launch dispatch that assigns `launching <name> in <terminal>…` (use the `t.Setenv("TMUX", …)` pattern from launch_test.go:183 for a non-fallback plan), then deliver the *first* status's `statusExpiredMsg{seq}`; assert the in-flight message survives. The test failing on `main`'s code is the proof of whose timer kills it (expected: the transient's timer, because the direct assignment leaves `statusSeq` unbumped and the seq guard passes)
-- [ ] if the investigation contradicts the hypothesis, ⚠️ stop and re-plan this task before writing a fix
-- [ ] add `setStickyStatus(s)` (bump `statusSeq`, set message, no timer) next to `setStatus` with a doc comment stating why the bump is the point
-- [ ] switch both in-flight sites (`still launching …`, `launching … in …`) to it; keep their "sticky, not setStatus" comments accurate
-- [ ] run tests — `TestStatusExpired*`/`TestSetStatus*` and the new one must pass before task 8
+- [x] **investigate first** (owner's directive): write the reproducing test before any fix — shrink `statusMsgTTL`, drive `setStatus` (e.g. the group toggle), then the launch dispatch that assigns `launching <name> in <terminal>…` (use the `t.Setenv("TMUX", …)` pattern from launch_test.go:183 for a non-fallback plan), then deliver the *first* status's `statusExpiredMsg{seq}`; assert the in-flight message survives. The test failing on `main`'s code is the proof of whose timer kills it (expected: the transient's timer, because the direct assignment leaves `statusSeq` unbumped and the seq guard passes)
+- [x] if the investigation contradicts the hypothesis, ⚠️ stop and re-plan this task before writing a fix
+- [x] add `setStickyStatus(s)` (bump `statusSeq`, set message, no timer) next to `setStatus` with a doc comment stating why the bump is the point
+- [x] switch both in-flight sites (`still launching …`, `launching … in …`) to it; keep their "sticky, not setStatus" comments accurate
+- [x] run tests — `TestStatusExpired*`/`TestSetStatus*` and the new one must pass before task 8
 
 ### Task 8: reap browser opener processes (№9)
 
 **Files:**
 - Modify: `internal/model/browser.go`
 
-- [ ] switch `exec.Command(...).Start()` to `Start()` + `go cmd.Wait()` on success, with the rationale in a comment: the goroutine reaps the child (no zombie per `o`/`c`/link click) without blocking on a shell-wrapper opener, and `openURLMsg.err` keeps meaning "could not launch" (a `Run()` would surface opener exit codes into a new `setStatus` path — a behavior change)
-- [ ] **no new executing test — documented exception**: `browser_test.go` explicitly forbids invoking the command (it would launch a real browser); `TestBrowserCommand`/`TestUpdateOpenURLMsg` remain the coverage and must stay green
-- [ ] run tests — must pass before task 9
+- [x] switch `exec.Command(...).Start()` to `Start()` + `go cmd.Wait()` on success, with the rationale in a comment: the goroutine reaps the child (no zombie per `o`/`c`/link click) without blocking on a shell-wrapper opener, and `openURLMsg.err` keeps meaning "could not launch" (a `Run()` would surface opener exit codes into a new `setStatus` path — a behavior change)
+- [x] **no new executing test — documented exception**: `browser_test.go` explicitly forbids invoking the command (it would launch a real browser); `TestBrowserCommand`/`TestUpdateOpenURLMsg` remain the coverage and must stay green
+- [x] run tests — must pass before task 9
 
 ### Task 9: formatStars trims only the `.0` tail (№14)
 
@@ -193,9 +193,9 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/textutil.go`
 - Modify: `internal/model/textutil_test.go`
 
-- [ ] write failing table test: 46000→`46k`, 46200→`46.2k` (owner: fractional values must survive), 1500→`1.5k`, 1000→`1k`, 999→`999`
-- [ ] apply the `TrimSuffix(".0")` mirror of `formatShare`
-- [ ] run tests — must pass before task 10
+- [x] write failing table test: 46000→`46k`, 46200→`46.2k` (owner: fractional values must survive), 1500→`1.5k`, 1000→`1k`, 999→`999`
+- [x] apply the `TrimSuffix(".0")` mirror of `formatShare`
+- [x] run tests — must pass before task 10
 
 ### Task 10: tags fallback for release-less repos — version side (№10a)
 
@@ -204,11 +204,11 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/version/github_test.go`
 - Modify: `CLAUDE.md`
 
-- [ ] write failing tests against `testAPIBase` fixtures, asserting on the resulting `CacheEntry` (the `updateCacheEntry`/`e := existing` shape is a review-time rule, not a test assertion): releases 404 + tags `[v1.2.0, v1.10.0]` → `Latest == "v1.10.0"` (semver max, not list order), `ReleaseMissing` true, `Body`/`HtmlUrl`/`PublishedAt` empty; releases 404 + empty tags → today's conclusive-but-blank outcome; tags fetch error (500/rate limit) → `conclusive` decision unchanged, entry identical to today's errNoReleases outcome (no veto of the `CheckedAt` stamp, no re-spend of the repo-info requests); **tuple-collision case**: pre-seeded entry with a full release tuple + 404 + tags present → the tag is *not* written, the preserved tuple stays intact (no hybrid of new tag over old notes)
-- [ ] implement `fetchLatestTag` + the `errNoReleases`-gated call in `getRepoData`, placed **after** the total-failure early return (github.go:462-467); the tag write gated on an empty release tuple; shared `force` core covers `RefreshRepoData`
-- [ ] add the provenance sentence to `applyReleaseOutcome`'s doc comment (`Latest` can now also be written beside it by the tags fallback, never by it) and update github.go:468-478's `conclusive` comment
-- [ ] update `CLAUDE.md`: GitHub API request accounting (one extra request per tag-only repo per window, 404 path only), the poison-guard/"Force refresh" wording, the self-check invariant (a tag is not a release — `ReleaseMissing` semantics unchanged)
-- [ ] run tests — `go test -race ./internal/version/` must pass before task 11
+- [x] write failing tests against `testAPIBase` fixtures, asserting on the resulting `CacheEntry` (the `updateCacheEntry`/`e := existing` shape is a review-time rule, not a test assertion): releases 404 + tags `[v1.2.0, v1.10.0]` → `Latest == "v1.10.0"` (semver max, not list order), `ReleaseMissing` true, `Body`/`HtmlUrl`/`PublishedAt` empty; releases 404 + empty tags → today's conclusive-but-blank outcome; tags fetch error (500/rate limit) → `conclusive` decision unchanged, entry identical to today's errNoReleases outcome (no veto of the `CheckedAt` stamp, no re-spend of the repo-info requests); **tuple-collision case**: pre-seeded entry with a full release tuple + 404 + tags present → the tag is *not* written, the preserved tuple stays intact (no hybrid of new tag over old notes)
+- [x] implement `fetchLatestTag` + the `errNoReleases`-gated call in `getRepoData`, placed **after** the total-failure early return (github.go:462-467); the tag write gated on an empty release tuple; shared `force` core covers `RefreshRepoData`
+- [x] add the provenance sentence to `applyReleaseOutcome`'s doc comment (`Latest` can now also be written beside it by the tags fallback, never by it) and update github.go:468-478's `conclusive` comment
+- [x] update `CLAUDE.md`: GitHub API request accounting (one extra request per tag-only repo per window, 404 path only), the poison-guard/"Force refresh" wording, the self-check invariant (a tag is not a release — `ReleaseMissing` semantics unchanged)
+- [x] run tests — `go test -race ./internal/version/` must pass before task 11
 
 ### Task 11: needsRemote settles on a conclusive answer — model side (№10b)
 
@@ -217,12 +217,12 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/commands.go`
 - Modify: `internal/model/render_test.go` (`TestNeedsRemote` lives at :2173-2214; the hand-built `Model{…}` literal at :2800-2808 needs the new map seeded or the handler write panics on nil)
 
-- [ ] write failing tests: a tool whose `remoteMsg` arrived with `err == nil` and empty `Latest` (repo with neither releases nor tags) → `needsRemote` false (no re-dispatch per cursor visit); the trap case in **exactly** the pinned shape — `card.About != ""`, `latest == ""`, `repoStatus == "active"`, `err = ErrRateLimited` → still retryable (a *complete* stale card also carries `Latest` and masks the assertion for an unrelated reason); rename cleans the marker with the other per-name maps (untrack deliberately does not — it cleans no sibling map either)
-- [ ] pin the card consequence of a tag-derived `Latest` (moved from Task 10 — this task's gate actually runs it): `↑` + `enter` offer + no release date + "no release notes available." + no clickable release heading (render.go:1656-1668 gates on `changelogURL != ""`)
-- [ ] add session-scoped `m.remoteAnswered map[string]bool`, **initialized in `New()`**, written by the `remoteMsg` handler **only when `msg.err == nil`**; `needsRemote` consults it (nil-safe read); rename's stale-state cleanup deletes the old name; seed the hand-built literal at render_test.go:2800-2808
-- [ ] note the honest cost in the comment: this saves a goroutine + `cache.json` read per cursor visit, not API quota (`errNoReleases` is already conclusive on the version side)
-- [ ] update `CLAUDE.md`'s async-fetch-split wording for `needsRemote`
-- [ ] run tests — must pass before task 12
+- [x] write failing tests: a tool whose `remoteMsg` arrived with `err == nil` and empty `Latest` (repo with neither releases nor tags) → `needsRemote` false (no re-dispatch per cursor visit); the trap case in **exactly** the pinned shape — `card.About != ""`, `latest == ""`, `repoStatus == "active"`, `err = ErrRateLimited` → still retryable (a *complete* stale card also carries `Latest` and masks the assertion for an unrelated reason); rename cleans the marker with the other per-name maps (untrack deliberately does not — it cleans no sibling map either)
+- [x] pin the card consequence of a tag-derived `Latest` (moved from Task 10 — this task's gate actually runs it): `↑` + `enter` offer + no release date + "no release notes available." + no clickable release heading (render.go:1656-1668 gates on `changelogURL != ""`)
+- [x] add session-scoped `m.remoteAnswered map[string]bool`, **initialized in `New()`**, written by the `remoteMsg` handler **only when `msg.err == nil`**; `needsRemote` consults it (nil-safe read); rename's stale-state cleanup deletes the old name; hand-built literals need no seeding after all — the handler's write lazily creates the map, which covers every `Model{…}` literal at once instead of one call site (⚠️ deviation from the planned seeding, same guarantee)
+- [x] note the honest cost in the comment: this saves a goroutine + `cache.json` read per cursor visit, not API quota (`errNoReleases` is already conclusive on the version side)
+- [x] update `CLAUDE.md`'s async-fetch-split wording for `needsRemote`
+- [x] run tests — must pass before task 12
 
 ### Task 12: doc drift sweep (№15)
 
@@ -231,23 +231,23 @@ Four groups, ordered so the removal (№3) lands before fixes that would otherwi
 - Modify: `internal/model/render_test.go`
 - Modify: `CLAUDE.md`, `ARCHITECTURE.md`, `README.md`
 
-- [ ] fix the three «press L» comments (model.go:995, 1014, 1089) to name `[a]`, plus the same stale key in `README.md:311` (user-facing) and `render_test.go:4081`
-- [ ] fix the CLAUDE.md "Known exceptions… `h`/`m`" sentence to the current `H`/`M`/`R` keys
-- [ ] re-check `ARCHITECTURE.md` against tasks 2/10/11's changes (the enum listing and status-bar rationale were already updated in task 2 — verify nothing else drifted)
-- [ ] run the `docs-sync` skill check over CLAUDE.md / docs/design/* / ARCHITECTURE.md against the branch's final state; fix what it flags
-- [ ] run tests — full suite still green
+- [x] fix the three «press L» comments (model.go:995, 1014, 1089) to name `[a]`, plus the same stale key in `README.md:311` (user-facing) and `render_test.go:4081`
+- [x] fix the CLAUDE.md "Known exceptions… `h`/`m`" sentence to the current `H`/`M`/`R` keys
+- [x] re-check `ARCHITECTURE.md` against tasks 2/10/11's changes (the enum listing and status-bar rationale were already updated in task 2 — verify nothing else drifted)
+- [x] run the `docs-sync` skill check over CLAUDE.md / docs/design/* / ARCHITECTURE.md against the branch's final state; fix what it flags
+- [x] run tests — full suite still green
 
 ### Task 13: verify acceptance criteria
 
-- [ ] every taken finding (№1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15) has a regression test that fails on `main` and passes here — except №9, whose documented exception is stated in Task 8; №3's removal leaves no dead references
-- [ ] run the `preflight` skill: build / vet / `go test -race ./...` / golangci-lint — the exact CI matrix, all green
-- [ ] grep for leftovers scoped to `internal/ ARCHITECTURE.md CLAUDE.md README.md docs/design/` (NOT `docs/plans/completed/`, which legitimately archives the old names): `modeHelpSearch|findMatches|highlightMatch|mdHTMLTagRe|mdFenceRe` return nothing
+- [x] every taken finding (№1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15) has a regression test that fails on `main` and passes here — except №9, whose documented exception is stated in Task 8; №3's removal leaves no dead references
+- [x] run the `preflight` skill: build / vet / `go test -race ./...` / golangci-lint — the exact CI matrix, all green
+- [x] grep for leftovers scoped to `internal/ ARCHITECTURE.md CLAUDE.md README.md docs/design/` (NOT `docs/plans/completed/`, which legitimately archives the old names): `modeHelpSearch|findMatches|highlightMatch|mdHTMLTagRe|mdFenceRe` return nothing
 
 ### Task 14: [Final] update documentation
 
-- [ ] re-read the CLAUDE.md sections touched by tasks 2, 3, 5, 6, 10, 11, 12 as a whole — no contradictions left between them
-- [ ] update README.md if the help-search removal is user-visible there (beyond the :311 line already fixed)
-- [ ] move this plan to `docs/plans/completed/`
+- [x] re-read the CLAUDE.md sections touched by tasks 2, 3, 5, 6, 10, 11, 12 as a whole — no contradictions left between them
+- [x] update README.md if the help-search removal is user-visible there (beyond the :311 line already fixed)
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 

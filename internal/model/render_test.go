@@ -205,6 +205,8 @@ func TestParseHelpEntriesWrapMapping(t *testing.T) {
 	}
 }
 
+// TestFormatStars: only a literal ".0" tail is cut, the way GitHub itself
+// spells a star count — 46k, not 46.0k — and a real fraction survives.
 func TestFormatStars(t *testing.T) {
 	tests := []struct {
 		in   int
@@ -212,8 +214,10 @@ func TestFormatStars(t *testing.T) {
 	}{
 		{0, "0"},
 		{999, "999"},
-		{1000, "1.0k"},
+		{1000, "1k"},
 		{1500, "1.5k"},
+		{46000, "46k"},
+		{46200, "46.2k"},
 		{59400, "59.4k"},
 	}
 	for _, tt := range tests {
@@ -555,18 +559,6 @@ func TestLanguageBandGlyphWidth(t *testing.T) {
 		if got := c.StringWidth(langBandGlyph); got != 1 {
 			t.Errorf("langBandGlyph width = %d with EastAsianWidth=%v, want 1", got, cond)
 		}
-	}
-}
-
-func TestFindMatches(t *testing.T) {
-	if got := findMatches("a\nb\na", "a"); len(got) != 2 || got[0] != 0 || got[1] != 2 {
-		t.Errorf("findMatches = %v, want [0 2]", got)
-	}
-	if got := findMatches("x", "y"); got != nil {
-		t.Errorf("expected nil, got %v", got)
-	}
-	if got := findMatches("anything", ""); got != nil {
-		t.Errorf("empty query should match nothing, got %v", got)
 	}
 }
 
@@ -1425,6 +1417,54 @@ func TestTrackTool(t *testing.T) {
 	}
 }
 
+// TestTrackToolRetrackPreservesFields pins the merge semantics of a re-track:
+// UpsertMeta replaces the record wholesale, so trackTool must carry the
+// user-authored fields forward — a bare-name re-track once wiped the note, tag,
+// update_cmd, Added date and GitHub ref behind an "already tracked" status that
+// reads as a no-op. The status reset to trying is the one deliberate change.
+func TestTrackToolRetrackPreservesFields(t *testing.T) {
+	meta := []loader.ToolMeta{{
+		Name:      "fd",
+		Status:    loader.StatusActive,
+		Added:     "2024-01-02",
+		Tags:      []string{"cli"},
+		Note:      "fast find",
+		GitHub:    "github.com/sharkdp/fd",
+		UpdateCmd: "brew upgrade fd",
+	}}
+
+	got, status := trackTool(meta, "fd")
+	if status != "already tracked" {
+		t.Fatalf("status = %q, want already tracked", status)
+	}
+	e := loader.FindMeta(got, "fd")
+	if e == nil {
+		t.Fatal("fd missing after re-track")
+	}
+	if e.Note != "fast find" || len(e.Tags) != 1 || e.Tags[0] != "cli" || e.UpdateCmd != "brew upgrade fd" {
+		t.Errorf("user-authored fields lost: %+v", *e)
+	}
+	if e.GitHub != "github.com/sharkdp/fd" {
+		t.Errorf("bare-name re-track dropped the GitHub ref: %q", e.GitHub)
+	}
+	if e.Added != "2024-01-02" {
+		t.Errorf("Added = %q, want the original date", e.Added)
+	}
+	if e.Status != loader.StatusTrying {
+		t.Errorf("status field = %q, want %q", e.Status, loader.StatusTrying)
+	}
+
+	// A re-track that does carry a ref updates it and still keeps the rest.
+	got, _ = trackTool(got, "https://github.com/newowner/fd")
+	e = loader.FindMeta(got, "fd")
+	if e.GitHub != "github.com/newowner/fd" {
+		t.Errorf("ref-carrying re-track did not update GitHub: %q", e.GitHub)
+	}
+	if e.Note != "fast find" {
+		t.Errorf("ref-carrying re-track lost the note: %q", e.Note)
+	}
+}
+
 func TestTrackToolSavePath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	meta, _ := trackTool(nil, "git")
@@ -2210,6 +2250,96 @@ func TestNeedsRemote(t *testing.T) {
 				t.Errorf("needsRemote() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestNeedsRemoteSettlesOnConclusiveAnswer: a repo with neither releases nor
+// tags answers with an empty Latest, and that is a real answer — without a
+// marker the empty-Latest clause re-dispatched the whole pass on every cursor
+// visit. The trap case is the one shape where a marker read off m.repoStatus
+// instead would be wrong: a rate-limited pass that still carried a stale card
+// writes "active" into repoStatus, so presence there would suppress a retry the
+// predicate still wants. (A *complete* stale card also carries Latest, which
+// makes needsRemote false for an unrelated reason and would mask the point.)
+func TestNeedsRemoteSettlesOnConclusiveAnswer(t *testing.T) {
+	tool := loader.Tool{Name: "git", GitHub: "cli/cli"}
+
+	t.Run("conclusive empty latest settles", func(t *testing.T) {
+		m := newTestModel(focusTools)
+		m.tools = []loader.Tool{tool}
+		updated, _ := m.Update(remoteMsg{
+			toolName:   "git",
+			latest:     "",
+			repoStatus: "active",
+			card:       version.RepoCard{About: "the tool"},
+		})
+		nm := updated.(Model)
+		if nm.needsRemote(tool) {
+			t.Error("needsRemote = true after a conclusive answer — every cursor visit re-dispatches the pass")
+		}
+	})
+
+	t.Run("rate-limited stale card stays retryable", func(t *testing.T) {
+		m := newTestModel(focusTools)
+		m.tools = []loader.Tool{tool}
+		updated, _ := m.Update(remoteMsg{
+			toolName:   "git",
+			latest:     "",
+			repoStatus: "active",
+			card:       version.RepoCard{About: "the tool"},
+			err:        version.ErrRateLimited,
+		})
+		nm := updated.(Model)
+		if !nm.needsRemote(tool) {
+			t.Error("needsRemote = false after a rate-limited pass — the retry was suppressed by a failure")
+		}
+	})
+
+	t.Run("rename clears the marker", func(t *testing.T) {
+		m := New([]loader.ToolMeta{{Name: "git", GitHub: "cli/cli"}})
+		m.width, m.height = 80, 24
+		updated, _ := m.Update(remoteMsg{toolName: "git", repoStatus: "active", card: version.RepoCard{About: "x"}})
+		nm := updated.(Model)
+		nm.mode = modeRename
+		nm.nameInput.SetValue("gh")
+		renamed := mustModel(nm.Update(tea.KeyMsg{Type: tea.KeyEnter}))
+		if renamed.remoteAnswered["git"] {
+			t.Error("the old name's marker survived the rename, like a stale per-name cache would")
+		}
+		if !renamed.needsRemote(loader.Tool{Name: "gh", GitHub: "cli/cli"}) {
+			t.Error("the renamed tool must re-fetch under its new name")
+		}
+	})
+}
+
+// TestTagDerivedLatestOnCard pins what a tag-only repo's card looks like once
+// internal/version's tags fallback fills Latest with a git tag: the update is
+// offered exactly as a release would be, but nothing pretends there are release
+// notes or a release page to open.
+func TestTagDerivedLatestOnCard(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "tool", GitHub: "owner/tool"}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	mm := updated.(Model)
+	mm.versions["tool"] = VersionInfo{Installed: "v1.0.0", Latest: "v2.0.0", InstalledKnown: true}
+	mm.repoCards["tool"] = version.RepoCard{About: "a tool", Latest: "v2.0.0", RepoStatus: "active"}
+	// What the tags fallback writes: a tag and nothing else.
+	mm.changelogData["tool"] = changelogMsg{toolName: "tool", tag: "v2.0.0"}
+
+	if !mm.hasUpdate("tool") {
+		t.Fatal("hasUpdate = false — a tag-derived latest must still offer the update")
+	}
+	card, links := mm.buildCard()
+	plain := stripANSI(card)
+	if !strings.Contains(plain, "no release notes available.") {
+		t.Errorf("card = %q, want the no-notes line", plain)
+	}
+	if strings.Contains(plain, "release notes ↗") {
+		t.Error("the card offers a release page a tag does not have")
+	}
+	for line, url := range links {
+		if strings.Contains(url, "/releases/tag/") {
+			t.Errorf("line %d links to a release page: %q", line, url)
+		}
 	}
 }
 
@@ -4078,7 +4208,7 @@ func TestReadmeModeHasNoEntryNav(t *testing.T) {
 }
 
 // TestTokenAddClearsRateLimitedReadmes: the rate-limit placeholder tells the
-// user to press [L]; needsReadme treats any stored entry as answered, so the
+// user to press [a]; needsReadme treats any stored entry as answered, so the
 // negative has to be dropped when a token lands or the panel would stay stuck
 // on "rate limited" for the whole session.
 func TestTokenAddClearsRateLimitedReadmes(t *testing.T) {
@@ -4465,7 +4595,9 @@ func TestChangelogBlockIndentAndCodePlate(t *testing.T) {
 	if !strings.Contains(plated, bg) {
 		t.Errorf("code line = %q, want the surface plate", plated)
 	}
-	inner := max(m.briefW-2, 10)
+	// cardWidth(), not briefW-2: the block lives inside the card's own width
+	// budget, and the extra cell used to be spent on the panel's right gutter.
+	inner := max(m.cardWidth(), 10)
 	if w := lipgloss.Width(plated); w != inner {
 		t.Errorf("code line is %d cells wide, want the block's full %d", w, inner)
 	}
@@ -4867,6 +4999,16 @@ func TestPanelsKeepTheirGutter(t *testing.T) {
 	mm.repoCards["gh"] = version.RepoCard{
 		About: "the GitHub CLI", Latest: "v2.0.0", Stars: 219, RepoStatus: "active",
 		Languages: map[string]int{"Go": 900, "Shell": 100},
+	}
+	// The changelog block is the one part of the card that pads a line out to
+	// its own width budget, so the gutter is only actually exercised with a
+	// body carrying a fenced block: the code plate is padded to the full block
+	// width, and sizing it off briefW-2 instead of cardWidth() spent the right
+	// gutter's column on the plate.
+	mm.changelogData["gh"] = changelogMsg{
+		toolName: "gh",
+		body:     "## Fixes\n\n```sh\ngh auth login --with-token\n```\n\n- a plain body line",
+		htmlUrl:  "https://github.com/cli/cli/releases/tag/v2.0.0",
 	}
 	mm.helpCache["gh"] = [2]string{helpModeHelp: "usage: gh <command>\n\n  --flag   does a thing"}
 	mm.helpMode = helpModeHelp
