@@ -95,13 +95,15 @@ func keepkitStyle(t ui.Theme, dark bool) ansi.StyleConfig {
 	// alarm color and a README spends it a dozen times a screen, and the dark red
 	// was the *least* legible thing in the panel rather than the most.
 	//
-	// It now reads exactly like a code span in the card's changelog — Emphasis on
+	// It now reads exactly like a code span in the card's changelog — Text on
 	// the Surface plate — which is the same rule stated once in two panels: a
 	// literal the reader could type is raised off the prose, not colored against
-	// it. The plate is what makes it noticeable; the brightest text role is what
-	// makes it readable. The prefix/suffix spaces the standard style already puts
-	// around inline code become the plate's padding for free.
-	cfg.Code.Color = ptrTo(string(t.Emphasis))
+	// it. The plate alone does the raising; the text stays at body brightness,
+	// because a spell in Emphasis made every code span the loudest thing in the
+	// panel (a README spends dozens per screen, and Emphasis is meant to peak a
+	// few times per frame). The prefix/suffix spaces the standard style already
+	// puts around inline code become the plate's padding for free.
+	cfg.Code.Color = ptrTo(string(t.Text))
 	cfg.Code.BackgroundColor = ptrTo(string(t.Surface))
 
 	// A code block is an install command the user is about to run: the one
@@ -113,7 +115,7 @@ func keepkitStyle(t ui.Theme, dark bool) ansi.StyleConfig {
 	// which is also what this package's TTY-less tests exercise. So the
 	// StyleBlock override below stays, and the Chroma repaint above it is what
 	// the user actually sees.
-	cfg.CodeBlock.Color = ptrTo(string(t.Emphasis))
+	cfg.CodeBlock.Color = ptrTo(string(t.Text))
 	cfg.CodeBlock.BackgroundColor = ptrTo(string(t.Surface))
 
 	// The repaint is deliberately bounded to two entries: Background carries the
@@ -136,7 +138,7 @@ func keepkitStyle(t ui.Theme, dark bool) ansi.StyleConfig {
 	if cfg.CodeBlock.Chroma != nil {
 		chromaCfg := *cfg.CodeBlock.Chroma
 		chromaCfg.Background.BackgroundColor = ptrTo(string(t.Surface))
-		chromaCfg.Text.Color = ptrTo(string(t.Emphasis))
+		chromaCfg.Text.Color = ptrTo(string(t.Text))
 		chromaCfg.Text.BackgroundColor = ptrTo(string(t.Surface))
 		cfg.CodeBlock.Chroma = &chromaCfg
 	}

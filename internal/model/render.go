@@ -2115,9 +2115,12 @@ func (m Model) renderChangelogBlock(msg changelogMsg) string {
 	}
 	// Code sits on the same plate the metrics strip uses, which is what makes a
 	// command in a release note read as something to run rather than as more
-	// prose. The plate is padded out to the panel so the block reads as a block:
-	// a background that stopped at the last glyph would be a ragged highlight.
-	plate := s.Emphasis.Background(s.Theme.Surface)
+	// prose. The plate alone does that raising — the text stays at body
+	// brightness (Text, not Emphasis: near-white made every code line the
+	// loudest thing on the card). The plate is padded out to the panel so the
+	// block reads as a block: a background that stopped at the last glyph would
+	// be a ragged highlight.
+	plate := s.Text.Background(s.Theme.Surface)
 	width := max(inner-len(changelogIndent), 1)
 	for _, line := range lines {
 		switch {

@@ -89,13 +89,24 @@ func TestKeepkitStyleDarkOnlyOverrides(t *testing.T) {
 	}
 
 	// Inline code reads exactly like a code span in the card's changelog:
-	// Emphasis on the Surface plate. Not Danger — red is the card's one alarm
-	// color and a README spends it a dozen times a screen.
-	if got := deref(t, "dark Code.Color", dark.Code.Color); got != string(ui.Default.Emphasis) {
-		t.Errorf("dark Code.Color = %q, want %q", got, string(ui.Default.Emphasis))
+	// Text on the Surface plate — the plate does the raising, the text stays at
+	// body brightness. Not Danger (red is the card's one alarm color) and not
+	// Emphasis (a README spends dozens of spans per screen, and near-white made
+	// every one of them the loudest thing in the panel).
+	if got := deref(t, "dark Code.Color", dark.Code.Color); got != string(ui.Default.Text) {
+		t.Errorf("dark Code.Color = %q, want %q", got, string(ui.Default.Text))
 	}
 	if got := deref(t, "dark Code.BackgroundColor", dark.Code.BackgroundColor); got != string(ui.Default.Surface) {
 		t.Errorf("dark Code.BackgroundColor = %q, want the %q plate", got, string(ui.Default.Surface))
+	}
+	// The CodeBlock StyleBlock is the Ascii/NO_COLOR fallback path (a color
+	// terminal renders a fence through Chroma instead) and must carry the same
+	// pair, or the two paths drift.
+	if got := deref(t, "dark CodeBlock.Color", dark.CodeBlock.Color); got != string(ui.Default.Text) {
+		t.Errorf("dark CodeBlock.Color = %q, want %q", got, string(ui.Default.Text))
+	}
+	if got := deref(t, "dark CodeBlock.BackgroundColor", dark.CodeBlock.BackgroundColor); got != string(ui.Default.Surface) {
+		t.Errorf("dark CodeBlock.BackgroundColor = %q, want the %q plate", got, string(ui.Default.Surface))
 	}
 	if got := deref(t, "dark Code.Color", dark.Code.Color); got == string(ui.Default.Danger) {
 		t.Errorf("dark Code.Color is still the alarm role %q", got)
@@ -132,8 +143,8 @@ func TestKeepkitStyleRepaintsChroma(t *testing.T) {
 	if got := deref(t, "dark Chroma.Background.BackgroundColor", dark.CodeBlock.Chroma.Background.BackgroundColor); got != string(ui.Default.Surface) {
 		t.Errorf("dark Chroma.Background.BackgroundColor = %q, want the %q plate", got, string(ui.Default.Surface))
 	}
-	if got := deref(t, "dark Chroma.Text.Color", dark.CodeBlock.Chroma.Text.Color); got != string(ui.Default.Emphasis) {
-		t.Errorf("dark Chroma.Text.Color = %q, want %q", got, string(ui.Default.Emphasis))
+	if got := deref(t, "dark Chroma.Text.Color", dark.CodeBlock.Chroma.Text.Color); got != string(ui.Default.Text) {
+		t.Errorf("dark Chroma.Text.Color = %q, want %q", got, string(ui.Default.Text))
 	}
 	if got := deref(t, "dark Chroma.Text.BackgroundColor", dark.CodeBlock.Chroma.Text.BackgroundColor); got != string(ui.Default.Surface) {
 		t.Errorf("dark Chroma.Text.BackgroundColor = %q, want the %q plate — chroma emits a background per token", got, string(ui.Default.Surface))

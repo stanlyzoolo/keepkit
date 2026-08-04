@@ -5084,6 +5084,15 @@ func TestChangelogBlockIndentAndCodePlate(t *testing.T) {
 	if !strings.Contains(plated, bg) {
 		t.Errorf("code line = %q, want the surface plate", plated)
 	}
+	// The plate alone raises the code; the text stays at body brightness. An
+	// Emphasis foreground here made every code line the loudest thing on the
+	// card.
+	if !strings.Contains(plated, themeSeq(ui.Default.Text)) {
+		t.Errorf("code line = %q, want the Text foreground on the plate", plated)
+	}
+	if strings.Contains(plated, themeSeq(ui.Default.Emphasis)) {
+		t.Errorf("code line = %q carries the Emphasis foreground — the plate, not brightness, marks code", plated)
+	}
 	// cardWidth(), not briefW-2: the block lives inside the card's own width
 	// budget, and the extra cell used to be spent on the panel's right gutter.
 	inner := max(m.cardWidth(), 10)
