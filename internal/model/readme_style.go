@@ -106,8 +106,40 @@ func keepkitStyle(t ui.Theme, dark bool) ansi.StyleConfig {
 
 	// A code block is an install command the user is about to run: the one
 	// place the readme gets the Surface background, so it reads as a plate.
+	//
+	// Two render paths, and BOTH are live. glamour sends a fence through
+	// rules.Chroma whenever ColorProfile != termenv.Ascii — every real session —
+	// and falls back to these StyleBlock fields for Ascii/NO_COLOR terminals,
+	// which is also what this package's TTY-less tests exercise. So the
+	// StyleBlock override below stays, and the Chroma repaint above it is what
+	// the user actually sees.
 	cfg.CodeBlock.Color = ptrTo(string(t.Emphasis))
 	cfg.CodeBlock.BackgroundColor = ptrTo(string(t.Surface))
+
+	// The repaint is deliberately bounded to two entries: Background carries the
+	// plate, and Text needs the same background because chroma's formatter emits
+	// one per token — without it the plate is punched through wherever a token
+	// falls back to Text. Every other token entry is inherited unchanged, so the
+	// syntax accents stay the ones the standard config chose and no per-token
+	// judgement call is made here.
+	//
+	// The clone is a fresh pointer for the reason ptrTo exists: the globals are
+	// aliased by styles.DefaultStyles, and writing through cfg.CodeBlock.Chroma
+	// would restyle glamour process-wide.
+	//
+	// Caveat worth knowing: glamour registers the built chroma style under the
+	// process-global, one-shot name "charm" and skips the registration when that
+	// name is already taken, so the FIRST render in a process wins the slot. That
+	// is why the only reliable assertion is struct-level, and why a mid-session
+	// theme switch could not repaint a fence anyway — consistent with m.darkBG,
+	// which is resolved once at construction.
+	if cfg.CodeBlock.Chroma != nil {
+		chromaCfg := *cfg.CodeBlock.Chroma
+		chromaCfg.Background.BackgroundColor = ptrTo(string(t.Surface))
+		chromaCfg.Text.Color = ptrTo(string(t.Emphasis))
+		chromaCfg.Text.BackgroundColor = ptrTo(string(t.Surface))
+		cfg.CodeBlock.Chroma = &chromaCfg
+	}
 
 	// What is still a link after the preprocessor is an autolink or a bare URL,
 	// whose text IS the URL — the Link role's only consumer here.

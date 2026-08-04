@@ -2,9 +2,11 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
 
 	"github.com/stanlyzoolo/keepkit/internal/ui"
@@ -104,6 +106,51 @@ func TestKeepkitStyleDarkOnlyOverrides(t *testing.T) {
 	}
 	if got := deref(t, "light Document.Color", light.Document.Color); got == string(ui.Default.Text) {
 		t.Errorf("light Document.Color = %q — the dark body tint is unreadable on white", got)
+	}
+}
+
+// TestKeepkitStyleRepaintsChroma pins the one override that decides what a code
+// fence actually looks like in a live session. glamour renders a fence through
+// rules.Chroma whenever ColorProfile != Ascii, and through the CodeBlock
+// StyleBlock fields otherwise — so on every real terminal the StyleBlock plate
+// was never reached and the fence kept the stock charm palette on the terminal's
+// own background. The repaint is bounded on purpose: Background and Text carry
+// the plate (chroma emits a background per token, so Text needs it too), every
+// other token entry stays exactly as the standard config wrote it. Dark only —
+// the light palette deliberately keeps the stock colors, so there the pointer
+// must still ALIAS the global.
+func TestKeepkitStyleRepaintsChroma(t *testing.T) {
+	dark := keepkitStyle(ui.Default, true)
+	if dark.CodeBlock.Chroma == nil {
+		t.Fatal("dark CodeBlock.Chroma is nil")
+	}
+	// A fresh pointer, or the assignments below would have restyled glamour for
+	// the whole process (TestKeepkitStyleLeavesGlobalsUntouched's rule).
+	if dark.CodeBlock.Chroma == styles.DarkStyleConfig.CodeBlock.Chroma {
+		t.Error("dark CodeBlock.Chroma still aliases the global — the repaint writes through it")
+	}
+	if got := deref(t, "dark Chroma.Background.BackgroundColor", dark.CodeBlock.Chroma.Background.BackgroundColor); got != string(ui.Default.Surface) {
+		t.Errorf("dark Chroma.Background.BackgroundColor = %q, want the %q plate", got, string(ui.Default.Surface))
+	}
+	if got := deref(t, "dark Chroma.Text.Color", dark.CodeBlock.Chroma.Text.Color); got != string(ui.Default.Emphasis) {
+		t.Errorf("dark Chroma.Text.Color = %q, want %q", got, string(ui.Default.Emphasis))
+	}
+	if got := deref(t, "dark Chroma.Text.BackgroundColor", dark.CodeBlock.Chroma.Text.BackgroundColor); got != string(ui.Default.Surface) {
+		t.Errorf("dark Chroma.Text.BackgroundColor = %q, want the %q plate — chroma emits a background per token", got, string(ui.Default.Surface))
+	}
+
+	// Everything else is inherited verbatim: no per-token judgement calls.
+	stock := *styles.DarkStyleConfig.CodeBlock.Chroma
+	got := *dark.CodeBlock.Chroma
+	stock.Background, got.Background = ansi.StylePrimitive{}, ansi.StylePrimitive{}
+	stock.Text, got.Text = ansi.StylePrimitive{}, ansi.StylePrimitive{}
+	if !reflect.DeepEqual(got, stock) {
+		t.Error("a chroma token other than Background/Text was repainted")
+	}
+
+	light := keepkitStyle(ui.Default, false)
+	if light.CodeBlock.Chroma != styles.LightStyleConfig.CodeBlock.Chroma {
+		t.Error("light CodeBlock.Chroma was cloned — the light palette deliberately stays stock")
 	}
 }
 
