@@ -70,11 +70,6 @@ type remoteMsg struct {
 	// a repo with no releases settles the tool with a nil err, and a pass that
 	// served a stale card under a rate limit settles nothing while carrying one.
 	conclusive bool
-	// tokenRejected is version.TokenRejected() snapshotted in the command
-	// goroutine after the fetch, the same shape rate uses. Reading the package
-	// global from a renderer instead would make the frame depend on when a
-	// goroutine happened to write, and would be unsettable in a model test.
-	tokenRejected bool
 }
 
 // rateMsg carries a rate-limit snapshot fetched from GET /rate_limit, which
@@ -83,10 +78,6 @@ type remoteMsg struct {
 type rateMsg struct {
 	rate version.RateLimit
 	err  error
-	// tokenRejected is snapshotted in the command goroutine, like remoteMsg's.
-	// A rate seed is the one message a warm-cache start is guaranteed to send,
-	// so it is also the path that arms the degraded UI when nothing else fires.
-	tokenRejected bool
 }
 
 type changelogMsg struct {
@@ -469,15 +460,6 @@ type Model struct {
 	// fetchRateCmd and refreshed by remote fetches. A Known==false snapshot
 	// never overwrites a previously-known value.
 	rate version.RateLimit
-
-	// tokenRejected mirrors version.TokenRejected(): GitHub refused the
-	// configured credential and every request since goes out unauthenticated.
-	// It is a model field rather than a call into version from View() for two
-	// reasons — a package global cannot be set in a model test without the
-	// network, and a render must not depend on when a goroutine happened to
-	// write. It rides in on remoteMsg/rateMsg exactly as rate does, and the
-	// tokenValidatedMsg success path clears it.
-	tokenRejected bool
 
 	// tokenInput is the overlay's masked token field (modeTokenInput) and
 	// tokenError holds the inline "token invalid" message.
@@ -1036,10 +1018,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.rate.Known {
 			m.rate = msg.rate
 		}
-		// Written unconditionally, in both directions: the flag is the state of
-		// the session's credential, not a property of this pass, and a pass that
-		// ran after a token was replaced is exactly the one that should clear it.
-		m.tokenRejected = msg.tokenRejected
 		// Data is displayable when the fetch succeeded, or when it failed but still
 		// carried usable cache values: a fresh tag from a partial fetch, or the
 		// stale card kept on a total failure. In those cases render the data so
@@ -1088,11 +1066,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.briefViewport.SetContent(m.renderCard())
 			// [r] used to answer nothing at all: success, a rate limit, a 401, a
 			// timeout and a dropped connection were one gesture — the spinner
-			// turns, the card does not change. A pass the version layer calls
-			// inconclusive fetched nothing and wrote nothing, so it needs to say
-			// so; a conclusive one stays silent, because the repainted card IS
+			// turns, the card does not change. A failed pass says why; a pass
+			// that fetched something stays silent, because the repainted card IS
 			// the answer.
-			if !msg.conclusive {
+			//
+			// The predicate is the error and deliberately not !conclusive, which
+			// is a broader thing: it is also false when the version layer refused
+			// the ref outright (an unsupported or spoofed host — a bare RepoData
+			// with a nil Err), which would report a network failure that never
+			// happened, and on a partial pass that fetched a new tag and lost
+			// only the repo card — where the bar would contradict a card the user
+			// just watched update. Every path that actually failed to fetch now
+			// carries a named error (see version.pickFetchErr).
+			if msg.err != nil {
 				return m, m.setStatus(refreshFailedStatus(msg.err))
 			}
 		}
@@ -1103,11 +1089,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil && msg.rate.Known {
 			m.rate = msg.rate
 		}
-		// The rejection is written whatever the snapshot did: a failed rate fetch
-		// is precisely a run where the credential may have been refused, and
-		// suppressing the flag with the numbers would hide the reason along with
-		// them.
-		m.tokenRejected = msg.tokenRejected
 		return m, nil
 
 	case selfCheckMsg:
@@ -1160,13 +1141,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tokenInput.Blur()
 		m.tokenInput.SetValue("")
 		m.tokenError = ""
-		// This message is the one proof a credential works — FetchRateWithToken
-		// bypasses doGH precisely so a 401 cannot be retried away here. Clear the
-		// rejection explicitly rather than waiting for the next fetch to report
-		// it: the handler returns straight to modeAPIStatus, so the overlay would
-		// otherwise redraw "rejected (HTTP 401)" against the token that just
-		// validated.
-		m.tokenRejected = false
 		if msg.rate.Known {
 			m.rate = msg.rate
 		}
@@ -1187,13 +1161,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// remoteAnswered first is the other half; a tool the layer settled under
 		// the old credential is not settled under the new one.
 		//
-		// The cost is a goroutine plus a cache.json read per tool, not API quota:
-		// the version layer still serves a fresh entry from cache without a
-		// request, and a stale one is exactly what needs refetching.
+		// This does spend quota — a real three-request pass per tool, since the
+		// degraded window left every entry stale (an inconclusive pass never
+		// stamps CheckedAt) and that is exactly what makes the refetch worth
+		// doing. The new token is what pays for it: the limit is 5000/h from here
+		// on, not the 60 the session was running at.
 		clear(m.remoteAnswered)
+		// autoFetchCmdsForSelected refreshes the selected tool's other sources
+		// (changelog, installed, README) and dispatches its repo pass too, but
+		// only when needsRemote says so — which after the clear above is true for
+		// a cold-cache tool, the harsher of the two degraded shapes. So decide
+		// against the same marker state it will read, and let the loop skip
+		// whatever it already queued: two passes for one repo spend twice the
+		// quota on it and race two updateCacheEntry writes for the same entry.
+		queued := ""
+		if t, ok := m.selectedTool(); ok && m.needsRemote(t) {
+			queued = t.Name
+		}
 		cmds := []tea.Cmd{m.autoFetchCmdsForSelected()}
 		for _, t := range m.tools {
-			if t.GitHub != "" {
+			if t.GitHub != "" && t.Name != queued {
 				cmds = append(cmds, fetchRemoteCmd(t))
 			}
 		}

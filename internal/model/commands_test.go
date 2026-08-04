@@ -620,6 +620,40 @@ func TestTokenAcceptedRefetchesEveryRepo(t *testing.T) {
 		}
 	})
 
+	t.Run("the selected tool is fetched once, not twice", func(t *testing.T) {
+		// The cold-cache shape, which is the harsher of the two degraded states
+		// and the one the fixture above deliberately does not cover: with no
+		// card at all, needsRemote answers TRUE once remoteAnswered is cleared,
+		// so autoFetchCmdsForSelected dispatches the selected tool's repo pass —
+		// and a loop that also dispatched it would spend six requests on one repo
+		// and race two updateCacheEntry writes for the same entry.
+		m := New([]loader.ToolMeta{
+			{Name: "gh", GitHub: "cli/cli"},
+			{Name: "rg", GitHub: "BurntSushi/ripgrep"},
+			{Name: "fd", GitHub: "sharkdp/fd"},
+		})
+		m.width, m.height = 80, 24
+		sel, ok := m.selectedTool()
+		if !ok || !m.needsRemote(sel) {
+			t.Fatal("fixture: the selected tool must need a remote pass, else this asserts nothing")
+		}
+
+		_, cmd := m.Update(tokenValidatedMsg{token: "ghp_goodtoken1234"})
+		if cmd == nil {
+			t.Fatal("an accepted token returned no commands")
+		}
+		batch, ok := cmd().(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("cmd produced %T, want a tea.BatchMsg", cmd())
+		}
+		// The backfill covers the selected tool, so the loop contributes the
+		// other two only.
+		if len(batch) != 1+2 {
+			t.Errorf("batch has %d commands, want 1 backfill + 2 refetches — "+
+				"the selected tool must not be dispatched by both", len(batch))
+		}
+	})
+
 	t.Run("a refused token changes neither", func(t *testing.T) {
 		m := newModel()
 		updated, cmd := m.Update(tokenValidatedMsg{token: "ghp_bad", err: version.ErrTokenInvalid})

@@ -885,6 +885,56 @@ func TestDoGHDoesNotRetryATokenlessRequest(t *testing.T) {
 	}
 }
 
+// TestDoGHKeepsTheTokenWhenAnonymousAlso401s pins what the 401 is evidence
+// ABOUT. Dropping the header has to change the answer for the credential to be
+// the thing at fault; a host that refuses an anonymous request too — a proxy, an
+// enterprise instance — is refusing the resource. Marking the token there would
+// strip Authorization for the rest of the session and put "rejected (HTTP 401)"
+// in the [a] overlay beside a credential that is perfectly good.
+func TestDoGHKeepsTheTokenWhenAnonymousAlso401s(t *testing.T) {
+	dir := t.TempDir()
+	resetTokenState(t, dir)
+	t.Setenv("GITHUB_TOKEN", "")
+	resetRate(t)
+	if err := SetToken("ghp_perfectly_fine"); err != nil {
+		t.Fatal(err)
+	}
+
+	var requests int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	req, err := http.NewRequest("GET", srv.URL+"/repos/cli/cli/releases/latest", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := doGH(req)
+	if err != nil {
+		t.Fatalf("doGH: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	mu.Lock()
+	n := requests
+	mu.Unlock()
+	if n != 2 {
+		t.Errorf("made %d requests, want 2 — the retry still has to happen to learn this", n)
+	}
+	if TokenRejected() {
+		t.Error("TokenRejected() = true, but dropping the header changed nothing — " +
+			"the host refuses the resource, not the credential")
+	}
+	if got := resolveToken(); got != "ghp_perfectly_fine" {
+		t.Errorf("resolveToken() = %q, want the token still sent on later requests", got)
+	}
+}
+
 // TestFetchRateWithTokenNeverSeesTheRetry pins the doGH bypass as an invariant.
 // Validation is the one caller that must observe a 401 rather than survive it:
 // riding the shared path would answer an anonymous 200 and persist a token

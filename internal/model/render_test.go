@@ -1671,7 +1671,8 @@ func TestRenderRateGaugeMarksARejectedToken(t *testing.T) {
 			name = "compact"
 		}
 		t.Run(name+" form marks a rejection", func(t *testing.T) {
-			got := stripANSI(Model{rate: rate, tokenRejected: true}.renderRateGauge(compact))
+			defer armRejectedToken(t)()
+			got := stripANSI(Model{rate: rate}.renderRateGauge(compact))
 			if !strings.HasPrefix(got, "api"+rejectedTokenGlyph+" ") {
 				t.Errorf("%s gauge = %q, want the label to lead with api%s", name, got, rejectedTokenGlyph)
 			}
@@ -1690,7 +1691,8 @@ func TestRenderRateGaugeMarksARejectedToken(t *testing.T) {
 
 	t.Run("the mark is styled Danger, not dim like the rest", func(t *testing.T) {
 		forceColorProfile(t)
-		got := Model{rate: rate, tokenRejected: true, styles: ui.NewStyles(ui.Default)}.renderRateGauge(true)
+		defer armRejectedToken(t)()
+		got := Model{rate: rate, styles: ui.NewStyles(ui.Default)}.renderRateGauge(true)
 		danger := ui.NewStyles(ui.Default).Danger.Render(rejectedTokenGlyph)
 		if !strings.Contains(got, danger) {
 			t.Errorf("gauge = %q, want the mark rendered through Danger (%q)", got, danger)
@@ -1699,11 +1701,27 @@ func TestRenderRateGaugeMarksARejectedToken(t *testing.T) {
 
 	t.Run("the mark costs exactly one cell", func(t *testing.T) {
 		// The gauge sits at the bar's right edge and its width is what
-		// renderHintsBar reserves. A two-cell glyph (U+00D7 is one, under
-		// RUNEWIDTH_EASTASIAN) would push the bar past the terminal and scroll the
-		// top border off the alt screen.
+		// renderHintsBar reserves, so a two-cell mark would push the bar past the
+		// terminal and scroll the top border off the alt screen.
+		//
+		// Measured under BOTH runewidth conditions, the way langBandGlyph and the
+		// list markers are: lipgloss.Width follows the ambient
+		// RUNEWIDTH_EASTASIAN, and CI runs a plain `go test`, so a check through
+		// it would pass here with U+00D7 — which is exactly the two-cell glyph
+		// this test exists to reject.
+		for _, cond := range []bool{false, true} {
+			c := runewidth.NewCondition()
+			c.EastAsianWidth = cond
+			if got := c.StringWidth(rejectedTokenGlyph); got != 1 {
+				t.Errorf("rejectedTokenGlyph width = %d with EastAsianWidth=%v, want 1", got, cond)
+			}
+		}
+		// And the gauge really spends that one cell, rather than the mark being
+		// width-stable but rendered somewhere the bar does not measure.
 		plain := lipgloss.Width(Model{rate: rate}.renderRateGauge(true))
-		marked := lipgloss.Width(Model{rate: rate, tokenRejected: true}.renderRateGauge(true))
+		restore := armRejectedToken(t)
+		marked := lipgloss.Width(Model{rate: rate}.renderRateGauge(true))
+		restore()
 		if marked-plain != 1 {
 			t.Errorf("marker costs %d cells, want 1", marked-plain)
 		}
@@ -1724,14 +1742,16 @@ func TestRenderRateMarkerIsTheLastFormStanding(t *testing.T) {
 		if got := healthy.renderRateMarker(); got != "" {
 			t.Errorf("renderRateMarker() = %q, want empty for a healthy session", got)
 		}
-		noQuota := Model{tokenRejected: true}
+		defer armRejectedToken(t)()
+		noQuota := Model{}
 		if got := noQuota.renderRateMarker(); got != "" {
 			t.Errorf("renderRateMarker() = %q, want empty with no known quota", got)
 		}
 	})
 
 	t.Run("it is narrower than the compact form", func(t *testing.T) {
-		m := Model{rate: rate, tokenRejected: true}
+		defer armRejectedToken(t)()
+		m := Model{rate: rate}
 		if lipgloss.Width(m.renderRateMarker()) >= lipgloss.Width(m.renderRateGauge(true)) {
 			t.Error("the marker-only form must be the narrowest, or it would never be reached")
 		}
@@ -1742,7 +1762,7 @@ func TestRenderRateMarkerIsTheLastFormStanding(t *testing.T) {
 		m := New([]loader.ToolMeta{{Name: "rg", GitHub: "BurntSushi/ripgrep"}}).WithAppVersion("v0.1.0")
 		m = mustModel(m.Update(tea.WindowSizeMsg{Width: 80, Height: 24}))
 		m.rate = rate
-		m.tokenRejected = true
+		defer armRejectedToken(t)()
 		bar := stripANSI(m.renderStatusBar())
 		if !strings.Contains(bar, "api"+rejectedTokenGlyph) {
 			t.Errorf("status bar at 80 cols dropped the rejection mark:\n%s", bar)
@@ -2871,16 +2891,16 @@ func rejectedOverlayModel(t *testing.T, rejected bool, mode inputMode) Model {
 	restore := version.SetConfigDirForTesting(t.TempDir())
 	t.Cleanup(restore)
 	t.Setenv("GITHUB_TOKEN", "")
-	if err := version.SetToken("ghp_A1b2C3d4E5f6G7h8"); err != nil {
+	if err := version.SetToken("ghp_notarealtoken"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = version.ClearToken() })
+	t.Cleanup(version.SetTokenRejectedForTesting(rejected))
 
 	return Model{
 		width: 80, height: 24, mode: mode,
-		tokenInput:    textinput.New(),
-		tokenRejected: rejected,
-		rate:          version.RateLimit{Known: true, Remaining: 26, Limit: 60},
+		tokenInput: textinput.New(),
+		rate:       version.RateLimit{Known: true, Remaining: 26, Limit: 60},
 	}
 }
 
@@ -2895,7 +2915,7 @@ func TestRenderAPIStatusExplainsARejectedToken(t *testing.T) {
 	t.Run("the rejected line keeps source and mask", func(t *testing.T) {
 		m := rejectedOverlayModel(t, true, modeAPIStatus)
 		got := stripANSI(m.renderAPIStatus())
-		for _, want := range []string{"token  config", "ghp_", "G7h8", "rejected (HTTP 401)"} {
+		for _, want := range []string{"token  config", "ghp_", "oken", "rejected (HTTP 401)"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("overlay missing %q:\n%s", want, got)
 			}
@@ -3114,95 +3134,65 @@ func TestTokenValidatedMsgValid(t *testing.T) {
 	}
 }
 
-// TestTokenRejectedRidesOnMessages verifies both carriers write the field, in
-// both directions. The flag is the state of the session's credential, not a
-// property of one pass, so a message reporting a healthy token must be able to
-// clear a flag an earlier one set.
-func TestTokenRejectedRidesOnMessages(t *testing.T) {
-	base := func() Model {
-		m := Model{
-			meta:          []loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}},
-			versions:      map[string]VersionInfo{},
-			repoStatus:    map[string]string{},
-			repoCards:     map[string]version.RepoCard{},
-			changelogData: map[string]changelogMsg{},
-		}
-		m.tools = loader.ToolsFromMeta(m.meta)
-		return m
+// armRejectedToken stores a token and marks it refused, returning the restore
+// func. internal/model cannot reach version.rejectToken (unexported, and armed
+// only by a real 401), so the exported seam is the only way to render the
+// degraded state in a test that must not touch the network.
+func armRejectedToken(t *testing.T) (restore func()) {
+	t.Helper()
+	t.Setenv("GITHUB_TOKEN", "")
+	restoreDir := version.SetConfigDirForTesting(t.TempDir())
+	if err := version.SetToken("ghp_refusedtoken"); err != nil {
+		t.Fatal(err)
 	}
-
-	t.Run("remoteMsg sets it", func(t *testing.T) {
-		nm := mustModel(base().Update(remoteMsg{toolName: "gh", latest: "1.0", tokenRejected: true}))
-		if !nm.tokenRejected {
-			t.Error("tokenRejected = false after a remoteMsg carrying the rejection")
-		}
-	})
-
-	t.Run("remoteMsg clears it", func(t *testing.T) {
-		m := base()
-		m.tokenRejected = true
-		nm := mustModel(m.Update(remoteMsg{toolName: "gh", latest: "1.0"}))
-		if nm.tokenRejected {
-			t.Error("tokenRejected = true after a pass that carried no rejection")
-		}
-	})
-
-	t.Run("rateMsg sets it", func(t *testing.T) {
-		rate := version.RateLimit{Known: true, Limit: 60, Remaining: 59}
-		nm := mustModel(base().Update(rateMsg{rate: rate, tokenRejected: true}))
-		if !nm.tokenRejected {
-			t.Error("tokenRejected = false after a rateMsg carrying the rejection")
-		}
-	})
-
-	t.Run("a failed rateMsg still reports the rejection", func(t *testing.T) {
-		// The numbers are dropped by the non-clobber merge; the reason must not
-		// be dropped with them — a failed rate fetch is exactly the run where the
-		// credential may have been refused.
-		nm := mustModel(base().Update(rateMsg{err: errBoom, tokenRejected: true}))
-		if !nm.tokenRejected {
-			t.Error("tokenRejected = false after a failed rateMsg carrying the rejection")
-		}
-	})
+	restoreFlag := version.SetTokenRejectedForTesting(true)
+	return func() {
+		restoreFlag()
+		_ = version.ClearToken()
+		restoreDir()
+	}
 }
 
-// TestTokenValidatedMsgClearsRejection pins the one clear that cannot wait for
-// the next fetch: this handler returns straight to modeAPIStatus, so the overlay
-// would redraw "rejected" against the token that just proved itself.
-func TestTokenValidatedMsgClearsRejection(t *testing.T) {
-	t.Setenv("GITHUB_TOKEN", "")
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	version.ClearToken()                       //nolint:errcheck
-	t.Cleanup(func() { version.ClearToken() }) //nolint:errcheck
+// TestRejectedTokenHasNoCachedCopy pins the shape the surfaces read from. The
+// rejection was briefly mirrored into a Model field, written from a snapshot
+// remoteCmd/fetchRateCmd took inside the goroutine after the fetch — and that
+// created a window with no upside: a reply in flight across the keystroke that
+// replaced the credential carried a value observed under the OLD token, so it
+// re-armed the flag after the accepted tokenValidatedMsg had cleared it and the
+// overlay redrew "rejected (HTTP 401)" beside the mask of a token that had just
+// validated.
+//
+// There is nothing to go stale now: the two renderers ask version.TokenRejected()
+// at paint time, exactly as the token line beside them already asks
+// version.TokenSource() and version.Token(). This test is what stops the cache
+// from coming back.
+func TestRejectedTokenHasNoCachedCopy(t *testing.T) {
+	restore := armRejectedToken(t)
+	m := Model{width: 80, height: 24, rate: version.RateLimit{Known: true, Limit: 60, Remaining: 26}}
 
-	newModel := func() Model {
-		m := Model{
-			width: 80, height: 24, mode: modeTokenInput,
-			tokenInput:    textinput.New(),
-			tokenRejected: true,
-			meta:          []loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}},
-			versions:      map[string]VersionInfo{},
-			repoStatus:    map[string]string{},
-			repoCards:     map[string]version.RepoCard{},
-			changelogData: map[string]changelogMsg{},
-			readmeData:    map[string]readmeMsg{},
+	if !strings.Contains(stripANSI(m.renderStatusBar()), rejectedTokenGlyph) {
+		t.Fatal("fixture: the armed rejection does not reach the bar")
+	}
+
+	// Messages carry no rejection field to go stale with — feeding the handlers
+	// the very messages that used to re-arm it changes nothing.
+	m.versions = map[string]VersionInfo{}
+	m.repoStatus = map[string]string{}
+	m.repoCards = map[string]version.RepoCard{}
+	m.changelogData = map[string]changelogMsg{}
+	m.meta = []loader.ToolMeta{{Name: "gh", GitHub: "cli/cli"}}
+	m.tools = loader.ToolsFromMeta(m.meta)
+
+	restore()
+
+	for _, msg := range []tea.Msg{
+		rateMsg{rate: version.RateLimit{Known: true, Limit: 5000, Remaining: 4999}},
+		remoteMsg{toolName: "gh", latest: "v1.0"},
+	} {
+		nm := mustModel(m.Update(msg))
+		if strings.Contains(stripANSI(nm.renderStatusBar()), rejectedTokenGlyph) {
+			t.Errorf("%T left the bar marked after the rejection ended", msg)
 		}
-		m.tools = loader.ToolsFromMeta(m.meta)
-		return m
-	}
-
-	accepted := mustModel(newModel().Update(tokenValidatedMsg{token: "ghp_goodtoken1234"}))
-	if accepted.tokenRejected {
-		t.Error("tokenRejected = true after a token validated successfully")
-	}
-
-	// A rejected candidate proves nothing about the token in effect, so the flag
-	// stays exactly as it was.
-	refused := mustModel(newModel().Update(tokenValidatedMsg{token: "ghp_bad", err: version.ErrTokenInvalid}))
-	if !refused.tokenRejected {
-		t.Error("tokenRejected = false after a FAILED validation — nothing was proved")
 	}
 }
 
@@ -4766,7 +4756,9 @@ func TestStatusBarNeverWraps(t *testing.T) {
 			if tc.knownRate {
 				m.rate = version.RateLimit{Known: true, Limit: 60, Remaining: 42}
 			}
-			m.tokenRejected = tc.rejected
+			if tc.rejected {
+				defer armRejectedToken(t)()
+			}
 
 			if got := lipgloss.Height(m.renderStatusBar()); got != 3 {
 				t.Errorf("status bar height = %d, want 3 (border + one hint line)", got)

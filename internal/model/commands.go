@@ -209,10 +209,9 @@ func remoteCmd(t loader.Tool, force bool) tea.Cmd {
 				Body:        d.Body,
 				RepoStatus:  d.RepoStatus,
 			},
-			rate:          version.Rate(),
-			err:           d.Err,
-			conclusive:    d.Conclusive,
-			tokenRejected: version.TokenRejected(),
+			rate:       version.Rate(),
+			err:        d.Err,
+			conclusive: d.Conclusive,
 		}
 	})
 }
@@ -224,7 +223,7 @@ func remoteCmd(t loader.Tool, force bool) tea.Cmd {
 func fetchRateCmd() tea.Cmd {
 	return safeCmd("fetchRateCmd", func() tea.Msg {
 		rate, err := version.FetchRate()
-		return rateMsg{rate: rate, err: err, tokenRejected: version.TokenRejected()}
+		return rateMsg{rate: rate, err: err}
 	})
 }
 

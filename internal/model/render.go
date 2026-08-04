@@ -479,7 +479,7 @@ func (m Model) renderRateGauge(compact bool) string {
 	}
 	used := usedOf(r)
 	label := s.Dim.Render("api")
-	if m.tokenRejected {
+	if version.TokenRejected() {
 		label += s.Danger.Render(rejectedTokenGlyph)
 	}
 	label += s.Dim.Render(" ")
@@ -509,7 +509,7 @@ func (m Model) renderRateGauge(compact bool) string {
 // user's token. It returns "" when there is no rejection to report, so a healthy
 // session never gains a form the gauge did not have before.
 func (m Model) renderRateMarker() string {
-	if !m.tokenRejected || !gaugeVisible(m.rate) {
+	if !version.TokenRejected() || !gaugeVisible(m.rate) {
 		return ""
 	}
 	s := m.sty()
@@ -617,7 +617,7 @@ func (m Model) renderAPIStatus() string {
 	var b strings.Builder
 	b.WriteString(s.EmphasisBold.Render("github api usage") + "\n\n")
 
-	source := version.TokenSource()
+	source, rejected := version.TokenSource(), version.TokenRejected()
 	// Nudge the user when there is a token to add or to replace — either way the
 	// hourly limit is 60 and a working token lifts it to 5000. A rejected token
 	// needs different wording: "add" reads as advice to someone who has already
@@ -625,7 +625,7 @@ func (m Model) renderAPIStatus() string {
 	// Hidden while entering one, when the input below is the whole answer.
 	if m.mode != modeTokenInput {
 		switch {
-		case m.tokenRejected:
+		case rejected:
 			b.WriteString(s.Signal.Render("replace the token to restore the 5000/h limit  ") + m.hint("e", "set") + "\n\n")
 		case source == "none":
 			b.WriteString(s.Signal.Render("add a github token to raise the limit (60 → 5000/h)  ") + m.hint("e", "set") + "\n\n")
@@ -640,7 +640,7 @@ func (m Model) renderAPIStatus() string {
 	// version.Token() reads the raw core and not the suppressed resolveToken:
 	// blanking the value in exactly the state this line exists to describe would
 	// leave "token  config — rejected" naming no token at all.
-	if m.tokenRejected {
+	if rejected {
 		b.WriteString(s.Danger.Render(tokenLine+" — rejected (HTTP 401)") + "\n")
 		b.WriteString(s.Dim.Render("requests run unauthenticated") + "\n")
 	} else {

@@ -259,7 +259,9 @@ Key invariants:
   subject that names what is being updated. Under pressure the bar sheds in order of
   how actionable a thing is: trailing hints, then the gauge, then the version, then the
   self cell — and the leading hint is truncated rather than allowed to wrap.
-  A **rejected token** marks the gauge `api✕` (`Danger` `✕`, one cell under both
+  A **rejected token** — read from `version.TokenRejected()` at paint time, never
+  cached on the model, so it cannot disagree with the source and mask the overlay
+  prints beside it — marks the gauge `api✕` (`Danger` `✕`, one cell under both
   runewidth conditions) in every form, since that is where a degraded session is
   announced for its whole life. The mark costs a column, so the gauge has a third,
   narrowest form — `renderRateMarker`, the mark with no numbers — without which arming

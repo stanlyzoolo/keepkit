@@ -667,6 +667,46 @@ doGH → 403 remaining=0 → ErrRateLimited → getRepoData total-failure return
       caveat, and `[r]`'s new answer
 - [x] move this plan to `docs/plans/completed/`
 
+## Post-review corrections
+
+A full `/review:pr` pass on #60 (independent subagent + mutation checks) found five
+defects in the delivered work. All fixed on the branch before merge:
+
+1. **The task-10 fan-out dispatched the selected tool twice.** The rationale for
+   preferring `Init`'s predicate over `needsRemote` covered only the
+   stale-but-present shape; on a **cold** cache `needsRemote` is *true*, so
+   `autoFetchCmdsForSelected` queued the selected tool's repo pass and the loop
+   queued it again — six requests for one repo and two racing `updateCacheEntry`
+   writes. The loop now skips whatever the backfill already queued, decided
+   against the same (cleared) marker state it reads.
+2. **The inline cost comment and `CLAUDE.md` were wrong**, and `README.md` said the
+   opposite in the same change: the fan-out *does* spend quota, because the
+   degraded window left every entry stale. That is the point of it.
+3. **`rejectToken` fired before the retry's verdict was known**, so a host that
+   401s an anonymous request too — the proxy/enterprise case `ErrTokenInvalid`'s
+   own doc names — permanently disarmed a perfectly good token. It now runs after
+   the retry, and only when dropping the header changed the answer.
+4. **Task 9's `!msg.conclusive` predicate was too broad.** It reported
+   `refresh failed: network error` for a ref the version layer refused outright
+   (a bare `RepoData`, nil `Err`) and contradicted a card the user had just
+   watched update on a partial pass. `msg.err != nil` is the right predicate now
+   that every real failure carries a name. The plan's own test row had enshrined
+   the wrong message as correct.
+5. **Task 6's whole design was wrong.** Mirroring the rejection into a `Model`
+   field from a goroutine snapshot bought nothing and opened a window: a reply in
+   flight across the keystroke that replaced the credential re-armed the flag
+   after `tokenValidatedMsg` cleared it, and the overlay named the *new* token as
+   rejected. The field, the two message fields and the two handler writes are
+   gone; the renderers call `version.TokenRejected()` at paint time, exactly as
+   the token line beside them already calls `TokenSource()`/`Token()`. Arming it
+   in a test is `version.SetTokenRejectedForTesting`.
+
+Two test-quality findings from the same pass: the glyph-width assertion measured
+through `lipgloss.Width` (ambient `RUNEWIDTH_EASTASIAN`), so substituting the
+two-cell U+00D7 the comment itself names stayed green under CI's plain
+`go test` — it now checks both runewidth conditions like its two siblings; and a
+fixture token tripped GitGuardian, renamed to an obviously synthetic value.
+
 ## Post-Completion
 
 *Items requiring manual intervention or external systems — no checkboxes,

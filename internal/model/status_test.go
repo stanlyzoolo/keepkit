@@ -258,7 +258,7 @@ func TestRefreshAnswersEveryPress(t *testing.T) {
 		},
 		{
 			name:       "a rejected token is not called out separately",
-			msg:        remoteMsg{toolName: "gh", err: version.ErrTokenInvalid, tokenRejected: true},
+			msg:        remoteMsg{toolName: "gh", err: version.ErrTokenInvalid},
 			wantStatus: "refresh failed: network error",
 		},
 		{
@@ -267,11 +267,22 @@ func TestRefreshAnswersEveryPress(t *testing.T) {
 			wantStatus: "refresh failed: network error",
 		},
 		{
-			name: "an inconclusive pass carrying no error still answers",
-			// A total failure reaches the model with whatever the version layer
-			// classified; an offline start can still arrive with none.
+			// The version layer refuses an unsupported or spoofed host before
+			// making any request and answers a bare RepoData — no error, not
+			// conclusive. Nothing failed to fetch, so claiming a network error
+			// would name a cause that never existed.
+			name:       "a ref the version layer refused says nothing",
 			msg:        remoteMsg{toolName: "gh"},
-			wantStatus: "refresh failed: network error",
+			wantStatus: "",
+		},
+		{
+			// A partial pass: the release fetch landed a new tag, only the repo
+			// card was lost. Conclusive is false (CheckedAt stays stale for the
+			// refill) but the card visibly updated, so the bar must not
+			// contradict what the user just watched happen.
+			name:       "a partial pass that fetched a tag says nothing",
+			msg:        remoteMsg{toolName: "gh", latest: "v2.0.0"},
+			wantStatus: "",
 		},
 		{
 			name:       "a conclusive pass stays silent — the repainted card is the answer",

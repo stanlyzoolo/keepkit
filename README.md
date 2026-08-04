@@ -328,12 +328,15 @@ shows the `rate limited — press a` hint.
 request a dead credential carries, while the very same URLs work fine with no token at
 all — so keepkit retries once without it and carries on unauthenticated at 60
 requests per hour. The token file is left alone; it is simply unused until you replace
-it. The state is visible rather than silent: the gauge reads `api✕`, and `a` explains
-it — `token config (ghp_••••••••3f2a) — rejected (HTTP 401)`, with the mask kept so you
-can tell which credential to swap. Enter a working one with `[e]` and every card
-refetches at once, without a restart. Note that on a *cold* cache this is a partial
-recovery: a large tool list needs more than 60 requests, so expect some cards to fill
-and the rest to report `refresh failed: rate limited — press [a]` until the hour turns.
+it. The state is visible rather than silent: the gauge gains a `✕` (`api✕ ▮▮▮▮░░░░░░░░
+34/60`, or just `api✕` when the bar is narrow), and `a` explains it —
+`token config (ghp_••••••••3f2a) — rejected (HTTP 401)`, with the mask kept so you can
+tell which credential to swap. Enter a working one with `[e]` and every card refetches
+at once, without a restart, at the restored 5000 per hour.
+
+The degraded session itself is where the ceiling bites: a large tool list costs more
+than 60 requests, so on a cold cache expect a partial fill until the hour turns. Cards
+that were already loaded keep showing what they had.
 
 `[r]` in the brief panel now answers every press. A refresh that settled nothing says
 so — `refresh failed: rate limited — press [a]` or `refresh failed: network error` —

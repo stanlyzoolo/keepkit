@@ -121,10 +121,35 @@ func rejectToken(tok string) {
 // degraded UI for a state that is not degraded — unauthenticated by choice is
 // not the same as unauthenticated by failure.
 func TokenRejected() bool {
+	// effectiveToken first, so the two reads are never nested and the lock order
+	// is trivially one-deep. Both are cheap enough to sit on a render path, which
+	// is where this is read from — like Token() and TokenSource() beside it.
+	tok := effectiveToken()
 	tokenMu.RLock()
-	rejected := rejectedToken
-	tokenMu.RUnlock()
-	return rejected != "" && effectiveToken() == rejected
+	defer tokenMu.RUnlock()
+	return rejectedToken != "" && tok == rejectedToken
+}
+
+// SetTokenRejectedForTesting arms or disarms the rejected state for the token
+// currently in effect and returns a restore func, following the same shape as
+// the config-dir seams. It exists because rejectToken is unexported and reached
+// only through a real 401, so internal/model — which renders the degraded state
+// and cannot reach the network in tests — has no other way to produce it.
+func SetTokenRejectedForTesting(rejected bool) (restore func()) {
+	tok := effectiveToken()
+	tokenMu.Lock()
+	prev := rejectedToken
+	if rejected {
+		rejectedToken = tok
+	} else {
+		rejectedToken = ""
+	}
+	tokenMu.Unlock()
+	return func() {
+		tokenMu.Lock()
+		rejectedToken = prev
+		tokenMu.Unlock()
+	}
 }
 
 // SetToken stores the token in memory and persists it to a 0600 file.

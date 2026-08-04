@@ -148,25 +148,34 @@ func doGH(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 
-	// Bad credentials. Drain and close before reusing the connection, mark the
-	// token so every later request skips straight to the anonymous form, and
-	// retry this one. All GitHub calls here are bodiless GETs, so the clone
-	// carries everything that matters.
+	// Bad credentials. Drain and close before reusing the connection, then retry
+	// the same request without the header. All GitHub calls here are bodiless
+	// GETs, so the clone carries everything that matters.
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
-	rejectToken(token)
 
 	retry := req.Clone(req.Context())
 	retry.Header.Del("Authorization")
-	resp, err = ghClient.Do(retry)
-	if err != nil {
-		logx.Errorf("version.doGH: %s %s (unauthenticated retry): %v", retry.Method, retry.URL.Path, err)
-		return nil, err
+	retryResp, retryErr := ghClient.Do(retry)
+
+	// Mark the token only once the retry has answered, because a 401 is evidence
+	// about the *credential* only when dropping it changes the answer. A host
+	// that 401s an anonymous request too — a proxy, an enterprise instance — is
+	// refusing the resource, and marking the token there would strip
+	// Authorization for the rest of the session and put "rejected (HTTP 401)"
+	// beside a credential that is fine. A transport failure on the retry teaches
+	// nothing new, so the first response's 401 stands as the evidence.
+	if retryErr != nil || retryResp.StatusCode != http.StatusUnauthorized {
+		rejectToken(token)
+	}
+	if retryErr != nil {
+		logx.Errorf("version.doGH: %s %s (unauthenticated retry): %v", retry.Method, retry.URL.Path, retryErr)
+		return nil, retryErr
 	}
 	// The retry's headers are the honest ones: they carry the anonymous 60/h
 	// window, which is what the gauge must show from here on.
-	updateRateFromHeaders(resp.Header)
-	return resp, nil
+	updateRateFromHeaders(retryResp.Header)
+	return retryResp, nil
 }
 
 // ErrRateLimited signals that a GitHub request was rejected because the API
