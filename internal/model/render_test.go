@@ -2272,10 +2272,26 @@ func TestNeedsRemoteSettlesOnConclusiveAnswer(t *testing.T) {
 			latest:     "",
 			repoStatus: "active",
 			card:       version.RepoCard{About: "the tool"},
+			conclusive: true,
 		})
 		nm := updated.(Model)
 		if nm.needsRemote(tool) {
 			t.Error("needsRemote = true after a conclusive answer — every cursor visit re-dispatches the pass")
+		}
+	})
+
+	// The shape the marker got wrong at first: RepoData.Err carries
+	// ErrRateLimited or nil, so an offline start and a 5xx both arrive with a nil
+	// error. Reading that as "answered" stopped the retry for the whole session
+	// on exactly the passes that fetched nothing — which is why the version layer
+	// reports conclusiveness explicitly instead.
+	t.Run("failed pass with a nil error stays retryable", func(t *testing.T) {
+		m := newTestModel(focusTools)
+		m.tools = []loader.Tool{tool}
+		updated, _ := m.Update(remoteMsg{toolName: "git", conclusive: false})
+		nm := updated.(Model)
+		if !nm.needsRemote(tool) {
+			t.Error("needsRemote = false after a pass that fetched nothing — an offline start would never retry")
 		}
 	})
 
@@ -2298,7 +2314,7 @@ func TestNeedsRemoteSettlesOnConclusiveAnswer(t *testing.T) {
 	t.Run("rename clears the marker", func(t *testing.T) {
 		m := New([]loader.ToolMeta{{Name: "git", GitHub: "cli/cli"}})
 		m.width, m.height = 80, 24
-		updated, _ := m.Update(remoteMsg{toolName: "git", repoStatus: "active", card: version.RepoCard{About: "x"}})
+		updated, _ := m.Update(remoteMsg{toolName: "git", repoStatus: "active", card: version.RepoCard{About: "x"}, conclusive: true})
 		nm := updated.(Model)
 		nm.mode = modeRename
 		nm.nameInput.SetValue("gh")
@@ -2312,11 +2328,17 @@ func TestNeedsRemoteSettlesOnConclusiveAnswer(t *testing.T) {
 	})
 }
 
-// TestTagDerivedLatestOnCard pins what a tag-only repo's card looks like once
-// internal/version's tags fallback fills Latest with a git tag: the update is
-// offered exactly as a release would be, but nothing pretends there are release
-// notes or a release page to open.
-func TestTagDerivedLatestOnCard(t *testing.T) {
+// TestCardOffersLatestWithNoReleaseTuple pins the card's rendering of a Latest
+// that arrived without a release tuple — the shape internal/version's tags
+// fallback produces, since a git tag has no notes and no release page. The
+// update is offered exactly as a release would be; nothing pretends there is a
+// changelog to read or a link to open.
+//
+// The fixture is hand-built on purpose: testAPIBase is unexported, so a model
+// test cannot drive a real fetch, and executing one would hit the live API. The
+// fallback's own behaviour is pinned in internal/version (TestGetRepoDataTags*);
+// this test covers only what the card does with the result.
+func TestCardOffersLatestWithNoReleaseTuple(t *testing.T) {
 	m := New([]loader.ToolMeta{{Name: "tool", GitHub: "owner/tool"}})
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	mm := updated.(Model)

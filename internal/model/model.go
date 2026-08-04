@@ -64,6 +64,11 @@ type remoteMsg struct {
 	card       version.RepoCard
 	rate       version.RateLimit
 	err        error
+	// conclusive mirrors version.RepoData.Conclusive: the pass settled this tool
+	// for the cache window. It is what remoteAnswered is written from, because
+	// err cannot answer that — it carries ErrRateLimited or nil, so an offline
+	// start and a 5xx both arrive here with a nil error.
+	conclusive bool
 }
 
 // rateMsg carries a rate-limit snapshot fetched from GET /rate_limit, which
@@ -999,9 +1004,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// nothing to show falls back to the "rate limited — press a" hint. A
 		// generic error carries no data and must not touch the caches.
 		hasData := msg.latest != "" || msg.card.About != ""
-		// Only a clean pass is an answer. A rate-limited one may still have
-		// rendered a stale card below, but it must stay retryable.
-		if msg.err == nil {
+		// Only a pass the version layer calls conclusive is an answer: it stamped
+		// (or found) a fresh cache entry. A rate-limited pass may still have
+		// rendered a stale card below, and a total or partial failure arrives
+		// with a nil error — both must stay retryable.
+		if msg.conclusive {
 			if m.remoteAnswered == nil {
 				m.remoteAnswered = make(map[string]bool)
 			}

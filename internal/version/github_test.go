@@ -1076,7 +1076,9 @@ func TestRefreshChangelogBypassesTTL(t *testing.T) {
 
 // tagsFallbackServer answers /releases/latest with 404 and /tags with whatever
 // the caller configured — the shape of a repo that publishes git tags but never
-// cut a GitHub release. relStatus/tagsStatus let a case fail one endpoint.
+// cut a GitHub release. tagsStatus fails the tags endpoint; hits() counts the
+// tags requests, which is how a test tells "the write was gated" apart from "no
+// request was ever made".
 type tagsFallbackServer struct {
 	tags       []string
 	tagsStatus int
@@ -1219,7 +1221,7 @@ func TestGetRepoDataTagsFallbackErrorKeepsConclusive(t *testing.T) {
 // the rest of the window by getChangelog's cached-body gate. So the tag write is
 // gated on the entry carrying no release tuple at all.
 func TestGetRepoDataTagsFallbackKeepsPreservedTuple(t *testing.T) {
-	newTagsFallbackServer(t, []string{"v2.0.0"}, http.StatusOK)
+	srv := newTagsFallbackServer(t, []string{"v2.0.0"}, http.StatusOK)
 	updateCacheEntry("owner/repo", func(existing CacheEntry) CacheEntry {
 		e := existing
 		e.Latest = "v1.0.0"
@@ -1230,6 +1232,11 @@ func TestGetRepoDataTagsFallbackKeepsPreservedTuple(t *testing.T) {
 	})
 
 	GetRepoData("github.com/owner/repo")
+	// Exactness: without this the test cannot tell a gated write from a tags
+	// request that never happened — both leave the preserved tuple intact.
+	if got := srv.hits(); got != 1 {
+		t.Errorf("tags requests = %d, want exactly 1 (the fallback ran and its write was gated)", got)
+	}
 	e := LoadCache()["owner/repo"]
 	if e.Latest != "v1.0.0" {
 		t.Errorf("Latest = %q, want the preserved v1.0.0 — a tag must not be written over a release tuple", e.Latest)
@@ -1239,5 +1246,121 @@ func TestGetRepoDataTagsFallbackKeepsPreservedTuple(t *testing.T) {
 	}
 	if !e.ReleaseMissing {
 		t.Error("ReleaseMissing = false, want the 404 recorded")
+	}
+}
+
+// TestRepoDataConclusive pins the flag the model settles on. It is the version
+// layer's answer to "is this tool done for the window", and it must be false on
+// exactly the passes that left the entry stale on purpose — otherwise the model
+// stops re-dispatching for a tool whose card was never filled. Err cannot carry
+// that: it holds ErrRateLimited or nil, so an offline start reaches the model
+// as a nil error.
+func TestRepoDataConclusive(t *testing.T) {
+	t.Run("clean pass is conclusive", func(t *testing.T) {
+		githubTestServer(t)
+		if d := GetRepoData("github.com/owner/repo"); !d.Conclusive {
+			t.Error("Conclusive = false after a successful pass")
+		}
+		// The cache hit that follows is the same answer, served without a request.
+		if d := GetRepoData("github.com/owner/repo"); !d.Conclusive {
+			t.Error("Conclusive = false on a cache hit — a fresh entry is a settled one")
+		}
+	})
+
+	t.Run("total failure is not conclusive", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		origAPIBase, origCacheDir := testAPIBase, testCacheDir
+		testAPIBase, testCacheDir = srv.URL, t.TempDir()
+		t.Cleanup(func() {
+			srv.Close()
+			testAPIBase, testCacheDir = origAPIBase, origCacheDir
+		})
+
+		d := GetRepoData("github.com/owner/repo")
+		if d.Err != nil {
+			t.Fatalf("Err = %v — the premise of this test is that a 5xx reaches the caller as a nil error", d.Err)
+		}
+		if d.Conclusive {
+			t.Error("Conclusive = true after a total failure — the entry was deliberately left stale")
+		}
+	})
+
+	t.Run("partial failure is not conclusive", func(t *testing.T) {
+		// The release endpoint answers, repo info does not: getRepoData leaves
+		// CheckedAt stale so the next pass refills About/stars/maintenance.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/languages"):
+				_ = json.NewEncoder(w).Encode(map[string]int{"Go": 1000})
+			case strings.HasSuffix(r.URL.Path, "/releases/latest"):
+				_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v1.0.0"})
+			default:
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}))
+		origAPIBase, origCacheDir := testAPIBase, testCacheDir
+		testAPIBase, testCacheDir = srv.URL, t.TempDir()
+		t.Cleanup(func() {
+			srv.Close()
+			testAPIBase, testCacheDir = origAPIBase, origCacheDir
+		})
+
+		d := GetRepoData("github.com/owner/repo")
+		if d.Latest != "v1.0.0" {
+			t.Fatalf("Latest = %q, want the half that succeeded", d.Latest)
+		}
+		if d.Conclusive {
+			t.Error("Conclusive = true while CheckedAt was left stale for a refill")
+		}
+	})
+}
+
+// TestGetRepoDataTagsFallbackSkippedWhenRateLimited pins the placement of the
+// fallback call: it sits AFTER the total-failure early return, so a pass that
+// fetched nothing spends no request on tags whose result it would discard. The
+// assertion is the request count — the resulting entry looks the same either
+// way, which is exactly why the count is what has to be checked.
+func TestGetRepoDataTagsFallbackSkippedWhenRateLimited(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		tagsHits int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/tags") {
+			mu.Lock()
+			tagsHits++
+			mu.Unlock()
+		}
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// Repo info is rate-limited: with the release endpoint's 404 that is a
+		// total failure, and getRepoData returns before any tags request.
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	origAPIBase, origCacheDir := testAPIBase, testCacheDir
+	testAPIBase, testCacheDir = srv.URL, t.TempDir()
+	t.Cleanup(func() {
+		srv.Close()
+		testAPIBase, testCacheDir = origAPIBase, origCacheDir
+	})
+
+	d := GetRepoData("github.com/owner/repo")
+	if !errors.Is(d.Err, ErrRateLimited) {
+		t.Fatalf("Err = %v, want ErrRateLimited — the premise of this test", d.Err)
+	}
+	mu.Lock()
+	got := tagsHits
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("tags requests = %d, want 0 — a rate-limited pass must spend nothing on the fallback", got)
+	}
+	if d.Conclusive {
+		t.Error("Conclusive = true after a rate-limited total failure")
 	}
 }

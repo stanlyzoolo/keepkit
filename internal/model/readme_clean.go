@@ -39,8 +39,14 @@ var (
 	rcFenceCloseRe = regexp.MustCompile("^[ \t]*(`{3,}|~{3,})[ \t]*$")
 )
 
-// rcFenceCloses reports whether line closes a fence opened with marker.
+// rcFenceCloses reports whether line closes a fence opened with marker. An
+// empty marker means no fence is open, so nothing can close one: the guard
+// keeps the helper safe on its own rather than resting on every caller keeping
+// its "inside a fence" flag and its marker in step.
 func rcFenceCloses(line, marker string) bool {
+	if marker == "" {
+		return false
+	}
 	m := rcFenceCloseRe.FindStringSubmatch(line)
 	if m == nil {
 		return false

@@ -381,6 +381,18 @@ type RepoData struct {
 	// repo-info fetch was rejected for rate limiting; the returned data may still
 	// hold stale values from the cache.
 	Err error
+	// Conclusive reports that this answer settles the tool for the cache window:
+	// the entry is fresh, either because a pass just stamped CheckedAt or because
+	// it already was. It is false on exactly the passes that deliberately left the
+	// entry stale for a retry — a total fetch failure, and a partial one whose
+	// missing half must still be refilled.
+	//
+	// It exists because Err cannot carry that: Err holds ErrRateLimited or nil, so
+	// an offline start and a 5xx both reach the caller as a nil error. A consumer
+	// that read "no error" as "answered" would stop retrying for the session on
+	// exactly the passes that fetched nothing at all (internal/model's
+	// remoteAnswered marker did).
+	Conclusive bool
 }
 
 func repoDataFromEntry(e CacheEntry) RepoData {
@@ -439,7 +451,11 @@ func getRepoData(githubField string, force bool) RepoData {
 	cache := LoadCache()
 	entry, cached := cache[repo]
 	if !force && cached && time.Since(entry.CheckedAt) < cacheTTL {
-		return repoDataFromEntry(entry)
+		d := repoDataFromEntry(entry)
+		// A fresh entry is a settled one: some earlier pass stamped CheckedAt
+		// under the conclusiveness rule below.
+		d.Conclusive = true
+		return d
 	}
 
 	info, relErr := fetchRelease(repo)
@@ -462,6 +478,9 @@ func getRepoData(githubField string, force bool) RepoData {
 	if relErr != nil && infoErr != nil {
 		d := repoDataFromEntry(entry)
 		d.Err = rlErr
+		// Conclusive stays false: nothing was fetched and nothing was written, so
+		// the caller must keep retrying. rlErr is nil for an offline or 5xx
+		// failure, which is precisely why the flag and not the error carries this.
 		return d
 	}
 
@@ -526,6 +545,7 @@ func getRepoData(githubField string, force bool) RepoData {
 	})
 	d := repoDataFromEntry(stored)
 	d.Err = rlErr
+	d.Conclusive = conclusive
 	return d
 }
 

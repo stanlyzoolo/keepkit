@@ -116,11 +116,13 @@ Message handlers merge without clobbering (installed never resets latest and vic
 versa). On selection change `autoFetchCmdsForSelected()` fills in what's missing —
 the pure predicates `needsInstalled`/`needsRemote`/`needsReadme` skip what is already
 cached. `needsRemote` also settles on a **conclusive** answer: the `remoteMsg` handler
-marks a tool in `m.remoteAnswered` when the pass returned no error, because an empty
-`latest` is itself the answer for a repo with neither releases nor tags and the
-missing-`Latest` clause would otherwise re-dispatch on every cursor visit. The marker
-is the error, never `m.repoStatus` — a rate-limited pass carrying a stale card writes
-a status there and would suppress a retry that is still wanted.
+marks a tool in `m.remoteAnswered` when the version layer reports the pass as
+conclusive (`RepoData.Conclusive` — the entry is fresh), because an empty `latest` is
+itself the answer for a repo with neither releases nor tags and the missing-`Latest`
+clause would otherwise re-dispatch on every cursor visit. The flag has to come from
+that layer: `Err` holds `ErrRateLimited` or nil, so an offline start reaches the model
+as a nil error, and `m.repoStatus` is no better — a rate-limited pass carrying a stale
+card writes a status there too.
 
 Two commands in the `Init()` batch belong to no tool: `fetchRateCmd` (seeds the quota
 gauge — warm-cache starts make no other request) and, on release builds only,

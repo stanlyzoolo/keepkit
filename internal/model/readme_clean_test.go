@@ -621,3 +621,13 @@ func TestDropTitleBlock(t *testing.T) {
 		})
 	}
 }
+
+// TestRcFenceClosesEmptyMarker: no fence is open, so nothing closes one. The
+// helper indexes marker[0], and both call sites keep a separate "inside a fence"
+// flag in step with the marker — the guard makes that coupling unnecessary
+// rather than merely unlikely to break.
+func TestRcFenceClosesEmptyMarker(t *testing.T) {
+	if rcFenceCloses("```", "") {
+		t.Error("rcFenceCloses with no open marker = true, want false")
+	}
+}

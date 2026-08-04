@@ -206,8 +206,9 @@ func remoteCmd(t loader.Tool, force bool) tea.Cmd {
 				Body:        d.Body,
 				RepoStatus:  d.RepoStatus,
 			},
-			rate: version.Rate(),
-			err:  d.Err,
+			rate:       version.Rate(),
+			err:        d.Err,
+			conclusive: d.Conclusive,
 		}
 	})
 }

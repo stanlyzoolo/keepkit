@@ -448,3 +448,22 @@ func TestUpdateVerifyLine(t *testing.T) {
 		})
 	}
 }
+
+// TestMarkdownToLinesFenceKind asserts the kind, which mdDump deliberately
+// collapses (it tags every non-heading "B"). The kind is what paints the card's
+// Surface plate, so a regression emitting fenced lines as mdBody with the indent
+// still on them would read identically in the table above and go green.
+func TestMarkdownToLinesFenceKind(t *testing.T) {
+	// A ~~~ block wrapping ``` samples: everything between the outer pair is
+	// code, the tail after the real closer is body.
+	got := markdownToLines("~~~\n```\nsample\n```\n~~~\ntail", 80)
+	want := []mdLineKind{mdCode, mdCode, mdCode, mdBody}
+	if len(got) != len(want) {
+		t.Fatalf("got %d lines, want %d: %q", len(got), len(want), mdDump(got))
+	}
+	for i, k := range want {
+		if got[i].kind != k {
+			t.Errorf("line %d (%q) kind = %d, want %d", i, got[i].text, got[i].kind, k)
+		}
+	}
+}
