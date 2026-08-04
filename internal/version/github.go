@@ -381,6 +381,18 @@ type RepoData struct {
 	// repo-info fetch was rejected for rate limiting; the returned data may still
 	// hold stale values from the cache.
 	Err error
+	// Conclusive reports that this answer settles the tool for the cache window:
+	// the entry is fresh, either because a pass just stamped CheckedAt or because
+	// it already was. It is false on exactly the passes that deliberately left the
+	// entry stale for a retry — a total fetch failure, and a partial one whose
+	// missing half must still be refilled.
+	//
+	// It exists because Err cannot carry that: Err holds ErrRateLimited or nil, so
+	// an offline start and a 5xx both reach the caller as a nil error. A consumer
+	// that read "no error" as "answered" would stop retrying for the session on
+	// exactly the passes that fetched nothing at all (internal/model's
+	// remoteAnswered marker did).
+	Conclusive bool
 }
 
 func repoDataFromEntry(e CacheEntry) RepoData {
@@ -439,7 +451,11 @@ func getRepoData(githubField string, force bool) RepoData {
 	cache := LoadCache()
 	entry, cached := cache[repo]
 	if !force && cached && time.Since(entry.CheckedAt) < cacheTTL {
-		return repoDataFromEntry(entry)
+		d := repoDataFromEntry(entry)
+		// A fresh entry is a settled one: some earlier pass stamped CheckedAt
+		// under the conclusiveness rule below.
+		d.Conclusive = true
+		return d
 	}
 
 	info, relErr := fetchRelease(repo)
@@ -462,6 +478,9 @@ func getRepoData(githubField string, force bool) RepoData {
 	if relErr != nil && infoErr != nil {
 		d := repoDataFromEntry(entry)
 		d.Err = rlErr
+		// Conclusive stays false: nothing was fetched and nothing was written, so
+		// the caller must keep retrying. rlErr is nil for an offline or 5xx
+		// failure, which is precisely why the flag and not the error carries this.
 		return d
 	}
 
@@ -472,10 +491,24 @@ func getRepoData(githubField string, force bool) RepoData {
 	// next start retries and fills the gap. Otherwise a partial write (e.g.
 	// release + languages succeed but repo-info is rate-limited) would stamp the
 	// entry fresh for the full TTL with About/stars/maintenance permanently
-	// blank until the cache expires.
+	// blank until the cache expires. Only the two CORE endpoints decide this —
+	// the tags fallback below is a side pass and deliberately has no vote.
 	relConclusive := relErr == nil || errors.Is(relErr, errNoReleases)
 	infoConclusive := infoErr == nil
 	conclusive := relConclusive && infoConclusive
+
+	// A repo that publishes git tags but never cut a release still has a latest
+	// version, and without it the card cannot tell an outdated install from an
+	// up-to-date one. The tags pass fires only on the definitive 404 and only
+	// after the total-failure return above — a rate-limited pass must not spend a
+	// request whose result is then discarded. Its outcome deliberately does NOT
+	// enter the conclusive decision: a transient tags failure degrades to exactly
+	// the previous behavior (conclusive-but-blank Latest for the window) instead
+	// of vetoing the stamp and re-spending the repo-info requests every launch.
+	tagFallback := ""
+	if errors.Is(relErr, errNoReleases) {
+		tagFallback, _ = fetchLatestTag(repo)
+	}
 
 	var stored CacheEntry
 	updateCacheEntry(repo, func(existing CacheEntry) CacheEntry {
@@ -488,6 +521,17 @@ func getRepoData(githubField string, force bool) RepoData {
 		// other passes that fetch a release, so no writer can maintain one half of
 		// the flag's contract and forget the other.
 		e = applyReleaseOutcome(e, info, relErr)
+		// The tag write sits beside applyReleaseOutcome, never inside it: a tag
+		// is not a release, so it fills Latest alone and leaves ReleaseMissing
+		// true (the self-check must stay quiet — a banner would offer an update
+		// that has no release page). It is gated on the entry carrying NO release
+		// tuple, because applyReleaseOutcome deliberately preserves a deleted
+		// release's notes and URL on a 404: a tag written over them would render
+		// the new version beside the old release's notes and clickable link, and
+		// getChangelog's cached-body gate would serve that hybrid all window.
+		if tagFallback != "" && e.Body == "" && e.HtmlUrl == "" && e.PublishedAt == "" {
+			e.Latest = tagFallback
+		}
 		if infoErr == nil {
 			e.RepoStatus = repoStatus
 			e.About = about
@@ -501,6 +545,7 @@ func getRepoData(githubField string, force bool) RepoData {
 	})
 	d := repoDataFromEntry(stored)
 	d.Err = rlErr
+	d.Conclusive = conclusive
 	return d
 }
 
@@ -718,6 +763,58 @@ func fetchLanguages(repo string) (map[string]int, error) {
 	return langs, nil
 }
 
+// fetchLatestTag reads the first page of GET /repos/{owner}/{repo}/tags and
+// returns the highest tag on it. It exists for the repos that publish git tags
+// and never cut a GitHub release: their card used to show no latest at all, so
+// keepkit could not tell an outdated install from an up-to-date one.
+//
+// GitHub orders tags by creation, not by version, so the pick is the semver
+// maximum via IsNewer rather than the first entry (v1.9.0 routinely precedes
+// v1.10.0). When nothing on the page canonicalizes — date tags, build stamps —
+// the first entry is returned as-is: the list is still the repo's own order and
+// something the user recognizes beats nothing. An empty list answers "".
+func fetchLatestTag(repo string) (string, error) {
+	req, err := http.NewRequest("GET", apiBase()+"/repos/"+repo+"/tags", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := doGH(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", classifyStatus(resp)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	var tags []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &tags); err != nil {
+		return "", err
+	}
+	if len(tags) == 0 {
+		return "", nil
+	}
+	best := ""
+	for _, t := range tags {
+		if canonSemver(t.Name) == "" {
+			continue
+		}
+		if best == "" || IsNewer(best, t.Name) {
+			best = t.Name
+		}
+	}
+	if best == "" {
+		return tags[0].Name, nil
+	}
+	return best, nil
+}
+
 func fetchRelease(repo string) (ReleaseInfo, error) {
 	url := apiBase() + "/repos/" + repo + "/releases/latest"
 
@@ -822,6 +919,12 @@ func updateCacheEntry(repo string, mutate func(existing CacheEntry) CacheEntry) 
 // (rate limit, network, 5xx) touches nothing at all — the entry stays as it was so
 // the next pass retries. Freshness timestamps are the caller's business: each pass
 // stamps its own (CheckedAt / ReleaseCheckedAt) under its own conclusiveness rule.
+//
+// Latest has a second provenance since the tags fallback: getRepoData may write a
+// git tag into it BESIDE this function, never through it, on the 404 path and only
+// when no release tuple is there to contradict it. A tag is not a release, so that
+// write leaves ReleaseMissing alone — which is why the flag stays the self-check's
+// answer to "is there a release to offer".
 func applyReleaseOutcome(e CacheEntry, info ReleaseInfo, err error) CacheEntry {
 	switch {
 	case err == nil:

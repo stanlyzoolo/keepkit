@@ -44,23 +44,6 @@ func (m Model) View() string {
 func (m Model) renderStatusBar() string {
 	s := m.sty()
 	style := s.StatusBar.Width(m.width - 2)
-	if m.mode == modeHelpSearch {
-		matchInfo := ""
-		if len(m.helpMatches) > 0 {
-			matchInfo = fmt.Sprintf("  %d/%d matches", m.helpMatchIdx+1, len(m.helpMatches))
-		} else if m.helpSearch.Value() != "" {
-			matchInfo = "  no matches"
-		}
-		return style.Render(fmt.Sprintf(
-			"%s %s  %s  %s  %s%s",
-			s.AccentBold.Render("/"),
-			m.helpSearch.View(),
-			m.hint("n", "next"),
-			m.hint("N", "prev"),
-			m.hint("esc", "exit"),
-			matchInfo,
-		))
-	}
 	if m.mode == modeSearch {
 		return style.Render(fmt.Sprintf(
 			"%s %s  %d/%d  %s  %s  %s",
@@ -720,7 +703,6 @@ func (m Model) renderHotkeys() string {
 			{"1/2/3", "focus panel"},
 			{"←/→", "move focus"},
 			{"esc/q", "back / quit"},
-			{"/", "search"},
 			{"t", "track a repo"},
 			{"u", "untrack selected"},
 			{"m", "rename selected"},
@@ -730,6 +712,10 @@ func (m Model) renderHotkeys() string {
 		{"[1] tools", []hotkeyRow{
 			{"j/k", "move selection"},
 			{"g/G", "first / last"},
+			// `/` sits here, not in the global group: it is the list filter and
+			// nothing else now that the help/man search is gone, and the global
+			// group is the on-screen statement of the same-in-every-focus rule.
+			{"/", "filter the list"},
 			{"space", "group by tag"},
 			{"enter", "run in a tab"},
 		}},
@@ -1185,8 +1171,8 @@ func (m Model) buildToolRows() (string, []int, []int) {
 }
 
 // highlightNameMatch renders the first occurrence of the query inside the
-// tool name in the accent — distinct from highlightMatch (textutil.go), the
-// single-line highlighter of the help search. Matching is case-insensitive
+// tool name in the accent — the tool-list search is the only search left in
+// the app, so this is the only highlighter. Matching is case-insensitive
 // (rune-wise via runeIndexFold, so names whose lowercase form has a different
 // byte length cannot desync the slice offsets); query must already be lowercase
 // (searchQuery normalizes it).
@@ -2041,7 +2027,11 @@ func (m Model) renderChangelogBlock(msg changelogMsg) string {
 	// keep ANSI out of the rune-based wrap math. An empty result covers both
 	// an empty body and one the converter consumed whole (all comments, all
 	// separators).
-	inner := max(m.briefW-2, 10)
+	// cardWidth() is the card's single width definition — the same one buildCard
+	// steps the finished text in by. briefW-2 is one cell wider than that, and
+	// the code plate is padded to the full block width, so it used to paint over
+	// the right gutter the panel holds for the scrollbar.
+	inner := max(m.cardWidth(), 10)
 	lines := m.changelogRender.lines(msg.body, max(inner-len(changelogIndent), 10))
 	if len(lines) == 0 {
 		return changelogIndent + s.Text.Render("no release notes available.") + "\n"
@@ -2411,23 +2401,13 @@ func (m Model) helpContent() string {
 		}
 		return s.Note.Render("Press [M] for man page\nPress [H] for --help")
 	}
-	if m.mode != modeHelpSearch || m.helpSearch.Value() == "" {
-		// Cursor moves and clear-cursor repaints hit this path once per
-		// keystroke: reuse the base cached by setHelpContent instead of
-		// re-running the colorize regex over a whole man page each time.
-		// The fallback covers renders on models that haven't gone through
-		// setHelpContent (direct test construction).
-		if m.helpBase != "" {
-			return m.applySpotlight(m.helpBase)
-		}
-		return m.applySpotlight(colorizeHelp(s, wrapText(cached[m.helpMode], m.helpWrapWidth())))
+	// Cursor moves and clear-cursor repaints hit this path once per keystroke:
+	// reuse the base cached by setHelpContent instead of re-running the
+	// colorize regex over a whole man page each time. The fallback covers
+	// renders on models that haven't gone through setHelpContent (direct test
+	// construction).
+	if m.helpBase != "" {
+		return m.applySpotlight(m.helpBase)
 	}
-	text := wrapText(cached[m.helpMode], m.helpWrapWidth())
-	query := m.helpSearch.Value()
-	lines := strings.Split(text, "\n")
-	result := make([]string, len(lines))
-	for i, line := range lines {
-		result[i] = highlightMatch(s, line, query)
-	}
-	return strings.Join(result, "\n")
+	return m.applySpotlight(colorizeHelp(s, wrapText(cached[m.helpMode], m.helpWrapWidth())))
 }

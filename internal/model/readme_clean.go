@@ -27,7 +27,7 @@ type rcSegment struct {
 
 var (
 	// A fenced-code opener: 3+ backticks or 3+ tildes, an info string allowed
-	// after them. The indent is deliberately unconstrained, like mdFenceRe's —
+	// after them. The indent is deliberately unconstrained, like mdFenceOpenRe's —
 	// 4+ spaces would mean an indented code block, which this pass does not
 	// implement, so CommonMark's 3-space limit would only mis-read a fence
 	// nested under a list item.
@@ -39,8 +39,14 @@ var (
 	rcFenceCloseRe = regexp.MustCompile("^[ \t]*(`{3,}|~{3,})[ \t]*$")
 )
 
-// rcFenceCloses reports whether line closes a fence opened with marker.
+// rcFenceCloses reports whether line closes a fence opened with marker. An
+// empty marker means no fence is open, so nothing can close one: the guard
+// keeps the helper safe on its own rather than resting on every caller keeping
+// its "inside a fence" flag and its marker in step.
 func rcFenceCloses(line, marker string) bool {
+	if marker == "" {
+		return false
+	}
 	m := rcFenceCloseRe.FindStringSubmatch(line)
 	if m == nil {
 		return false

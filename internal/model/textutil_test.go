@@ -33,6 +33,17 @@ func TestMdInline(t *testing.T) {
 		{"two underscore spans in a row", "x _a_ _b_ y", "x a b y"},
 		{"three underscore spans in a row", "_a_ _b_ _c_", "a b c"},
 		{"code span", "pass `--verbose` to it", "pass --verbose to it"},
+		// Inline code is masked before the rules run: nothing may rewrite what
+		// the author meant verbatim. The first two are the regressions — the
+		// HTML strip ate a flag's argument, emphasis fired across two spans.
+		{"code span keeps flag argument", "use `--output <path>` here", "use --output <path> here"},
+		{"emphasis cannot cross two spans", "`a*b` and `c*d`", "a*b and c*d"},
+		{"backtick as span content survives", "run ``a`b`` now", "run a`b now"},
+		{"underscores in span untouched", "see `_private_field` docs", "see _private_field docs"},
+		// The HTML strip is rcHTMLTagRe's allowlist, not a generic <…> eater:
+		// angle-bracket prose in release notes is not markup.
+		{"generic type parameter survives", "changed Vec<String> to Vec<Bytes>", "changed Vec<String> to Vec<Bytes>"},
+		{"bracketed email survives", "contact <support@example.com>", "contact <support@example.com>"},
 		// Identifiers must survive: an unguarded '_' strip turns update_cmd into
 		// updatecmd, and multiplication into emphasis.
 		{"snake_case identifier kept", "set update_cmd in meta.yaml", "set update_cmd in meta.yaml"},
@@ -232,6 +243,31 @@ func TestMarkdownToLines(t *testing.T) {
 			[]string{"B|text", "B|  code line"},
 		},
 		{
+			// A fence closes on its own marker only — the way a README
+			// documents markdown itself is a ~~~ block wrapping ``` samples.
+			// Closing on either marker ended the block at the inner fence and
+			// then re-opened one on the next, so the sample's own text came out
+			// as body and the tail after the real closer was swallowed as code.
+			"fence closes only on its own marker",
+			"~~~\n```\nsample\n```\n~~~\ntail",
+			80,
+			[]string{"B|  ```", "B|  sample", "B|  ```", "B|tail"},
+		},
+		{
+			// The same rule the README pass follows: a longer run closes a
+			// shorter opener, a shorter one does not.
+			"longer closing run closes a shorter opener",
+			"```\ncode\n````\nafter",
+			80,
+			[]string{"B|  code", "B|after"},
+		},
+		{
+			"shorter run does not close a longer opener",
+			"````\ncode\n```\nstill code",
+			80,
+			[]string{"B|  code", "B|  ```", "B|  still code"},
+		},
+		{
 			// Without the CR normalization the closing fence never matches and
 			// the rest of the body is swallowed as code.
 			"CRLF closing fence still closes",
@@ -410,5 +446,24 @@ func TestUpdateVerifyLine(t *testing.T) {
 				t.Errorf("kind = %v, want %v", kind, tt.wantKind)
 			}
 		})
+	}
+}
+
+// TestMarkdownToLinesFenceKind asserts the kind, which mdDump deliberately
+// collapses (it tags every non-heading "B"). The kind is what paints the card's
+// Surface plate, so a regression emitting fenced lines as mdBody with the indent
+// still on them would read identically in the table above and go green.
+func TestMarkdownToLinesFenceKind(t *testing.T) {
+	// A ~~~ block wrapping ``` samples: everything between the outer pair is
+	// code, the tail after the real closer is body.
+	got := markdownToLines("~~~\n```\nsample\n```\n~~~\ntail", 80)
+	want := []mdLineKind{mdCode, mdCode, mdCode, mdBody}
+	if len(got) != len(want) {
+		t.Fatalf("got %d lines, want %d: %q", len(got), len(want), mdDump(got))
+	}
+	for i, k := range want {
+		if got[i].kind != k {
+			t.Errorf("line %d (%q) kind = %d, want %d", i, got[i].text, got[i].kind, k)
+		}
 	}
 }

@@ -64,6 +64,11 @@ type remoteMsg struct {
 	card       version.RepoCard
 	rate       version.RateLimit
 	err        error
+	// conclusive mirrors version.RepoData.Conclusive: the pass settled this tool
+	// for the cache window. It is what remoteAnswered is written from, because
+	// err cannot answer that — it carries ErrRateLimited or nil, so an offline
+	// start and a 5xx both arrive here with a nil error.
+	conclusive bool
 }
 
 // rateMsg carries a rate-limit snapshot fetched from GET /rate_limit, which
@@ -391,15 +396,23 @@ type Model struct {
 	// two selection moves onto the same tool inside that window (j then k, a
 	// click back) would each spend a GitHub request. Cleared by readmeMsg.
 	readmeLoading map[string]bool
+	// remoteAnswered holds the tools whose network pass came back WITHOUT an
+	// error — a conclusive answer, even when it carried no Latest (a repo with
+	// neither releases nor tags). needsRemote's empty-Latest clause would
+	// otherwise re-dispatch the whole pass on every cursor visit. The honest
+	// cost of that is a goroutine and a cache.json read, not API quota:
+	// errNoReleases is already conclusive on the version side, so the repeat
+	// was served from cache. Session-scoped, and deliberately keyed off the
+	// error rather than off m.repoStatus — a rate-limited pass carrying a stale
+	// card writes "active"/"archived" there, so that marker would suppress a
+	// retry the predicate still wants.
+	remoteAnswered map[string]bool
 	// readmeRender memoizes the last glamour render (see readme.go).
 	readmeRender readmeRenderCache
 	// changelogRender memoizes the last release-notes markdown conversion
 	// (see render.go). A pointer, so the value-receiver card renderers can
 	// fill it; nil is a working cache-less mode for Model{} literals.
 	changelogRender *changelogRenderCache
-	helpSearch      textinput.Model
-	helpMatches     []int
-	helpMatchIdx    int
 
 	// helpEntries indexes the navigable entries (flag/subcommand line plus its
 	// description block) of the current help text, in wrapped display-line
@@ -467,10 +480,6 @@ func New(meta []loader.ToolMeta) Model {
 	tgi.Placeholder = "tag..."
 	tgi.CharLimit = 256
 
-	hsi := textinput.New()
-	hsi.Placeholder = "search help..."
-	hsi.CharLimit = 128
-
 	tri := textinput.New()
 	tri.Placeholder = "github url or tool name..."
 	tri.CharLimit = 256
@@ -505,11 +514,11 @@ func New(meta []loader.ToolMeta) Model {
 		helpCache:       make(map[string][2]string),
 		readmeData:      make(map[string]readmeMsg),
 		readmeLoading:   make(map[string]bool),
+		remoteAnswered:  make(map[string]bool),
 		changelogRender: &changelogRenderCache{},
 		search:          ti,
 		noteInput:       ni,
 		tagsInput:       tgi,
-		helpSearch:      hsi,
 		trackInput:      tri,
 		nameInput:       nmi,
 		runInput:        rni,
@@ -992,9 +1001,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// still carried usable cache values: a fresh tag from a partial fetch, or
 		// the stale card kept on a total failure. In those cases render the data so
 		// known tags/cards survive the outage. Only a rate-limit failure with
-		// nothing to show falls back to the "rate limited — press L" hint. A
+		// nothing to show falls back to the "rate limited — press a" hint. A
 		// generic error carries no data and must not touch the caches.
 		hasData := msg.latest != "" || msg.card.About != ""
+		// Only a pass the version layer calls conclusive is an answer: it stamped
+		// (or found) a fresh cache entry. A rate-limited pass may still have
+		// rendered a stale card below, and a total or partial failure arrives
+		// with a nil error — both must stay retryable.
+		if msg.conclusive {
+			if m.remoteAnswered == nil {
+				m.remoteAnswered = make(map[string]bool)
+			}
+			m.remoteAnswered[msg.toolName] = true
+		}
 		switch {
 		case msg.err == nil, errors.Is(msg.err, version.ErrRateLimited) && hasData:
 			info := m.versions[msg.toolName]
@@ -1011,7 +1030,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.briefViewport.SetContent(m.renderCard())
 		case msg.repoStatus == "rate-limited":
 			// Rate-limited with no card to show: mark the tool so the card can
-			// render "rate limited — press L" instead of a bare failure.
+			// render "rate limited — press a" instead of a bare failure.
 			m.repoStatus[msg.toolName] = "rate-limited"
 			m.briefViewport.SetContent(m.renderCard())
 		}
@@ -1086,7 +1105,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// A rate-limited README is a session-cached negative that needsReadme
 		// treats as answered — drop those entries so the backfill can actually
-		// retry them, which is what the "rate limited — press L" placeholder
+		// retry them, which is what the "rate limited — press a" placeholder
 		// promises. Fetched content and 404s stay.
 		for name, data := range m.readmeData {
 			if data.content == "" && errors.Is(data.err, version.ErrRateLimited) {
@@ -1383,43 +1402,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return flushPendingLaunch(m.updateHotkeys(msg))
 		}
 
-		if m.mode == modeHelpSearch {
-			switch msg.String() {
-			case "esc":
-				m.mode = modeNormal
-				m.helpSearch.SetValue("")
-				m.helpSearch.Blur()
-				m.helpMatches = nil
-				m.helpMatchIdx = 0
-				m.helpViewport.SetContent(m.renderHelpContent())
-				// Mode exit — a deferred exec fallback fires here, same as
-				// the modal-handler returns above.
-				return flushPendingLaunch(m, nil)
-			case "n":
-				if len(m.helpMatches) > 0 {
-					m.helpMatchIdx = (m.helpMatchIdx + 1) % len(m.helpMatches)
-					m.helpViewport.SetYOffset(m.helpMatches[m.helpMatchIdx])
-				}
-				return m, nil
-			case "N":
-				if len(m.helpMatches) > 0 {
-					m.helpMatchIdx = (m.helpMatchIdx - 1 + len(m.helpMatches)) % len(m.helpMatches)
-					m.helpViewport.SetYOffset(m.helpMatches[m.helpMatchIdx])
-				}
-				return m, nil
-			default:
-				m.helpSearch, cmd = m.helpSearch.Update(msg)
-				query := m.helpSearch.Value()
-				m.helpMatches = findMatches(m.rawHelpText(), query)
-				m.helpMatchIdx = 0
-				m.helpViewport.SetContent(m.renderHelpContent())
-				if len(m.helpMatches) > 0 {
-					m.helpViewport.SetYOffset(m.helpMatches[0])
-				}
-				return m, cmd
-			}
-		}
-
 		if m.mode == modeSearch {
 			switch msg.String() {
 			case "esc":
@@ -1704,19 +1686,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "/":
-			if m.focus == focusBrief || m.focus == focusHelp {
-				// The README is glamour-rendered ANSI: highlightMatch would tear
-				// it apart, so search simply doesn't apply in readme mode (v1).
-				// Guarded on the shared entry path — [2] enters help search too.
-				if m.helpMode == helpModeReadme {
-					return m, nil
-				}
-				// The help search owns the panel's highlighting: drop an
-				// active spotlight cursor before entering the mode.
-				m.clearHelpNav()
-				m.mode = modeHelpSearch
-				m.helpSearch.Focus()
-				return m, textinput.Blink
+			// [1]-only: `/` is the tool-list filter and nothing else. The guard
+			// is what keeps a press in [2]/[3] from falling through into the
+			// entry below — it would open modeSearch over an unfocused list.
+			// (It used to open the help/man search, a feature since removed.)
+			if m.focus != focusTools {
+				return m, nil
 			}
 			// Remember the current selection so esc can roll back to it.
 			m.searchPrevName = ""
@@ -2016,6 +1991,18 @@ func (m *Model) setStatus(s string) tea.Cmd {
 	})
 }
 
+// setStickyStatus shows an in-flight status with no expiry timer — it reports
+// work still in progress and is extinguished by the completion message, not by
+// the clock. The seq bump is the whole point of the helper: a transient status
+// set within the last statusMsgTTL still has a tick in flight, and its seq would
+// otherwise match this message too, wiping the only sign the adapter is busy for
+// up to launchTimeout. It returns nothing, so a caller cannot batch a timer onto
+// it by mistake.
+func (m *Model) setStickyStatus(s string) {
+	m.statusSeq++
+	m.statusMsg = s
+}
+
 // toggleGroupByTag flips the [1] list between the flat update-grouped view and
 // the tag-grouped one. The toggle reorders filteredMeta(), and metaSelected is
 // an index into that projection — so it would silently point at a different
@@ -2241,9 +2228,9 @@ func (m *Model) setHelpContent() {
 		case m.helpLoadingFor != mt.Name:
 			if raw := m.rawHelpText(); raw != "" {
 				m.helpEntries = parseHelpEntries(raw, m.helpWrapWidth())
-				// Built here, not via renderHelpContent: the render can be in the
-				// search-highlight branch mid-search, and the cache must always
-				// hold the plain full-color base the spotlight dims against.
+				// Built here, not via renderHelpContent: that renderer serves
+				// helpBase back through applySpotlight, and the cache must hold
+				// the plain full-color base the spotlight dims against.
 				m.helpBase = colorizeHelp(s, wrapText(raw, m.helpWrapWidth()))
 			}
 		}
@@ -2303,7 +2290,7 @@ func (m *Model) switchHelpMode(mode int) tea.Cmd {
 
 // clearHelpNav turns the spotlight cursor off and repaints the help viewport
 // when it was on, reporting whether it was. Every path that deactivates
-// navigation (esc, entering help search, any focus move) must repaint through
+// navigation (esc, any focus move) must repaint through
 // here — clearing the index without the repaint leaves stale dimming on
 // screen, because nothing else re-renders help on those paths.
 func (m *Model) clearHelpNav() bool {

@@ -322,7 +322,7 @@ The token source follows environment precedence: the `GITHUB_TOKEN` variable alw
 wins over the file. A token entered in the TUI is stored in `~/.config/keepkit/token`
 with `0600` permissions; an environment token is never written to disk. When the
 quota is exhausted, already-loaded cards are not erased, and a card with no data
-shows the `rate limited — press L` hint.
+shows the `rate limited — press a` hint.
 
 ## Data storage
 
