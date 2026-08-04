@@ -118,11 +118,24 @@ func shouldReplaceRate(cur, snap RateLimit, now time.Time) bool {
 // different media type (fetchReadme asks for raw markdown) can pre-set it and
 // still ride the shared auth + rate-accounting path instead of a second HTTP
 // code path.
+//
+// A 401 to a request that carried a token is answered by retrying the same
+// request once without it. An expired token is strictly worse than no token —
+// unauthenticated the very same URLs answer 200 at 60 requests/hour, while
+// authenticated with a dead credential every single one is rejected — so a
+// blackout degrades into a working, if smaller, session instead. The retry lives
+// here because this is the only place that decides to send a token at all; a
+// startup pre-check cannot help, since Init fires the rate seed and every repo
+// pass in one batch and no check would land before the passes it was meant to
+// warn. Cost: with the passes running in parallel a few requests pay their own
+// retry before the mark lands — bounded by the tool count, and those requests
+// would have failed outright anyway.
 func doGH(req *http.Request) (*http.Response, error) {
 	if req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "application/vnd.github.v3+json")
 	}
-	if token := resolveToken(); token != "" {
+	token := resolveToken()
+	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := ghClient.Do(req)
@@ -130,6 +143,28 @@ func doGH(req *http.Request) (*http.Response, error) {
 		logx.Errorf("version.doGH: %s %s: %v", req.Method, req.URL.Path, err)
 		return nil, err
 	}
+	updateRateFromHeaders(resp.Header)
+	if token == "" || resp.StatusCode != http.StatusUnauthorized {
+		return resp, nil
+	}
+
+	// Bad credentials. Drain and close before reusing the connection, mark the
+	// token so every later request skips straight to the anonymous form, and
+	// retry this one. All GitHub calls here are bodiless GETs, so the clone
+	// carries everything that matters.
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	rejectToken(token)
+
+	retry := req.Clone(req.Context())
+	retry.Header.Del("Authorization")
+	resp, err = ghClient.Do(retry)
+	if err != nil {
+		logx.Errorf("version.doGH: %s %s (unauthenticated retry): %v", retry.Method, retry.URL.Path, err)
+		return nil, err
+	}
+	// The retry's headers are the honest ones: they carry the anonymous 60/h
+	// window, which is what the gauge must show from here on.
 	updateRateFromHeaders(resp.Header)
 	return resp, nil
 }
@@ -139,8 +174,17 @@ func doGH(req *http.Request) (*http.Response, error) {
 // use errors.Is to degrade gracefully instead of showing a raw HTTP error.
 var ErrRateLimited = errors.New("github api rate limit exceeded")
 
-// ErrTokenInvalid signals that a candidate token failed validation against
-// GET /rate_limit (HTTP 401). Used by FetchRateWithToken before persistence.
+// ErrTokenInvalid signals that GitHub rejected the credentials a request
+// carried (HTTP 401). Two producers: FetchRateWithToken, which validates a
+// candidate token before persistence, and classifyStatus, which names the code
+// wherever it surfaces.
+//
+// On the shared request path it is a classification rather than a hot path:
+// doGH consumes a 401 that a token earned, retries the request anonymously and
+// returns that response instead (see doGH), and GitHub does not answer 401 to a
+// request carrying no credentials at all. What is left for classifyStatus to
+// name is the defensive case — a proxy or an enterprise host that 401s an
+// anonymous request — plus the log line either way.
 var ErrTokenInvalid = errors.New("github token invalid")
 
 // errNoReleases signals that a repo's /releases/latest returned 404 — the repo
@@ -163,9 +207,11 @@ const readmeMaxBytes = 512 << 10
 // classifyStatus maps a non-2xx GitHub response to an error. A 403 or 429 whose
 // own X-RateLimit-Remaining header reads 0 is rate-limit exhaustion and returns
 // ErrRateLimited; a 403 with remaining>0 is a genuine access denial and returns a
-// generic HTTP error. Remaining is read from this response's own headers, never
-// from the global rl snapshot, because a concurrent request may overwrite rl
-// between this request's accounting and its classification.
+// generic HTTP error. A 401 is bad credentials and returns ErrTokenInvalid, so
+// the one class of failure the user can actually fix carries a name instead of
+// an anonymous "HTTP 401". Remaining is read from this response's own headers,
+// never from the global rl snapshot, because a concurrent request may overwrite
+// rl between this request's accounting and its classification.
 func classifyStatus(resp *http.Response) error {
 	remaining := resp.Header.Get("X-RateLimit-Remaining")
 	path := ""
@@ -178,6 +224,13 @@ func classifyStatus(resp *http.Response) error {
 				path, resp.StatusCode, remaining)
 			return ErrRateLimited
 		}
+	}
+	// A 401 is worth a line: unlike a 404 it is neither conclusive nor normal,
+	// and it is the one status whose fix is in the user's hands.
+	if resp.StatusCode == http.StatusUnauthorized {
+		logx.Errorf("version.classifyStatus: %s http=%d remaining=%s: token rejected",
+			path, resp.StatusCode, remaining)
+		return ErrTokenInvalid
 	}
 	// A 404 is a conclusive "not found" (a stale/private/renamed repo ref), not
 	// a transient failure. It would recur on every startup and re-create the
@@ -250,6 +303,12 @@ func FetchRate() (RateLimit, error) {
 // or the global rl snapshot, so an unpersisted token never leaks into shared
 // state. A 401 returns ErrTokenInvalid; callers persist via SetToken only after a
 // successful (200) result.
+//
+// Going straight to ghClient rather than through doGH is load-bearing, not an
+// incidental detail: doGH answers a 401 by retrying the request without the
+// token, so this function would see that anonymous 200 and report a dead
+// credential as valid — and then persist it. Validation is the one caller that
+// must observe the rejection instead of surviving it.
 func FetchRateWithToken(token string) (RateLimit, error) {
 	req, err := http.NewRequest("GET", apiBase()+"/rate_limit", nil)
 	if err != nil {
@@ -376,10 +435,12 @@ type RepoData struct {
 	Body        string
 	HtmlUrl     string
 	PublishedAt string
-	// Err carries a classified fetch error (currently only ErrRateLimited) so
-	// callers can degrade gracefully via errors.Is. It is set when a release or
-	// repo-info fetch was rejected for rate limiting; the returned data may still
-	// hold stale values from the cache.
+	// Err carries the more actionable of the two core fetches' errors (see
+	// pickFetchErr) so callers can name what went wrong instead of showing a
+	// silent no-op. ErrRateLimited is the one class with a specific answer;
+	// everything else is transient. A definitive "no releases" is not a failure
+	// and never lands here. The returned data may still hold stale values from
+	// the cache — the error is advisory, not a signal that the data is unusable.
 	Err error
 	// Conclusive reports that this answer settles the tool for the cache window:
 	// the entry is fresh, either because a pass just stamped CheckedAt or because
@@ -387,12 +448,35 @@ type RepoData struct {
 	// entry stale for a retry — a total fetch failure, and a partial one whose
 	// missing half must still be refilled.
 	//
-	// It exists because Err cannot carry that: Err holds ErrRateLimited or nil, so
-	// an offline start and a 5xx both reach the caller as a nil error. A consumer
-	// that read "no error" as "answered" would stop retrying for the session on
-	// exactly the passes that fetched nothing at all (internal/model's
-	// remoteAnswered marker did).
+	// It exists because Err cannot carry that, and still cannot now that Err
+	// names every failure class: a definitive "no releases" is a nil Err on a
+	// pass that settled the tool, while a rate-limited pass that served a stale
+	// card is a non-nil Err on one that did not. The two questions — what went
+	// wrong, and is this tool done for the window — have different answers, and a
+	// consumer that read "no error" as "answered" stopped retrying on exactly the
+	// passes that fetched nothing (internal/model's remoteAnswered marker did).
 	Conclusive bool
+}
+
+// pickFetchErr chooses which of the two core fetches' errors reaches the caller.
+// ErrRateLimited outranks everything else: it is the one class with an answer
+// the user can act on (wait, or add a token), while every other failure — 401,
+// 5xx, timeout, DNS, a broken transport — is transient and gets the same
+// treatment, so the UI has nothing to tell them apart with and picking between
+// them would be arbitrary. errNoReleases never participates: a repo without
+// releases is a conclusive negative, not a failure, and surfacing it as one
+// would put an error on the most ordinary card there is.
+func pickFetchErr(relErr, infoErr error) error {
+	if errors.Is(relErr, ErrRateLimited) || errors.Is(infoErr, ErrRateLimited) {
+		return ErrRateLimited
+	}
+	if relErr != nil && !errors.Is(relErr, errNoReleases) {
+		return relErr
+	}
+	if infoErr != nil {
+		return infoErr
+	}
+	return nil
 }
 
 func repoDataFromEntry(e CacheEntry) RepoData {
@@ -462,13 +546,10 @@ func getRepoData(githubField string, force bool) RepoData {
 	repoStatus, about, stars, infoErr := fetchRepoInfo(repo)
 	langs, _ := fetchLanguages(repo)
 
-	// Surface a rate-limit classification so the UI can render "rate limited"
-	// instead of a bare failure. The data itself may still carry stale cache
+	// Surface the more actionable failure so the UI can name it instead of
+	// rendering a silent no-op. The data itself may still carry stale cache
 	// values; the error is advisory.
-	var rlErr error
-	if errors.Is(relErr, ErrRateLimited) || errors.Is(infoErr, ErrRateLimited) {
-		rlErr = ErrRateLimited
-	}
+	fetchErr := pickFetchErr(relErr, infoErr)
 
 	// Total fetch failure (offline / rate-limited): both the release and the repo
 	// info endpoints failed. Do not write a fresh-but-empty entry — since freshness
@@ -477,10 +558,11 @@ func getRepoData(githubField string, force bool) RepoData {
 	// cache was cold) so the next start retries.
 	if relErr != nil && infoErr != nil {
 		d := repoDataFromEntry(entry)
-		d.Err = rlErr
+		d.Err = fetchErr
 		// Conclusive stays false: nothing was fetched and nothing was written, so
-		// the caller must keep retrying. rlErr is nil for an offline or 5xx
-		// failure, which is precisely why the flag and not the error carries this.
+		// the caller must keep retrying. The flag and not the error carries that —
+		// a definitive "no releases" arrives with a nil error on a pass that DID
+		// settle the tool, so the two cannot be derived from one another.
 		return d
 	}
 
@@ -544,7 +626,7 @@ func getRepoData(githubField string, force bool) RepoData {
 		return e
 	})
 	d := repoDataFromEntry(stored)
-	d.Err = rlErr
+	d.Err = fetchErr
 	d.Conclusive = conclusive
 	return d
 }

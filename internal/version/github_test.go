@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -682,6 +683,236 @@ func TestClassifyStatusRateLimited(t *testing.T) {
 	}
 }
 
+// TestClassifyStatusTaxonomy pins the closed set of named failure classes and,
+// just as importantly, their neighbours: a 401 is bad credentials and must carry
+// ErrTokenInvalid, while the two 403 forms and a 404 must keep answering exactly
+// what they answered before. The 401 branch sits between them, so a misplaced
+// return would show up here as a neighbour changing class.
+func TestClassifyStatusTaxonomy(t *testing.T) {
+	tests := []struct {
+		name      string
+		code      int
+		remaining string
+		want      error // nil means "generic, named neither sentinel"
+	}{
+		{"401 is a rejected token", http.StatusUnauthorized, "", ErrTokenInvalid},
+		{"401 with a remaining header is still a rejected token", http.StatusUnauthorized, "4999", ErrTokenInvalid},
+		{"403 exhausted is rate limited", http.StatusForbidden, "0", ErrRateLimited},
+		{"429 exhausted is rate limited", http.StatusTooManyRequests, "0", ErrRateLimited},
+		{"403 with quota left is a plain denial", http.StatusForbidden, "37", nil},
+		{"404 is generic", http.StatusNotFound, "4999", nil},
+		{"500 is generic", http.StatusInternalServerError, "4999", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := classifyStatus(respWith(t, tt.code, tt.remaining, "/repos/cli/cli"))
+			if err == nil {
+				t.Fatalf("classifyStatus(%d) = nil, want an error", tt.code)
+			}
+			if tt.want != nil {
+				if !errors.Is(err, tt.want) {
+					t.Fatalf("classifyStatus(%d) = %v, want %v", tt.code, err, tt.want)
+				}
+				return
+			}
+			if errors.Is(err, ErrTokenInvalid) || errors.Is(err, ErrRateLimited) {
+				t.Fatalf("classifyStatus(%d) = %v, want an unnamed generic error", tt.code, err)
+			}
+		})
+	}
+}
+
+// authProbeServer answers 401 to any request carrying an Authorization header
+// and 200 to any request without one, recording every request's auth state in
+// order. It is the shape of a GitHub that has expired the stored credential: the
+// same URLs work perfectly well anonymously.
+type authProbeServer struct {
+	*httptest.Server
+	mu   sync.Mutex
+	auth []bool // one entry per request: did it carry Authorization?
+}
+
+func newAuthProbeServer(t *testing.T, body string) *authProbeServer {
+	t.Helper()
+	p := &authProbeServer{}
+	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authed := r.Header.Get("Authorization") != ""
+		p.mu.Lock()
+		p.auth = append(p.auth, authed)
+		p.mu.Unlock()
+		if authed {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// All three headers, since updateRateFromHeaders drops an observation
+		// missing any one of them.
+		w.Header().Set("X-RateLimit-Limit", "60")
+		w.Header().Set("X-RateLimit-Remaining", "59")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(p.Close)
+	return p
+}
+
+func (p *authProbeServer) requests() []bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]bool(nil), p.auth...)
+}
+
+// TestDoGHRetriesUnauthenticatedOn401 is the degradation this whole change
+// rests on: an expired token is strictly worse than no token, because the very
+// same URLs answer 200 without one. A 401 must therefore cost one wasted request
+// and then work, not blank the session.
+func TestDoGHRetriesUnauthenticatedOn401(t *testing.T) {
+	dir := t.TempDir()
+	resetTokenState(t, dir)
+	t.Setenv("GITHUB_TOKEN", "")
+	resetRate(t)
+	if err := SetToken("ghp_expired"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newAuthProbeServer(t, `{"tag_name":"v1.0.0"}`)
+
+	req, err := http.NewRequest("GET", srv.URL+"/repos/cli/cli/releases/latest", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := doGH(req)
+	if err != nil {
+		t.Fatalf("doGH: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 from the unauthenticated retry", resp.StatusCode)
+	}
+	if got := srv.requests(); len(got) != 2 || !got[0] || got[1] {
+		t.Errorf("requests (authed?) = %v, want [true false] — one rejected, one retried header-less", got)
+	}
+	if !TokenRejected() {
+		t.Error("TokenRejected() = false after a 401 to an authorized request")
+	}
+	// The retry's headers are the honest window and must be what the gauge reads.
+	if r := Rate(); r.Limit != 60 {
+		t.Errorf("Rate().Limit = %d, want 60 accounted from the anonymous retry", r.Limit)
+	}
+}
+
+// TestDoGHSkipsTokenAfterRejection pins that the rejection is remembered: later
+// requests go out header-less on the FIRST attempt. Without it every request in
+// the session would pay a doomed round trip.
+func TestDoGHSkipsTokenAfterRejection(t *testing.T) {
+	dir := t.TempDir()
+	resetTokenState(t, dir)
+	t.Setenv("GITHUB_TOKEN", "")
+	resetRate(t)
+	if err := SetToken("ghp_expired"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newAuthProbeServer(t, `{"tag_name":"v1.0.0"}`)
+
+	for i := range 3 {
+		req, err := http.NewRequest("GET", srv.URL+"/repos/cli/cli/releases/latest", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := doGH(req)
+		if err != nil {
+			t.Fatalf("doGH #%d: %v", i, err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	// First call: rejected + retried. The two after it: one request each.
+	want := []bool{true, false, false, false}
+	got := srv.requests()
+	if len(got) != len(want) {
+		t.Fatalf("made %d requests %v, want %d %v", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("requests (authed?) = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestDoGHDoesNotRetryATokenlessRequest verifies the retry is gated on the
+// request having carried credentials. A 401 to an anonymous request is a
+// defensive case (a proxy, an enterprise host) and repeating it verbatim would
+// double every request for nothing.
+func TestDoGHDoesNotRetryATokenlessRequest(t *testing.T) {
+	dir := t.TempDir()
+	resetTokenState(t, dir)
+	t.Setenv("GITHUB_TOKEN", "")
+	resetRate(t)
+
+	var requests int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	req, err := http.NewRequest("GET", srv.URL+"/repos/cli/cli/releases/latest", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := doGH(req)
+	if err != nil {
+		t.Fatalf("doGH: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	mu.Lock()
+	n := requests
+	mu.Unlock()
+	if n != 1 {
+		t.Errorf("made %d requests, want 1 — nothing to retry without", n)
+	}
+	if err := classifyStatus(resp); !errors.Is(err, ErrTokenInvalid) {
+		t.Errorf("classifyStatus = %v, want ErrTokenInvalid", err)
+	}
+	if TokenRejected() {
+		t.Error("TokenRejected() = true after a 401 to a request that carried no token")
+	}
+}
+
+// TestFetchRateWithTokenNeverSeesTheRetry pins the doGH bypass as an invariant.
+// Validation is the one caller that must observe a 401 rather than survive it:
+// riding the shared path would answer an anonymous 200 and persist a token
+// already known to be dead.
+func TestFetchRateWithTokenNeverSeesTheRetry(t *testing.T) {
+	dir := t.TempDir()
+	resetTokenState(t, dir)
+	t.Setenv("GITHUB_TOKEN", "")
+	resetRate(t)
+
+	srv := newAuthProbeServer(t, `{"resources":{"core":{"limit":60,"remaining":59}}}`)
+	origAPIBase := testAPIBase
+	testAPIBase = srv.URL
+	t.Cleanup(func() { testAPIBase = origAPIBase })
+
+	if _, err := FetchRateWithToken("ghp_candidate"); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("FetchRateWithToken = %v, want ErrTokenInvalid", err)
+	}
+	if got := srv.requests(); len(got) != 1 || !got[0] {
+		t.Errorf("requests (authed?) = %v, want exactly one authorized attempt", got)
+	}
+	// Validation must not arm the session-wide suppression either: the candidate
+	// was never the token in effect.
+	if TokenRejected() {
+		t.Error("TokenRejected() = true after validating an unrelated candidate")
+	}
+}
+
 // TestFetchRateParsesCore verifies FetchRate decodes resources.core from the
 // /rate_limit endpoint and updates the shared snapshot.
 func TestFetchRateParsesCore(t *testing.T) {
@@ -1252,9 +1483,13 @@ func TestGetRepoDataTagsFallbackKeepsPreservedTuple(t *testing.T) {
 // TestRepoDataConclusive pins the flag the model settles on. It is the version
 // layer's answer to "is this tool done for the window", and it must be false on
 // exactly the passes that left the entry stale on purpose — otherwise the model
-// stops re-dispatching for a tool whose card was never filled. Err cannot carry
-// that: it holds ErrRateLimited or nil, so an offline start reaches the model
-// as a nil error.
+// stops re-dispatching for a tool whose card was never filled.
+//
+// Err cannot carry that, and still cannot now that every failure class reaches
+// the caller named: the two answer different questions and disagree in both
+// directions. A repo with no releases settles the tool with a nil Err; a
+// rate-limited pass that served a stale card is a non-nil Err on a pass that
+// settled nothing.
 func TestRepoDataConclusive(t *testing.T) {
 	t.Run("clean pass is conclusive", func(t *testing.T) {
 		githubTestServer(t)
@@ -1279,11 +1514,48 @@ func TestRepoDataConclusive(t *testing.T) {
 		})
 
 		d := GetRepoData("github.com/owner/repo")
-		if d.Err != nil {
-			t.Fatalf("Err = %v — the premise of this test is that a 5xx reaches the caller as a nil error", d.Err)
+		if d.Err == nil {
+			t.Fatal("Err = nil after a 5xx — a transient failure now reaches the caller named")
+		}
+		if errors.Is(d.Err, ErrRateLimited) {
+			t.Fatalf("Err = %v, want the plain transient error, not a rate-limit claim", d.Err)
 		}
 		if d.Conclusive {
 			t.Error("Conclusive = true after a total failure — the entry was deliberately left stale")
+		}
+	})
+
+	t.Run("no releases is conclusive with no error", func(t *testing.T) {
+		// The definitive negative: /releases/latest 404s, the repo itself answers.
+		// The tool is settled for the window and nothing failed, so the card must
+		// not carry an error for the most ordinary state there is.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/releases/latest"), strings.HasSuffix(r.URL.Path, "/tags"):
+				w.WriteHeader(http.StatusNotFound)
+			case strings.HasSuffix(r.URL.Path, "/languages"):
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]int{"Go": 1000})
+			default:
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"description": "a repo that never cut a release", "stargazers_count": 7,
+				})
+			}
+		}))
+		origAPIBase, origCacheDir := testAPIBase, testCacheDir
+		testAPIBase, testCacheDir = srv.URL, t.TempDir()
+		t.Cleanup(func() {
+			srv.Close()
+			testAPIBase, testCacheDir = origAPIBase, origCacheDir
+		})
+
+		d := GetRepoData("github.com/owner/repo")
+		if d.Err != nil {
+			t.Errorf("Err = %v, want nil — errNoReleases is a negative, not a failure", d.Err)
+		}
+		if !d.Conclusive {
+			t.Error("Conclusive = false — a repo with no releases is settled for the window")
 		}
 	})
 
@@ -1316,6 +1588,88 @@ func TestRepoDataConclusive(t *testing.T) {
 			t.Error("Conclusive = true while CheckedAt was left stale for a refill")
 		}
 	})
+}
+
+// TestRepoDataErrPickOrder pins which of the two core fetches' errors reaches
+// the caller. ErrRateLimited outranks a transient failure whichever endpoint it
+// came from, because it is the only class with an answer the user can act on;
+// the rest are indistinguishable to the UI and it does not matter which one is
+// picked, only that one is. Driven end to end through getRepoData rather than
+// against pickFetchErr directly — the wiring is what regressed before.
+func TestRepoDataErrPickOrder(t *testing.T) {
+	// status returns a server answering each endpoint with the given code, 200
+	// meaning "answer normally".
+	serve := func(t *testing.T, relCode, infoCode int) {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			write := func(code int) bool {
+				if code == http.StatusOK {
+					return false
+				}
+				if code == http.StatusForbidden {
+					w.Header().Set("X-RateLimit-Remaining", "0")
+				}
+				w.WriteHeader(code)
+				return true
+			}
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/languages"):
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]int{"Go": 1000})
+			case strings.HasSuffix(r.URL.Path, "/releases/latest"):
+				if write(relCode) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v1.0.0"})
+			default:
+				if write(infoCode) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"description": "x", "stargazers_count": 1})
+			}
+		}))
+		origAPIBase, origCacheDir := testAPIBase, testCacheDir
+		testAPIBase, testCacheDir = srv.URL, t.TempDir()
+		t.Cleanup(func() {
+			srv.Close()
+			testAPIBase, testCacheDir = origAPIBase, origCacheDir
+		})
+	}
+
+	tests := []struct {
+		name              string
+		relCode, infoCode int
+		wantRateLimited   bool
+		wantErr           bool
+	}{
+		{"release rate-limited outranks a repo-info 5xx", http.StatusForbidden, http.StatusInternalServerError, true, true},
+		{"repo-info rate-limited outranks a release 5xx", http.StatusInternalServerError, http.StatusForbidden, true, true},
+		{"both rate-limited", http.StatusForbidden, http.StatusForbidden, true, true},
+		{"both transient", http.StatusInternalServerError, http.StatusInternalServerError, false, true},
+		{"release fails alone", http.StatusInternalServerError, http.StatusOK, false, true},
+		{"repo info fails alone", http.StatusOK, http.StatusInternalServerError, false, true},
+		{"clean pass carries no error", http.StatusOK, http.StatusOK, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serve(t, tt.relCode, tt.infoCode)
+			d := GetRepoData("github.com/owner/repo")
+			switch {
+			case !tt.wantErr:
+				if d.Err != nil {
+					t.Fatalf("Err = %v, want nil", d.Err)
+				}
+			case d.Err == nil:
+				t.Fatal("Err = nil, want a classified failure")
+			case tt.wantRateLimited && !errors.Is(d.Err, ErrRateLimited):
+				t.Fatalf("Err = %v, want ErrRateLimited", d.Err)
+			case !tt.wantRateLimited && errors.Is(d.Err, ErrRateLimited):
+				t.Fatalf("Err = %v, want a transient error, not a rate-limit claim", d.Err)
+			}
+		})
+	}
 }
 
 // TestGetRepoDataTagsFallbackSkippedWhenRateLimited pins the placement of the
