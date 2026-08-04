@@ -125,7 +125,11 @@ named: a repo with no releases settles the tool with a nil `Err`, while a rate-l
 pass that served a stale card carries one while settling nothing. `m.repoStatus` is no
 better — that same pass writes a status there too. A validated token clears the whole
 marker set and refetches every tool with a repo, since nothing settled under the old
-credential is settled under the new one.
+credential is settled under the new one — unless `GITHUB_TOKEN` is set, in which case
+the handler stops right after saving. `SetToken` writes the config file that env
+precedence shadows, so the accepted credential is not the one requests will carry, and
+recovering on that basis would spend a three-request pass per tool at the anonymous
+60/h ceiling.
 
 The handler's data path is gated on `hasData || err == nil` — on *data*, not on the
 error class. A pass that failed but still carried values up from the cache renders

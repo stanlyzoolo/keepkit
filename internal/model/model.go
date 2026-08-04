@@ -1140,6 +1140,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.tokenInput.Blur()
 		m.tokenInput.SetValue("")
+		// The token validated and is on disk, but SetToken writes the config file
+		// and effectiveToken reads that only when GITHUB_TOKEN is empty — so under
+		// env precedence what was just accepted is not what goes on the wire. Say
+		// so, and stop here.
+		//
+		// Everything below assumes the opposite. msg.rate is the candidate's
+		// snapshot, so the gauge would claim a 5000 limit the session does not
+		// have; and the fan-out would spend a three-request pass per tool at the
+		// anonymous 60/h ceiling — with a few dozen tools that is the whole hour,
+		// burnt by the one gesture the overlay offers as the way out of a degraded
+		// session. Failing to recover is survivable; making it worse is not.
+		if version.TokenSource() == "env" {
+			m.tokenError = "saved — GITHUB_TOKEN still takes precedence"
+			return m, nil
+		}
 		m.tokenError = ""
 		if msg.rate.Known {
 			m.rate = msg.rate

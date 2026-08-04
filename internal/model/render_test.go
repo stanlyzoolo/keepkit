@@ -2973,6 +2973,98 @@ func TestRenderAPIStatusExplainsARejectedToken(t *testing.T) {
 	})
 }
 
+// envRejectedOverlayModel returns an overlay-mode model whose rejected token
+// came from GITHUB_TOKEN. The config-dir seam is still installed, because the
+// [e] path this test is about writes there — the point being that the write
+// changes nothing while the env var stands.
+func envRejectedOverlayModel(t *testing.T) Model {
+	t.Helper()
+	restoreDir := version.SetConfigDirForTesting(t.TempDir())
+	t.Cleanup(restoreDir)
+	t.Setenv("GITHUB_TOKEN", "ghp_E1n2V3t4O5f6G7h8")
+	restoreFlag := version.SetTokenRejectedForTesting(true)
+	t.Cleanup(restoreFlag)
+
+	return Model{
+		width: 80, height: 24, mode: modeAPIStatus,
+		tokenInput: textinput.New(),
+		rate:       version.RateLimit{Known: true, Remaining: 26, Limit: 60},
+	}
+}
+
+// overlayNudgeRow returns the overlay's nudge line — the fourth rendered row,
+// between the title and the token line — with the border and ANSI stripped.
+// Asserted by position rather than by a substring search over the whole modal,
+// because the footer hints carry "e set token" too: a nudge that wrongly
+// offered the key would pass any test that only grepped the output.
+func overlayNudgeRow(t *testing.T, m Model) string {
+	t.Helper()
+	rows := strings.Split(stripANSI(m.renderAPIStatus()), "\n")
+	if len(rows) < 4 {
+		t.Fatalf("overlay has %d rows, too few to hold a nudge:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+	// 0 top border, 1 title, 2 blank, 3 nudge.
+	return rows[3]
+}
+
+// TestAPIStatusNudgeIsEnvAware pins the one rejected state keepkit cannot fix
+// from inside. [e] runs SetToken, which writes the config file, and
+// effectiveToken reads that only when GITHUB_TOKEN is empty — so under env
+// precedence the key saves a credential that never goes on the wire. Offering
+// it there sends the user through a save that changes nothing and, before the
+// handler learned to stop, through a full recovery fan-out at the anonymous
+// 60/h ceiling. [d] has gated on the source for this reason all along.
+func TestAPIStatusNudgeIsEnvAware(t *testing.T) {
+	t.Run("an env rejection names the variable and offers no key", func(t *testing.T) {
+		nudge := overlayNudgeRow(t, envRejectedOverlayModel(t))
+		if !strings.Contains(nudge, "GITHUB_TOKEN") {
+			t.Errorf("nudge row %q does not name the variable the user has to go edit", nudge)
+		}
+		if !strings.Contains(nudge, "shell") {
+			t.Errorf("nudge row %q does not say where the variable lives", nudge)
+		}
+		// The whole point: the key cannot fix this one.
+		if strings.Contains(nudge, "e set") {
+			t.Errorf("nudge row %q offers [e], which writes a config token that env shadows", nudge)
+		}
+		if strings.Contains(nudge, "replace the token to restore") {
+			t.Errorf("nudge row %q is the config wording, which points at [e]", nudge)
+		}
+	})
+
+	t.Run("a config rejection still offers the key", func(t *testing.T) {
+		// The env case is a new first arm of the same switch; it must not swallow
+		// the case that [e] genuinely answers.
+		nudge := overlayNudgeRow(t, rejectedOverlayModel(t, true, modeAPIStatus))
+		if !strings.Contains(nudge, "replace the token to restore") {
+			t.Errorf("nudge row %q lost the config wording", nudge)
+		}
+		if !strings.Contains(nudge, "e set") {
+			t.Errorf("nudge row %q no longer offers [e], which is what fixes a config token", nudge)
+		}
+		if strings.Contains(nudge, "GITHUB_TOKEN") {
+			t.Errorf("nudge row %q names the env var for a config token", nudge)
+		}
+	})
+
+	t.Run("the env nudge is styled Signal like its siblings", func(t *testing.T) {
+		forceColorProfile(t)
+		m := envRejectedOverlayModel(t)
+		m.styles = ui.NewStyles(ui.Default)
+		if !strings.Contains(m.renderAPIStatus(), themeSeq(ui.Default.Signal)) {
+			t.Error("the env nudge carries no Signal run; it must read as the one thing to act on")
+		}
+	})
+
+	t.Run("the env wording stays inside the 80-col budget", func(t *testing.T) {
+		m := envRejectedOverlayModel(t)
+		m.rate.Reset = time.Now().Add(37 * time.Minute)
+		if w := lipgloss.Width(m.renderAPIStatus()); w > 76 {
+			t.Errorf("framed width = %d, want <= 76 (PlaceOverlay clips against an 80-col background)", w)
+		}
+	})
+}
+
 // TestRenderAPIStatusSizeBudget: the overlay composites over the 80x24 layout
 // through PlaceOverlay, which CLIPS rather than wraps — a line past the
 // background width loses its tail silently. The rejected state adds the widest

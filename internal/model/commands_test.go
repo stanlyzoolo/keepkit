@@ -665,4 +665,40 @@ func TestTokenAcceptedRefetchesEveryRepo(t *testing.T) {
 			t.Errorf("a refused token returned a cmd (%T), want none", cmd())
 		}
 	})
+
+	// A token GITHUB_TOKEN shadows validates and saves like any other — the
+	// candidate goes to /rate_limit under an explicit header, so the 200 says
+	// nothing about whether the session will use it. It will not: SetToken writes
+	// the config file and effectiveToken reads that only when the env var is
+	// empty. Recovering on that basis is the expensive half of the mistake — a
+	// three-request pass per tool, dispatched at the anonymous 60/h ceiling
+	// because resolveToken still suppresses the rejected env credential. With a
+	// few dozen tools the one gesture the overlay offers as the way out of a
+	// degraded session spends the rest of the hour and leaves it worse off.
+	t.Run("a token shadowed by GITHUB_TOKEN recovers nothing", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "ghp_envtoken12345678")
+		m := newModel()
+		updated, cmd := m.Update(tokenValidatedMsg{
+			token: "ghp_goodtoken1234",
+			rate:  version.RateLimit{Known: true, Remaining: 5000, Limit: 5000},
+		})
+		nm := updated.(Model)
+
+		if cmd != nil {
+			t.Errorf("a shadowed token dispatched %T, want no fan-out at the anonymous ceiling", cmd())
+		}
+		if len(nm.remoteAnswered) != 3 {
+			t.Errorf("remoteAnswered = %v, want untouched: nothing was recovered", nm.remoteAnswered)
+		}
+		// The candidate's snapshot describes a limit the session does not have.
+		if nm.rate.Limit == 5000 {
+			t.Error("the gauge took the candidate's 5000 limit while requests keep running at 60")
+		}
+		if nm.tokenError == "" {
+			t.Error("the overlay reports nothing, so the save reads as having worked")
+		}
+		if !strings.Contains(nm.tokenError, "GITHUB_TOKEN") {
+			t.Errorf("tokenError = %q, want it to name what takes precedence", nm.tokenError)
+		}
+	})
 }

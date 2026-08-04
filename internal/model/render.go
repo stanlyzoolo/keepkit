@@ -623,8 +623,17 @@ func (m Model) renderAPIStatus() string {
 	// needs different wording: "add" reads as advice to someone who has already
 	// done it, and the thing to do is swap the credential, not create one.
 	// Hidden while entering one, when the input below is the whole answer.
+	//
+	// A rejected *env* token needs its own wording again, and this one is about
+	// what keepkit cannot do: [e] writes the config file, which effectiveToken
+	// reads only when GITHUB_TOKEN is empty, so offering the key here would send
+	// the user through a save that changes nothing on the wire. The variable
+	// belongs to the shell that launched us, so the shell is where it is named.
+	// [d] two blocks down already gates on "config" for the same reason.
 	if m.mode != modeTokenInput {
 		switch {
+		case rejected && source == "env":
+			b.WriteString(s.Signal.Render("GITHUB_TOKEN was refused — replace it in your shell") + "\n\n")
 		case rejected:
 			b.WriteString(s.Signal.Render("replace the token to restore the 5000/h limit  ") + m.hint("e", "set") + "\n\n")
 		case source == "none":

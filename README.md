@@ -334,6 +334,12 @@ it. The state is visible rather than silent: the gauge gains a `✕` (`api✕ �
 tell which credential to swap. Enter a working one with `[e]` and every card refetches
 at once, without a restart, at the restored 5000 per hour.
 
+One case `[e]` cannot fix: a token from `GITHUB_TOKEN`. The variable always wins over
+the file, so a replacement entered in the TUI is saved and then shadowed by the dead
+one — keepkit says `saved — GITHUB_TOKEN still takes precedence` and changes nothing
+else, rather than refetching the whole list on a credential it will not be sending.
+Replace or unset the variable in the shell instead; the overlay says so.
+
 The degraded session itself is where the ceiling bites: a large tool list costs more
 than 60 requests, so on a cold cache expect a partial fill until the hour turns. Cards
 that were already loaded keep showing what they had.
