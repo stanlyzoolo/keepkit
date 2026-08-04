@@ -2981,7 +2981,7 @@ func envRejectedOverlayModel(t *testing.T) Model {
 	t.Helper()
 	restoreDir := version.SetConfigDirForTesting(t.TempDir())
 	t.Cleanup(restoreDir)
-	t.Setenv("GITHUB_TOKEN", "ghp_E1n2V3t4O5f6G7h8")
+	t.Setenv("GITHUB_TOKEN", "ghp_envrefusedtoken")
 	restoreFlag := version.SetTokenRejectedForTesting(true)
 	t.Cleanup(restoreFlag)
 
