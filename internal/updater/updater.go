@@ -540,7 +540,10 @@ func autoPlan(manager string, argv []string) Plan {
 // sits above updater in the import graph); the two must not drift. The cmd /c
 // branch shares shellCommand's accepted quoting caveat: Go's generic argv
 // quoting is not cmd.exe-aware, so a command embedding double quotes can
-// misparse there.
+// misparse there. goos is a bare runtime.GOOS value — "windows" for every
+// windows/* target in `go tool dist list`, whose entries are GOOS/GOARCH
+// *pairs*; the pair form never reaches here, and the arch never matters
+// (cmd.exe is cmd.exe on 386, amd64 and arm64 alike).
 func customPlan(goos, cmd string) Plan {
 	shell := []string{"sh", "-c"}
 	if goos == "windows" {
