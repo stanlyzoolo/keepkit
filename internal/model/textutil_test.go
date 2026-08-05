@@ -87,10 +87,38 @@ func TestMarkdownToLines(t *testing.T) {
 	}{
 		{"empty input", "", 80, nil},
 		{
+			// Consecutive headings get one blank between them (the trailing
+			// blank of one collapses with the leading blank of the next), no
+			// leading blank before the first, no trailing after the last.
 			"headings h1 to h6",
 			"# One\n## Two\n### Three\n#### Four\n##### Five\n###### Six",
 			80,
-			[]string{"H|One", "H|Two", "H|Three", "H|Four", "H|Five", "H|Six"},
+			[]string{
+				"H|One", "B|", "H|Two", "B|", "H|Three", "B|",
+				"H|Four", "B|", "H|Five", "B|", "H|Six",
+			},
+		},
+		{
+			// GoReleaser writes no blank lines at all; the converter supplies
+			// the air around each heading itself. A body whose author already
+			// wrote them must come out identical — the inserted blank and the
+			// source blank collapse into one.
+			"packed headings get air on both sides",
+			"## Changelog\n### New features\n* a\n### Bug fixes\n* b",
+			80,
+			[]string{
+				"H|Changelog", "B|", "H|New features", "B|", "B|• a",
+				"B|", "H|Bug fixes", "B|", "B|• b",
+			},
+		},
+		{
+			"authored blanks around headings do not double",
+			"## Changelog\n\n### New features\n\n* a\n\n### Bug fixes\n\n* b",
+			80,
+			[]string{
+				"H|Changelog", "B|", "H|New features", "B|", "B|• a",
+				"B|", "H|Bug fixes", "B|", "B|• b",
+			},
 		},
 		{
 			// The space after the hashes is required, so a leading issue ref
@@ -361,6 +389,7 @@ func TestMarkdownToLinesGitHubBody(t *testing.T) {
 	got := mdDump(markdownToLines(body, 200))
 	want := []string{
 		"H|What's Changed",
+		"B|",
 		"B|• fix: detect uv tools by @someone in https://github.com/o/r/pull/44",
 		"B|• docs: update README",
 		"B|",

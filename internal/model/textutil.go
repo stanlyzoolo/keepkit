@@ -544,7 +544,17 @@ func markdownToLines(s string, width int) []mdLine {
 		}
 
 		if m := mdHeadingRe.FindStringSubmatch(line); m != nil {
+			// A heading gets a blank row on both sides even when the source
+			// has none — GoReleaser bodies pack headings tight against their
+			// lists, and on the card nothing else separates a section from
+			// the one above. Both calls ride emitBlank's collapse, so a body
+			// that already carries the blanks gains no extra row, and a
+			// heading that converts to nothing still yields exactly one
+			// blank: mdEmitInline's own emitBlank fires first and the
+			// trailing call becomes a no-op.
+			emitBlank()
 			mdEmitInline(emit, emitBlank, m[1], width, mdHeading)
+			emitBlank()
 			continue
 		}
 		// Checked before the list patterns: "---" is the stock separator above
