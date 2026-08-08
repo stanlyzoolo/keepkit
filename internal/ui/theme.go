@@ -5,7 +5,16 @@ import "github.com/charmbracelet/lipgloss"
 // Theme is the app's entire color vocabulary — ten semantic roles and nothing
 // else. Styles are built from these roles only (NewStyles is the single
 // consumer), so no file below internal/ui carries a hex literal and switching
-// every color in keepkit is switching one Theme value.
+// every color keepkit paints as a *meaning* is switching one Theme value.
+//
+// Two palettes in this package stand outside that vocabulary, and a theme
+// switch repaints neither. languageColors (lang.go) are linguist's brand
+// marks — somebody else's colors, not keepkit's to restyle.
+// HeadingColors/ChromaColors (readme_palette.go) are keepkit-invented shades
+// for panel [3]'s heading ladder and code-fence accents, taken because a
+// heading *level* is not a meaning this vocabulary has a word for and six
+// levels cannot be six roles. Each file carries its own argument; both are
+// exceptions to the two rules below rather than applications of them.
 //
 // The roles are named for what a color *means*, not for what it looks like: a
 // theme that paints "signal" green would still be internally consistent, while
