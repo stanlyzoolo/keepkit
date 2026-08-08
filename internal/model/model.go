@@ -2101,9 +2101,17 @@ func (m *Model) toggleGroupByTag() tea.Cmd {
 
 // toggleZoom flips the layout between the standard split and the one that
 // widens panel [3] at the brief card's expense. A view toggle in the
-// toggleGroupByTag mould: it reports through setStatus (the returned tick is
-// what the z case returns), fires no fetch, and refuses an activation that
+// toggleGroupByTag mould: it fires no fetch, and refuses an activation that
 // would be a lie rather than flipping a flag nothing follows.
+//
+// A successful toggle says NOTHING. Two panels change width over the full
+// height of the screen — the user is looking straight at the answer, and a bar
+// reading "readme zoomed" only restates it, one line below where it happened.
+// That is the difference from toggleGroupByTag, which does report: reordering
+// one panel's rows and inserting headers is a subtler change, and its message
+// names which of two orderings you landed in. Here the only thing worth the
+// bar is the refusal, the one case where the screen does NOT answer — nothing
+// moved, and the reason has nowhere else to live.
 //
 // The refusal is the narrow terminal: below ~82 columns the minimum-clamp
 // cascade in panelWidthsFor produces the same triple for both variants, so the
@@ -2133,10 +2141,7 @@ func (m *Model) toggleZoom() tea.Cmd {
 	}
 	m.helpZoom = !m.helpZoom
 	m.applyLayout()
-	if m.helpZoom {
-		return m.setStatus("readme zoomed")
-	}
-	return m.setStatus("layout restored")
+	return nil
 }
 
 // widthTriple packs the three panel widths so two layout variants can be

@@ -4820,8 +4820,7 @@ func TestStatusBarNeverWraps(t *testing.T) {
 		{name: "zoom refusal at 80 cols", focus: focusBrief, helpMode: helpModeReadme, statusMsg: "too narrow to zoom"},
 		{name: "zoom refusal at 40 cols", focus: focusBrief, helpMode: helpModeReadme, statusMsg: "too narrow to zoom", width: 40},
 		{name: "zoom refusal at 24 cols", focus: focusHelp, helpMode: helpModeReadme, statusMsg: "too narrow to zoom", width: 24},
-		{name: "zoom status at 80 cols", focus: focusHelp, helpMode: helpModeReadme, statusMsg: "readme zoomed", knownRate: true},
-		{name: "zoom status restored at 80 cols", focus: focusBrief, helpMode: helpModeReadme, statusMsg: "layout restored", knownRate: true},
+		{name: "zoom refusal beside a gauge at 80 cols", focus: focusHelp, helpMode: helpModeReadme, statusMsg: "too narrow to zoom", knownRate: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

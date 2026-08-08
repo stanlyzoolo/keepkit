@@ -120,8 +120,10 @@ func TestZoomToggleWidensHelp(t *testing.T) {
 		t.Errorf("help viewport = %d, want %d — the relayout did not reach the viewports",
 			nm.helpViewport.Width, nm.helpW-1)
 	}
-	if nm.statusMsg != "readme zoomed" {
-		t.Errorf("statusMsg = %q, want %q", nm.statusMsg, "readme zoomed")
+	// Silent in both directions: the widths ARE the feedback, and a bar
+	// restating them spends a line on what the user just watched happen.
+	if nm.statusMsg != "" {
+		t.Errorf("statusMsg = %q after a successful zoom, want the bar left alone", nm.statusMsg)
 	}
 
 	back := mustModel(nm.Update(keyRunes("z")))
@@ -132,8 +134,8 @@ func TestZoomToggleWidensHelp(t *testing.T) {
 		t.Errorf("second z left (%d,%d), want the original (%d,%d)",
 			back.briefW, back.helpW, flatBrief, flatHelp)
 	}
-	if back.statusMsg != "layout restored" {
-		t.Errorf("statusMsg = %q, want %q", back.statusMsg, "layout restored")
+	if back.statusMsg != "" {
+		t.Errorf("statusMsg = %q after restoring the layout, want the bar left alone", back.statusMsg)
 	}
 }
 
@@ -238,16 +240,22 @@ func TestZoomBeforeReady(t *testing.T) {
 // and on the refusal — the status tick is the whole command.
 func TestZoomFetchesNothing(t *testing.T) {
 	shrinkStatusTTL(t)
+	// A successful toggle sets no status, so it has nothing to return at all —
+	// a stricter assertion than the tick check: any command here is a fetch.
 	m := zoomModel(t, 160, 40)
-	_, cmd := m.Update(keyRunes("z"))
-	assertOnlyExpiryTick(t, cmd)
+	if _, cmd := m.Update(keyRunes("z")); cmd != nil {
+		t.Errorf("z returned %T, want nil — a silent view toggle has nothing to run", cmd())
+	}
 
 	nm := mustModel(m.Update(keyRunes("z")))
-	_, cmd = nm.Update(keyRunes("z"))
-	assertOnlyExpiryTick(t, cmd)
+	if _, cmd := nm.Update(keyRunes("z")); cmd != nil {
+		t.Errorf("the restoring z returned %T, want nil", cmd())
+	}
 
+	// The refusal is the one exit that speaks, so it carries the expiry tick
+	// and must carry nothing besides.
 	narrow := zoomModel(t, 80, 24)
-	_, cmd = narrow.Update(keyRunes("z"))
+	_, cmd := narrow.Update(keyRunes("z"))
 	assertOnlyExpiryTick(t, cmd)
 }
 
