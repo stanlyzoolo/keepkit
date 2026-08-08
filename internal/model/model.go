@@ -1924,7 +1924,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// No keyboard fall-through into viewport.Update: every scroll key is bound
 		// explicitly above, and the default pager keymap was zeroed (see
-		// WindowSizeMsg). An uncaught key is a deliberate no-op.
+		// initViewports). An uncaught key is a deliberate no-op.
 	}
 
 	return m, cmd
@@ -2111,6 +2111,11 @@ func (m *Model) toggleGroupByTag() tea.Cmd {
 // check compares the two states through the pure core — never a Model copy
 // with the flag flipped.
 //
+// It refuses the activation ONLY, exactly like toggleGroupByTag: a session
+// zoomed at 160 columns and then resized down to 80 must still be able to turn
+// zoom off, or the flag is stranded on and the layout comes back zoomed the
+// moment the terminal grows again.
+//
 // A zoom that does change widths changes helpWrapWidth (helpW stays ≥ 30, off
 // the floor), so applyLayout re-wraps [3] and an active j/k spotlight is lost.
 // That is what a width resize already does, and the cost is the same one too:
@@ -2123,7 +2128,7 @@ func (m *Model) toggleZoom() tea.Cmd {
 	if !m.ready {
 		return nil
 	}
-	if widthTriple(m.panelWidthsFor(true)) == widthTriple(m.panelWidthsFor(false)) {
+	if !m.helpZoom && widthTriple(m.panelWidthsFor(true)) == widthTriple(m.panelWidthsFor(false)) {
 		return m.setStatus("too narrow to zoom")
 	}
 	m.helpZoom = !m.helpZoom
@@ -2299,7 +2304,11 @@ func (m *Model) markReadmeLoading(name string) {
 // The prevWrapW capture must stay ABOVE the width recompute: helpWrapWidth()
 // reads the STORED m.helpW, so capturing it after the assignment compares the
 // new width against itself, the guard below is always false, and [3] silently
-// keeps its pre-resize wrapping — with every existing test green.
+// keeps its pre-resize wrapping. Several resize tests hold that line besides
+// TestApplyLayoutRewrapsHelpOnWidthChange (TestHelpNavIdxResetTriggers/resize,
+// TestResizeHeightOnlyKeepsCursor, TestReadmeResizeRerenders all fail on the
+// mutation) — the comment is here because the failures name the spotlight and
+// the README, not the capture that actually moved.
 func (m *Model) applyLayout() {
 	prevWrapW := m.helpWrapWidth()
 	m.toolsW, m.briefW, m.helpW = m.calcPanelWidths()

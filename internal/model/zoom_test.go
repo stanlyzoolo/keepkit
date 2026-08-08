@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/stanlyzoolo/keepkit/internal/loader"
 )
@@ -33,22 +32,15 @@ func zoomModel(t *testing.T, width, height int) Model {
 	return nm
 }
 
-// widestLine reports the widest rendered line of s, in cells.
-func widestLine(s string) int {
-	w := 0
-	for line := range strings.SplitSeq(s, "\n") {
-		if lw := lipgloss.Width(line); lw > w {
-			w = lw
-		}
-	}
-	return w
-}
-
 // TestApplyLayoutRewrapsHelpOnWidthChange is the guard on applyLayout's one
 // sharp edge: prevWrapW is captured from the STORED m.helpW, so a capture
 // placed below the calcPanelWidths assignment compares the new width against
 // itself and the re-wrap guard is dead — [3] then keeps its pre-resize wrapping
-// forever, with every other test in the package still green.
+// forever. It is not the only test that fails on that mutation
+// (TestHelpNavIdxResetTriggers/resize, TestResizeHeightOnlyKeepsCursor and
+// TestReadmeResizeRerenders do too); it is the one that names the wrap width
+// itself, so the failure points at the line that moved rather than at a lost
+// spotlight three files away.
 func TestApplyLayoutRewrapsHelpOnWidthChange(t *testing.T) {
 	m := zoomModel(t, 160, 40)
 	if m.helpBase == "" {
@@ -57,22 +49,24 @@ func TestApplyLayoutRewrapsHelpOnWidthChange(t *testing.T) {
 	wide := m.helpBase
 
 	nm := mustModel(m.Update(tea.WindowSizeMsg{Width: 100, Height: 40}))
-	if widestLine(wide) <= nm.helpWrapWidth() {
+	if maxLineWidth(wide) <= nm.helpWrapWidth() {
 		t.Fatalf("fixture fits the narrow budget already (%d ≤ %d) — it cannot show a re-wrap",
-			widestLine(wide), nm.helpWrapWidth())
+			maxLineWidth(wide), nm.helpWrapWidth())
 	}
 	if nm.helpBase == wide {
 		t.Errorf("helpBase unchanged after a width-changing relayout — the re-wrap guard is dead")
 	}
-	if got, budget := widestLine(nm.helpBase), nm.helpWrapWidth(); got > budget {
+	if got, budget := maxLineWidth(nm.helpBase), nm.helpWrapWidth(); got > budget {
 		t.Errorf("widest help line = %d cells, over the new %d budget (stale wrapping)", got, budget)
 	}
 }
 
 // TestApplyLayoutIdempotent: applying the same layout twice must leave the
-// model in the same visible state. It kills the mutation where the extraction
-// drops the setToolsContent/card tail — no existing resize test observes that
-// tail once the WindowSizeMsg handler stops owning it.
+// model in the same visible state. Its load-bearing half is the zero-then-
+// rebuild assertion at the bottom, which fails when the extraction drops the
+// setToolsContent/card tail. Several mouse and line-map tests fail on that
+// mutation too; this one states the tail as applyLayout's own contract rather
+// than as a click landing on the wrong row.
 func TestApplyLayoutIdempotent(t *testing.T) {
 	m := zoomModel(t, 120, 30)
 	m.toolLine, m.lineTool = nil, nil
@@ -192,6 +186,38 @@ func TestZoomRefusesWhenNarrow(t *testing.T) {
 	}
 }
 
+// TestZoomNarrowStillUnzooms: the narrow refusal is one-directional, exactly
+// like toggleGroupByTag's. A session zoomed wide and then resized down to a
+// width where both variants clamp alike must still be able to turn zoom off —
+// a symmetric refusal strands the flag on, and the layout comes back zoomed the
+// moment the terminal grows again.
+func TestZoomNarrowStillUnzooms(t *testing.T) {
+	shrinkStatusTTL(t)
+	m := zoomModel(t, 160, 40)
+	m = mustModel(m.Update(keyRunes("z")))
+	if !m.helpZoom {
+		t.Fatalf("zoom did not engage at 160 cols — the rest of the test is vacuous")
+	}
+
+	narrow := mustModel(m.Update(tea.WindowSizeMsg{Width: 80, Height: 24}))
+	nm := mustModel(narrow.Update(keyRunes("z")))
+	if nm.helpZoom {
+		t.Errorf("helpZoom still true after z at 80 cols — the flag is stranded on")
+	}
+	if nm.statusMsg == "too narrow to zoom" {
+		t.Errorf("turning zoom off was refused; the refusal must gate activation only")
+	}
+
+	// The proof the flag was not merely cosmetic: grown back, the layout is the
+	// unzoomed triple rather than the one the stranded flag would have kept.
+	wide := mustModel(nm.Update(tea.WindowSizeMsg{Width: 160, Height: 40}))
+	tw, bw, hw := wide.panelWidthsFor(false)
+	if wide.toolsW != tw || wide.briefW != bw || wide.helpW != hw {
+		t.Errorf("layout after regrowing = (%d,%d,%d), want the unzoomed (%d,%d,%d)",
+			wide.toolsW, wide.briefW, wide.helpW, tw, bw, hw)
+	}
+}
+
 // TestZoomBeforeReady: z before the first WindowSizeMsg has no layout to
 // toggle — the guard is explicit, not the clamps agreeing by coincidence.
 func TestZoomBeforeReady(t *testing.T) {
@@ -244,6 +270,26 @@ func TestZoomInSearchStaysQueryText(t *testing.T) {
 	}
 }
 
+// TestZoomUnderOverlay: the two overlays are modes, so the mode-dispatch switch
+// consumes z before the normal-mode case sees it — structurally, the way every
+// other normal-mode key is protected. Asserted anyway because relayouting the
+// screen underneath an open modal is the one failure this would produce, and
+// modeSearch next door proves the dispatch is not uniform.
+func TestZoomUnderOverlay(t *testing.T) {
+	for _, mode := range []inputMode{modeHotkeys, modeAPIStatus} {
+		m := zoomModel(t, 160, 40)
+		m.mode = mode
+		nm := mustModel(m.Update(keyRunes("z")))
+		if nm.helpZoom {
+			t.Errorf("z in mode %v zoomed the layout under an open overlay", mode)
+		}
+		if nm.briefW != m.briefW || nm.helpW != m.helpW {
+			t.Errorf("mode %v: widths moved under the overlay: (%d,%d) → (%d,%d)",
+				mode, m.briefW, m.helpW, nm.briefW, nm.helpW)
+		}
+	}
+}
+
 // TestZoomResetsSpotlight: any width-changing zoom re-wraps [3], so the entry
 // ranges are recomputed and the j/k cursor is lost — the same consequence a
 // width resize already has, asserted rather than assumed.
@@ -290,10 +336,15 @@ func TestZoomUnderUpdateLog(t *testing.T) {
 // cell is last, so it is also the first to go under width pressure: at the
 // 80-column baseline the left budget is spent by "readme · 1/1" alone.
 func TestHelpFooterZoomCell(t *testing.T) {
-	// Per-mode widths are the shed arithmetic, not arbitrary: with a navigable
-	// entry index on screen the footer already carries four cells, so --help
-	// and man need a panel two hint-cells wider than the readme does before the
-	// least actionable one survives.
+	// The widths are each comfortably clear of that mode's shed threshold, not
+	// the thresholds themselves — this asserts the cell is emitted per mode, and
+	// the boundary is asserted once at the bottom. What actually moves the
+	// threshold is a navigable entry index, which adds a fourth cell: measured,
+	// the cell survives from ~114 columns with no index and ~150 with one. So
+	// --help is the binding case here (the fixture caches help output, so it has
+	// an index), while man in this fixture has none and would in fact keep the
+	// cell well below 160. Per-mode numbers would be asserting about the
+	// fixture's cache rather than about the mode.
 	modes := []struct {
 		mode  int
 		width int

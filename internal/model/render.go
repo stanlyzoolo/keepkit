@@ -883,10 +883,10 @@ func (m Model) footerRows() int {
 }
 
 // calcListHeight is the viewport height inside a panel: the content height its
-// footer does not claim. Both the WindowSizeMsg handler (which sizes the
-// viewports) and the renderers (which stack viewport + footer back to the full
-// height) go through it, so the two cannot drift apart and leave a panel one row
-// too tall — which lipgloss would answer by pushing the status bar off screen.
+// footer does not claim. Both applyLayout (which sizes the viewports) and the
+// renderers (which stack viewport + footer back to the full height) go through
+// it, so the two cannot drift apart and leave a panel one row too tall — which
+// lipgloss would answer by pushing the status bar off screen.
 func (m Model) calcListHeight() int {
 	return max(m.calcVpHeight()-m.footerRows(), 1)
 }
