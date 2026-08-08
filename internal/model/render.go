@@ -807,8 +807,11 @@ func (m Model) renderHotkeys() string {
 		{"[2] brief", []hotkeyRow{
 			{"enter", "update to latest"},
 			{"r", "refresh"},
-			{"e", "edit note"},
-			{"#", "edit tags"},
+			// Merged like o/c and j/k ↑/↓: the two editors are one gesture on
+			// two fields, and the row it frees is what pays for z below. The
+			// column budget is hard (see TestRenderHotkeysSizeBudget) — a new
+			// binding buys its row, it does not append one.
+			{"e/#", "note / tags"},
 			{"s", "cycle status"},
 			{"o/c", "repo / releases"},
 		}},
@@ -816,6 +819,7 @@ func (m Model) renderHotkeys() string {
 			{"R/H/M", "readme/help/man"},
 			{"j/k ↑/↓", "navigate / scroll"},
 			{"ctrl+d/u", "half page"},
+			{"z", "zoom panel"},
 		}},
 	}
 	switch m.selfState {
@@ -879,10 +883,10 @@ func (m Model) footerRows() int {
 }
 
 // calcListHeight is the viewport height inside a panel: the content height its
-// footer does not claim. Both the WindowSizeMsg handler (which sizes the
-// viewports) and the renderers (which stack viewport + footer back to the full
-// height) go through it, so the two cannot drift apart and leave a panel one row
-// too tall — which lipgloss would answer by pushing the status bar off screen.
+// footer does not claim. Both applyLayout (which sizes the viewports) and the
+// renderers (which stack viewport + footer back to the full height) go through
+// it, so the two cannot drift apart and leave a panel one row too tall — which
+// lipgloss would answer by pushing the status bar off screen.
 func (m Model) calcListHeight() int {
 	return max(m.calcVpHeight()-m.footerRows(), 1)
 }
@@ -967,18 +971,38 @@ const panelGutter = 1
 // reads as grouping rather than as clutter.
 const footerSep = " · "
 
+// calcPanelWidths is the layout the model is currently in — the one-line
+// wrapper over the pure core, reading the view flag the z toggle owns.
 func (m Model) calcPanelWidths() (toolsW, briefW, helpW int) {
+	return m.panelWidthsFor(m.helpZoom)
+}
+
+// panelWidthsFor is the width core, parameterized by the layout variant rather
+// than reading m.helpZoom, so toggleZoom can compare the two states without
+// copying a whole Model (the baseFor/planFor/shellCommand idiom). Only the
+// brief ratio depends on the variant; tools keeps its 20% in both and the
+// minimum-clamp cascade below runs unchanged, which is what makes the two
+// states collapse into one on a narrow terminal — the condition toggleZoom
+// refuses on.
+func (m Model) panelWidthsFor(zoom bool) (toolsW, briefW, helpW int) {
 	// 20%-46%-34% layout: the card is the panel the redesign gives the room to,
 	// because its metrics strip lays four measurements side by side and the
 	// readme beside it is prose that reads fine in a narrower column.
+	// Zoomed (z) the brief drops to 30% and the remainder goes to [3]: the card
+	// is a fixed set of short measurements that survives a narrow column, while
+	// a README is the one panel whose content has no upper bound.
 	// lipgloss adds borders OUTSIDE the configured Width,
 	// so Width(panelW) renders as panelW+2 on screen, and panel content fills
 	// the full panelW (dividers/viewports use panelW, not panelW-2).
 	// Horizontal overhead reserved here = 6: 2 border cols x 3 panels. There is
 	// no outer horizontal margin and panels sit flush against each other.
 	available := max(m.width-6, 1)
+	briefPct := 46
+	if zoom {
+		briefPct = 30
+	}
 	toolsW = max((available*20)/100, 15)
-	briefW = max((available*46)/100, 30)
+	briefW = max((available*briefPct)/100, 30)
 	helpW = available - toolsW - briefW
 	if helpW < 30 {
 		helpW = 30
@@ -1507,6 +1531,15 @@ func (m Model) renderHelp() string {
 	}
 	if len(m.helpEntries) > 0 {
 		cells = append(cells, m.hint("j/k", "navigate"))
+	}
+	// z last: cells shed from the right, and of everything on this line the
+	// zoom is the least actionable — where you are in the text and how to walk
+	// it both outrank a width preference. Dropped with the mode hints while a
+	// log owns the panel, for the same reason the title drops them: none of
+	// this is what is on screen. The shed also puts the cell out of reach at
+	// the baseline width, which is roughly where z stops doing anything.
+	if !logShowing {
+		cells = append(cells, m.hint("z", "zoom"))
 	}
 	footer := m.panelFooter(m.helpW, cells, m.hint("ctrl+d/u", "page"))
 	return m.framePanel(m.helpW, focused,

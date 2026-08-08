@@ -391,6 +391,13 @@ type Model struct {
 	// default) is the flat update-grouped list, on partitions the tools under
 	// tag divider headers. Display-only — meta.yaml is never reordered.
 	groupByTag bool
+
+	// helpZoom is the layout view toggle (z from [2]/[3]): off (the default) is
+	// the 20/46/34 split, on is 20/30/50 — panel [3] widened at the brief
+	// card's expense. A view flag like groupByTag, not an inputMode (nothing
+	// owns input here) and not persisted: it is a way to read one README, not a
+	// preference.
+	helpZoom bool
 	// toolLine maps a tool index to its screen line, lineTool a screen line
 	// back to its tool index (-1 on a header row). Both are rebuilt by
 	// setToolsContent, the single point that repaints the list — a repaint
@@ -1414,49 +1421,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		prevWrapW := m.helpWrapWidth()
 		m.width = msg.Width
 		m.height = msg.Height
-		m.toolsW, m.briefW, m.helpW = m.calcPanelWidths()
-		vpH := m.calcListHeight()
-
-		if !m.ready {
-			// Viewports are 1 col narrower than their panel to leave a gutter
-			// for the scrollbar rendered by withScrollbar.
-			m.toolsViewport = viewport.New(m.toolsW-1, vpH)
-			m.briefViewport = viewport.New(m.briefW-1, vpH)
-			m.helpViewport = viewport.New(m.helpW-1, vpH)
-			// Zero the default pager keymap on all three viewports: every
-			// keyboard scroll binding lives explicitly in Update()'s switch, so
-			// the hidden defaults (d/u/f/b/space/h/l scrolling uncaught keys
-			// inconsistently) must never come back. Wheel scrolling rides
-			// MouseWheelEnabled — a separate field, still true — so it stays on.
-			m.toolsViewport.KeyMap = viewport.KeyMap{}
-			m.briefViewport.KeyMap = viewport.KeyMap{}
-			m.helpViewport.KeyMap = viewport.KeyMap{}
-			m.setHelpContent()
-			m.ready = true
-		} else {
-			m.toolsViewport.Width = m.toolsW - 1
-			m.toolsViewport.Height = vpH
-			m.briefViewport.Width = m.briefW - 1
-			m.briefViewport.Height = vpH
-			m.helpViewport.Width = m.helpW - 1
-			m.helpViewport.Height = vpH
-			// Re-wrap and recompute the entry index (resetting the cursor —
-			// stale wrapped-line ranges would dim the wrong lines) only when
-			// the wrap width actually changed: a height-only resize (tmux bar
-			// toggle, vertical resize) leaves every entry range valid, so an
-			// active spotlight survives it.
-			if m.helpWrapWidth() != prevWrapW {
-				m.setHelpContent()
-			}
-		}
-		// Through setToolsContent, not a bare SetContent: a resize repaints the
-		// list, so the line maps must be rebuilt with it or they would describe
-		// the pre-resize content (wrong scroll, out-of-range click mapping).
-		m.setToolsContent()
-		m.briefViewport.SetContent(m.renderCard())
+		m.applyLayout()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -1812,6 +1779,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.switchHelpMode(helpModeReadme)
 			}
 
+		// z shares R/H/M's gate because it is the same kind of key: it changes
+		// what panel [3] is, so it belongs to the panel's own chrome and fires
+		// from the two focuses that are looking at it. Unlike the trio it does
+		// not move focus — a width change is not a change of what you are
+		// reading — and it fetches nothing, so the status tick is all it returns.
+		case "z":
+			if m.focus == focusBrief || m.focus == focusHelp {
+				return m, m.toggleZoom()
+			}
+
 		case "e":
 			if m.focus == focusBrief {
 				if mt, ok := m.selectedMeta(); ok {
@@ -1947,7 +1924,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// No keyboard fall-through into viewport.Update: every scroll key is bound
 		// explicitly above, and the default pager keymap was zeroed (see
-		// WindowSizeMsg). An uncaught key is a deliberate no-op.
+		// initViewports). An uncaught key is a deliberate no-op.
 	}
 
 	return m, cmd
@@ -2122,6 +2099,57 @@ func (m *Model) toggleGroupByTag() tea.Cmd {
 	return m.setStatus("flat list")
 }
 
+// toggleZoom flips the layout between the standard split and the one that
+// widens panel [3] at the brief card's expense. A view toggle in the
+// toggleGroupByTag mould: it fires no fetch, and refuses an activation that
+// would be a lie rather than flipping a flag nothing follows.
+//
+// A successful toggle says NOTHING. Two panels change width over the full
+// height of the screen — the user is looking straight at the answer, and a bar
+// reading "readme zoomed" only restates it, one line below where it happened.
+// That is the difference from toggleGroupByTag, which does report: reordering
+// one panel's rows and inserting headers is a subtler change, and its message
+// names which of two orderings you landed in. Here the only thing worth the
+// bar is the refusal, the one case where the screen does NOT answer — nothing
+// moved, and the reason has nowhere else to live.
+//
+// The refusal is the narrow terminal: below ~82 columns the minimum-clamp
+// cascade in panelWidthsFor produces the same triple for both variants, so the
+// keypress would change nothing on screen while the flag said otherwise. The
+// check compares the two states through the pure core — never a Model copy
+// with the flag flipped.
+//
+// It refuses the activation ONLY, exactly like toggleGroupByTag: a session
+// zoomed at 160 columns and then resized down to 80 must still be able to turn
+// zoom off, or the flag is stranded on and the layout comes back zoomed the
+// moment the terminal grows again.
+//
+// A zoom that does change widths changes helpWrapWidth (helpW stays ≥ 30, off
+// the floor), so applyLayout re-wraps [3] and an active j/k spotlight is lost.
+// That is what a width resize already does, and the cost is the same one too:
+// the README re-renders through glamour, since the width is part of
+// readmeRenderCache's key.
+func (m *Model) toggleZoom() tea.Cmd {
+	// Before the first WindowSizeMsg there is no layout to toggle: every width
+	// is zero and applyLayout would create the viewports off a garbage size.
+	// Explicit, not left to the clamps agreeing by coincidence.
+	if !m.ready {
+		return nil
+	}
+	if !m.helpZoom && widthTriple(m.panelWidthsFor(true)) == widthTriple(m.panelWidthsFor(false)) {
+		return m.setStatus("too narrow to zoom")
+	}
+	m.helpZoom = !m.helpZoom
+	m.applyLayout()
+	return nil
+}
+
+// widthTriple packs the three panel widths so two layout variants can be
+// compared in one expression.
+func widthTriple(toolsW, briefW, helpW int) [3]int {
+	return [3]int{toolsW, briefW, helpW}
+}
+
 // hasTaggedTool reports whether any tracked tool carries a tag — the condition
 // under which the tag view has anything to show.
 func (m Model) hasTaggedTool() bool {
@@ -2270,6 +2298,71 @@ func (m *Model) markReadmeLoading(name string) {
 		m.readmeLoading = make(map[string]bool)
 	}
 	m.readmeLoading[name] = true
+}
+
+// applyLayout is the single relayout definition: it owns everything the
+// WindowSizeMsg handler used to do after storing m.width/m.height, so the
+// handler is those two assignments plus this call and the z toggle reaches the
+// exact same code path. Two copies of this would drift, and the symptom would
+// be a panel that only re-wraps on one of the two triggers.
+//
+// The prevWrapW capture must stay ABOVE the width recompute: helpWrapWidth()
+// reads the STORED m.helpW, so capturing it after the assignment compares the
+// new width against itself, the guard below is always false, and [3] silently
+// keeps its pre-resize wrapping. Several resize tests hold that line besides
+// TestApplyLayoutRewrapsHelpOnWidthChange (TestHelpNavIdxResetTriggers/resize,
+// TestResizeHeightOnlyKeepsCursor, TestReadmeResizeRerenders all fail on the
+// mutation) — the comment is here because the failures name the spotlight and
+// the README, not the capture that actually moved.
+func (m *Model) applyLayout() {
+	prevWrapW := m.helpWrapWidth()
+	m.toolsW, m.briefW, m.helpW = m.calcPanelWidths()
+	vpH := m.calcListHeight()
+
+	if !m.ready {
+		m.initViewports(vpH)
+		m.setHelpContent()
+		m.ready = true
+	} else {
+		m.toolsViewport.Width = m.toolsW - 1
+		m.toolsViewport.Height = vpH
+		m.briefViewport.Width = m.briefW - 1
+		m.briefViewport.Height = vpH
+		m.helpViewport.Width = m.helpW - 1
+		m.helpViewport.Height = vpH
+		// Re-wrap and recompute the entry index (resetting the cursor —
+		// stale wrapped-line ranges would dim the wrong lines) only when
+		// the wrap width actually changed: a height-only resize (tmux bar
+		// toggle, vertical resize) leaves every entry range valid, so an
+		// active spotlight survives it.
+		if m.helpWrapWidth() != prevWrapW {
+			m.setHelpContent()
+		}
+	}
+	// Through setToolsContent, not a bare SetContent: a relayout repaints the
+	// list, so the line maps must be rebuilt with it or they would describe
+	// the pre-resize content (wrong scroll, out-of-range click mapping).
+	m.setToolsContent()
+	m.briefViewport.SetContent(m.renderCard())
+}
+
+// initViewports creates the three viewports on the first relayout — the
+// !m.ready arm of applyLayout, split out so that function reads as a sequence
+// of steps rather than as a branch with a construction block inside it.
+func (m *Model) initViewports(vpH int) {
+	// Viewports are 1 col narrower than their panel to leave a gutter
+	// for the scrollbar rendered by withScrollbar.
+	m.toolsViewport = viewport.New(m.toolsW-1, vpH)
+	m.briefViewport = viewport.New(m.briefW-1, vpH)
+	m.helpViewport = viewport.New(m.helpW-1, vpH)
+	// Zero the default pager keymap on all three viewports: every
+	// keyboard scroll binding lives explicitly in Update()'s switch, so
+	// the hidden defaults (d/u/f/b/space/h/l scrolling uncaught keys
+	// inconsistently) must never come back. Wheel scrolling rides
+	// MouseWheelEnabled — a separate field, still true — so it stays on.
+	m.toolsViewport.KeyMap = viewport.KeyMap{}
+	m.briefViewport.KeyMap = viewport.KeyMap{}
+	m.helpViewport.KeyMap = viewport.KeyMap{}
 }
 
 // helpWrapWidth is the single source of the help panel's inner wrap width.
