@@ -58,7 +58,7 @@ graph TD
 | `internal/logx` | Session error journal: errors only, one lazily created file per session, imports only the stdlib-only `configdir` leaf. Package-level state — any package can log without threading a logger through |
 | `internal/model` | The entire Bubble Tea model: TUI state, key handling, rendering |
 | `internal/proc` | `DetachTTY` — run probes without a controlling terminal; `KillGroup` — process-group SIGKILL (plain `Kill` on Windows) |
-| `internal/ui` | `Theme` — the app's ten semantic color roles — and `Styles`, the whole style set built from one theme by `NewStyles`; `PlaceOverlay`, `StripANSI` |
+| `internal/ui` | `Theme` — the app's ten semantic color roles — and `Styles`, the whole style set built from one theme by `NewStyles`; the two non-role palettes (`LanguageColor`, and `HeadingColors`/`ChromaColors` for panel `[3]`); `PlaceOverlay`, `StripANSI` |
 | `internal/updater` | Detect the package manager that owns an installed binary and produce an update `Plan{Manager, Argv, Display}` |
 | `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`) and the card's version spelling (`DisplayVersion`); keepkit's own release check (`SelfRepo`, `SelfLatest`) |
 
@@ -76,9 +76,9 @@ The `model` package is split across files within a single package:
 | `mode.go` | The `inputMode` enum and a handler per input mode |
 | `commands.go` | All `tea.Cmd` constructors (fetch commands, update streaming) and re-fetch predicates |
 | `render.go` | `View`, panel/card/status-bar/gauge/overlay renderers, mouse handling. The two list/card builders return their line index alongside the text: `buildCard` → clickable lines, `buildToolRows` → the tool-index ↔ screen-line maps. Carries the single-entry `changelogRenderCache` — the card is rebuilt on every spinner frame, so the release-notes conversion must not repeat |
-| `readme.go` | `renderReadme` — panel `[3]`'s pipeline: sanitize → preprocess → glamour, with a single-entry render cache |
+| `readme.go` | `renderReadme` — panel `[3]`'s pipeline: sanitize → preprocess → glamour, with a single-entry render cache; `chromaFormatterFor` maps the color profile onto chroma's formatter so a code fence's plate is not quantized away from the card's |
 | `readme_clean.go` | `cleanReadmeMarkdown(text, about)` — the pure README preprocessor. Fenced blocks and inline spans are segmented out first (code is never rewritten), then badges, hrefs, HTML and emoji are removed from what is left, and finally the leading H1 (plus a slogan under it that repeats `about`) is dropped as a title page the card already shows |
-| `readme_style.go` | `keepkitStyle(theme, dark)` — panel `[3]`'s glamour theme: the standard config cloned, its accents replaced from the `ui.Theme` it is handed |
+| `readme_style.go` | `keepkitStyle(theme, dark, width)` — panel `[3]`'s glamour theme: the standard config cloned, its *chrome* re-accented from the `ui.Theme` it is handed and its *typography* (heading ladder, fence accents) taken from `ui`'s fixed README palette; `width` sizes the full-width divider |
 | `textutil.go` | Pure text helpers (`wrapText`, `stripANSI`, `colorizeHelp`, `parseHelpEntries`, `markdownToLines` — the card's release-notes markdown → pre-wrapped tagged lines, …) |
 | `browser.go` | Opening URLs per `GOOS` |
 
@@ -229,8 +229,8 @@ Key invariants:
   it. The same rule governs the language band under it.
 - **The language stack is a picture; the fields below it are not.** A distribution
   gets `languages · ● go 99% · ● shell 1%` and a full-width band under it holding the
-  same shares in GitHub's own colors (`ui.LanguageColor`, the one palette a theme
-  switch must not repaint), closed by a blank row so the band reads as an edge rather
+  same shares in GitHub's own colors (`ui.LanguageColor`, one of the two palettes a
+  theme switch must not repaint), closed by a blank row so the band reads as an edge rather
   than an underline. `status`, `tags` and `note` share one wrapped line under
   it, broken between whole cells — a cell carries ANSI, so a cut inside one would emit
   a broken escape into a viewport that re-emits its content verbatim.
@@ -239,9 +239,16 @@ Key invariants:
   model carries the result in `m.styles`, read through `m.sty()`. No file below
   `internal/ui` carries a hex literal, and `ui.DefaultStyles()` exists only as the
   fallback for a `Model{}` literal — a renderer that reached for it directly would keep
-  painting the default palette after a theme switch. The one deliberate exception is
-  `ui.LanguageColor`: those are linguist's brand marks rather than keepkit's meanings,
-  so they live in the same package but outside `Theme` and never follow a switch.
+  painting the default palette after a theme switch. There are exactly **two**
+  deliberate exceptions, both in `internal/ui` but outside `Theme`, and they are
+  exceptions for different reasons. `ui.LanguageColor` holds linguist's brand marks
+  rather than keepkit's meanings, so keepkit has no standing to restyle them.
+  `ui.HeadingColors`/`ui.ChromaColors` (readme_palette.go) are keepkit's *own*
+  invented shades for panel `[3]`'s heading ladder and code-fence accents — a
+  contained break of "a role names a meaning, not a shade", taken because a heading
+  *level* is not a meaning `Theme` has a word for and six levels cannot be six roles.
+  Neither follows a theme switch, so `[3]`'s headings and fence accents stay put while
+  its body, links, quotes and inline code repaint.
 - **Card links are indexed, not parsed.** `buildCard()` returns the card text plus a
   `line → URL` map recorded while writing (line heights vary with wrapping), so a click
   on the title line (which carries the bare `owner/repo` beside the name, linked as the

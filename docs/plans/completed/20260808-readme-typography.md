@@ -122,7 +122,7 @@ Design decisions (brainstorm + review revisions, all user-approved):
 | H4 | `#8e936d`, bold, prefix `›› ` — shared |
 | H5 | `#a2ad59`, bold, prefix `››› ` — shared |
 | H6 | `Theme.Dim`, bold (explicit — stock `Bold:false` trap), prefix `›››› ` — **dark-only** (the file's rule: Theme tints beyond heading accents are dark-only; light keeps its stock H6, prefix still applied shared) |
-| Chroma tokens | Keyword / LiteralString / Comment / LiteralNumber / NameFunction from an own teal/olive var block; all other tokens inherited — dark-only like the existing repaint |
+| Chroma tokens | Keyword / LiteralString / Comment / LiteralNumber / NameFunction from an own teal/olive var block; all other tokens inherited — dark-only like the existing repaint. **Verified at Task 3: `Color` only — chroma resolves an unset token background up to the `Text` entry (its root), NOT to `Background`, so no per-token `BackgroundColor` is written. `Text.BackgroundColor` turns out to be what carries the whole plate.** |
 | Inline code | unchanged (`Text` on `Surface`, shared rule with the card changelog) |
 | List markers | **deliberate absence** — `Item.Color`/`Enumeration.Color` are no-ops in glamour v1.0.0; recorded as a code comment, no override shipped |
 | Task lists | `Ticked: "✓ "`, `Unticked: "☐ "` — shared |
@@ -131,9 +131,14 @@ Design decisions (brainstorm + review revisions, all user-approved):
 | Tables | **deliberate absence** — separators are lipgloss-drawn and uncolorable; `Table`'s style colors cell text; no header-only style exists; recorded as a code comment |
 | LinkText / Strong | unchanged (`Link` / `Emphasis`) |
 
-Known risk, accepted: `#08605f` is dark against the dark panel — the ladder reads
-"inverted" (H1 quietest). Judged at the vis step in **both variants**; reversing the
-ladder is a 5-line var edit and the user decides then.
+**Resolved at Task 6 (user decision): the ladder is REVERSED from the table above.**
+Measured on a dark background the five run 7.2 : 5.4 : 4.1 : 3.6 : 2.4, so the
+planned dark-to-bright order put H1 below the 3:1 bold-text floor and below the
+Dim role a caption uses. `ui.HeadingColors` now descends — H1 `#a2ad59`, H2
+`#8e936d`, H3 `#598381`, H4 `#177e89`, H5 `#08605f` — loud at the top. Accepted
+in exchange: on white the ends swap (H1 ~2.4), and on dark H5 (2.4) sits below
+H6's Dim (4.2), so the last two steps read as one. `TestHeadingColorsDescend`
+pins the direction, since reordering breaks no other test.
 
 ## Technical Details
 
@@ -172,15 +177,15 @@ ladder is a 5-line var edit and the user decides then.
 - Create: `internal/ui/readme_palette.go`
 - Create: `internal/ui/readme_palette_test.go`
 
-- [ ] create `readme_palette.go` with `HeadingColors [5]lipgloss.Color`
+- [x] create `readme_palette.go` with `HeadingColors [5]lipgloss.Color`
       (`#08605f #177e89 #598381 #8e936d #a2ad59`) and `ChromaColors` (five teal/olive
       token colors picked to sit against `Surface`)
-- [ ] doc comment per Technical Details: non-role palette, the *difference* from
+- [x] doc comment per Technical Details: non-role palette, the *difference* from
       `LanguageColor`, theme-switch consequence, edit contract
-- [ ] write tests: every entry parses as `#RRGGBB` (guards a typo'd hex lipgloss would
+- [x] write tests: every entry parses as `#RRGGBB` (guards a typo'd hex lipgloss would
       swallow), array length pinned at 5 — note: only the length pin is
       mutation-checkable; the hex-shape assertion is a smoke guard, not a mutant killer
-- [ ] run tests — must pass before task 2
+- [x] run tests — must pass before task 2
 
 ### Task 2: Per-level heading colors, depth markers, width parameter
 
@@ -189,31 +194,31 @@ ladder is a 5-line var edit and the user decides then.
 - Modify: `internal/model/readme.go`
 - Modify: `internal/model/readme_style_test.go`
 
-- [ ] add `width int` to `keepkitStyle`; thread through `renderReadme` (pass the
+- [x] add `width int` to `keepkitStyle`; thread through `renderReadme` (pass the
       **clamped** width local) and every existing call site in tests; no Format use yet
-- [ ] renderer-confirmation: re-verify per-level heading color + prefix rendering once
+- [x] renderer-confirmation: re-verify per-level heading color + prefix rendering once
       via a `forceColorProfile` render (review already confirmed child-wins cascade and
       prefix styling; this is the rule being followed, cheap here)
-- [ ] shared section: H1–H5 colors from `ui.HeadingColors` + `Bold` via `ptrTo`;
+- [x] shared section: H1–H5 colors from `ui.HeadingColors` + `Bold` via `ptrTo`;
       **keep the explicit `H1.Prefix = ""` and `H2.Prefix = ""`** (cascade only
       overrides a non-empty child prefix — losing these silently brings `# `/`## ` back);
       H3–H5 prefixes `"› "`/`"›› "`/`"››› "`; H6 prefix `"›››› "` shared
-- [ ] dark branch: `H6.Color = Theme.Dim` **and `H6.Bold = ptrTo(true)`** (stock dark H6
+- [x] dark branch: `H6.Color = Theme.Dim` **and `H6.Bold = ptrTo(true)`** (stock dark H6
       carries an explicit `Bold: false` that beats inheritance); drop the now-redundant
       dark-branch `Heading`/`H6` *color* overrides only where the per-level colors
       replace them
-- [ ] update the named breaking tests rather than deleting them:
+- [x] update the named breaking tests rather than deleting them:
       `TestKeepkitStyleOverrides` (pins H1 Accent / H2 Emphasis → now palette),
       `TestKeepkitStyleDarkOnlyOverrides` (pins dark Heading/H6 Text → new shape)
-- [ ] write struct tests: each level's Color/Bold/Prefix pinned, **including
+- [x] write struct tests: each level's Color/Bold/Prefix pinned, **including
       `H1.Prefix == ""` / `H2.Prefix == ""` and `H6.Bold == true`**; H6 color dark-only
-- [ ] rewrite `keepkitStyle`'s doc comment: the theme-switch claim ("same one-value
+- [x] rewrite `keepkitStyle`'s doc comment: the theme-switch claim ("same one-value
       theme switch") now holds for body/links/quotes/inline code only — say so here, in
       the task that makes it true
-- [ ] add `›` to the glyph-width test (both runewidth conditions, Ambiguous accepted)
-- [ ] mutation-check each assertion (delete one level's override → red);
+- [x] add `›` to the glyph-width test (both runewidth conditions, Ambiguous accepted)
+- [x] mutation-check each assertion (delete one level's override → red);
       `TestKeepkitStyleLeavesGlobalsUntouched` stays green
-- [ ] run tests — must pass before task 3
+- [x] run tests — must pass before task 3
 
 ### Task 3: Own chroma token palette for code blocks
 
@@ -221,22 +226,22 @@ ladder is a 5-line var edit and the user decides then.
 - Modify: `internal/model/readme_style.go`
 - Modify: `internal/model/readme_style_test.go`
 
-- [ ] renderer-confirmation: verify chroma token entries are read for a Go + shell fence
+- [x] renderer-confirmation: verify chroma token entries are read for a Go + shell fence
       (one-off render), and whether the explicit per-token `BackgroundColor` is
       load-bearing or inherited from the `Background` entry — write the comment from
       what is observed, not from the plan
-- [ ] extend the bounded repaint (dark branch): `Keyword`, `LiteralString`, `Comment`,
+- [x] extend the bounded repaint (dark branch): `Keyword`, `LiteralString`, `Comment`,
       `LiteralNumber`, `NameFunction` take `ui.ChromaColors` (+ `Surface` background per
       the verification above); the fresh-pointer clone stays
-- [ ] **narrow, do not delete, the `reflect.DeepEqual` boundedness guard** in
+- [x] **narrow, do not delete, the `reflect.DeepEqual` boundedness guard** in
       `TestKeepkitStyleRepaintsChroma`: zero out the now-owned seven entries
       (Background, Text + the five) and assert everything else is inherited verbatim;
       rewrite its comment — the repaint is no longer "bounded to two entries", it is
       bounded to a named seven
-- [ ] write struct tests: the five entries carry the palette colors; an untouched token
+- [x] write struct tests: the five entries carry the palette colors; an untouched token
       (e.g. `Operator`) still aliases the standard value
-- [ ] mutation-check each new assertion; globals-untouched snapshot stays green
-- [ ] run tests — must pass before task 4
+- [x] mutation-check each new assertion; globals-untouched snapshot stays green
+- [x] run tests — must pass before task 4
 
 ### Task 4: Task checkboxes, blockquote italic, recorded absences
 
@@ -244,18 +249,18 @@ ladder is a 5-line var edit and the user decides then.
 - Modify: `internal/model/readme_style.go`
 - Modify: `internal/model/readme_style_test.go`
 
-- [ ] shared: `Task.Ticked = "✓ "`, `Task.Unticked = "☐ "` (renderer-confirmed by the
+- [x] shared: `Task.Ticked = "✓ "`, `Task.Unticked = "☐ "` (renderer-confirmed by the
       review; note the confirmation source in the comment)
-- [ ] dark branch: `BlockQuote.Italic = ptrTo(true)` (color stays `Dim`);
+- [x] dark branch: `BlockQuote.Italic = ptrTo(true)` (color stays `Dim`);
       renderer-confirm italic is applied before writing the test
-- [ ] record the two deliberate absences as one code comment block on `keepkitStyle`:
+- [x] record the two deliberate absences as one code comment block on `keepkitStyle`:
       list markers (`Item.Color`/`Enumeration.Color` are no-ops — BaseElement renders
       BlockPrefix with the enclosing block's style) and tables (separators are
       lipgloss-drawn with no color call; `Table`'s style colors cell content; no
       header-only style)
-- [ ] add `☐` to the glyph-width test
-- [ ] write struct tests for Ticked/Unticked and Italic; mutation-check
-- [ ] run tests — must pass before task 5
+- [x] add `☐` to the glyph-width test
+- [x] write struct tests for Ticked/Unticked and Italic; mutation-check
+- [x] run tests — must pass before task 5
 
 ### Task 5: Full-width divider
 
@@ -263,52 +268,52 @@ ladder is a 5-line var edit and the user decides then.
 - Modify: `internal/model/readme_style.go`
 - Modify: `internal/model/readme_style_test.go`
 
-- [ ] shared section: `HorizontalRule.Format = "\n" + strings.Repeat("─", width) + "\n"`
+- [x] shared section: `HorizontalRule.Format = "\n" + strings.Repeat("─", width) + "\n"`
       guarded on `width > 0` (width <= 0 keeps stock); color stays `Border` dark-only
-- [ ] record the accepted caveat comment: a `---` nested under an indent overflows
+- [x] record the accepted caveat comment: a `---` nested under an indent overflows
       rather than breaks (no breakpoints in the run)
-- [ ] rewrite the stale half-sentence in the "deliberately missing" paragraph of
+- [x] rewrite the stale half-sentence in the "deliberately missing" paragraph of
       `keepkitStyle`'s doc comment — "`HorizontalRule` is a fixed string" stops being
       true here; the injection objection (faking a heading rule needs a `---` the author
       never wrote) still stands and remains the recorded reason
-- [ ] write struct tests: Format length equals width at two widths; width=0 falls back
-- [ ] mutation-check; run tests — must pass before task 6
+- [x] write struct tests: Format length equals width at two widths; width=0 falls back
+- [x] mutation-check; run tests — must pass before task 6
 
 ### Task 6: Visual check at 80/120 columns, both variants, ladder verdict
 
 **Files:**
 - Create (throwaway): `internal/model/zz_vis_test.go` — deleted in this same task
 
-- [ ] render a fixture README (headings H1–H6, go + shell fences, nested/ordered/task
+- [x] render a fixture README (headings H1–H6, go + shell fences, nested/ordered/task
       lists, a quote, `---`, a table) through `renderReadme` at 80 and 120 columns,
       **dark and light**; read the output
-- [ ] judge the `#08605f` contrast on dark and the `#a2ad59`/`#8e936d` contrast on
+- [x] judge the `#08605f` contrast on dark and the `#a2ad59`/`#8e936d` contrast on
       light; if the inverted ladder reads wrong, show the user both orders and let them
       pick (5-line var edit either way)
-- [ ] confirm the divider spans the wrap width, the fence plate has no punch-throughs
+- [x] confirm the divider spans the wrap width, the fence plate has no punch-throughs
       around recolored tokens, checkboxes and depth markers align
-- [ ] delete `zz_vis_test.go`
-- [ ] run the full suite: `go test -race ./...`
+- [x] delete `zz_vis_test.go`
+- [x] run the full suite: `go test -race ./...`
 
 ### Task 7: Verify acceptance criteria
 
-- [ ] every element of the Solution Overview table is implemented or carries its
+- [x] every element of the Solution Overview table is implemented or carries its
       recorded deliberate-absence comment (list markers, tables)
-- [ ] every new assertion has survived its mutation check (Task 1's hex-shape smoke
+- [x] every new assertion has survived its mutation check (Task 1's hex-shape smoke
       guard exempted, as recorded there)
-- [ ] `go vet ./...` and `golangci-lint run` clean
-- [ ] full suite green: `go test -race ./...`
+- [x] `go vet ./...` and `golangci-lint run` clean
+- [x] full suite green: `go test -race ./...`
 
 ### Task 8: [Final] Update documentation
 
-- [ ] `docs/design/readme-pipeline.md`: rewrite the `keepkitStyle` section — the heading
+- [x] `docs/design/readme-pipeline.md`: rewrite the `keepkitStyle` section — the heading
       ladder and its palette, the chroma palette, the width parameter, the divider, the
       theme-switch contract change, the two deliberate absences; keep the existing
       rationale style (what broke / why this shape)
-- [ ] `CLAUDE.md`: `internal/ui` package row mentions the second non-role palette beside
+- [x] `CLAUDE.md`: `internal/ui` package row mentions the second non-role palette beside
       `LanguageColor`; the readme_style summary line follows the new shape (run
       docs-sync)
-- [ ] move this plan to `docs/plans/completed/`
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 
