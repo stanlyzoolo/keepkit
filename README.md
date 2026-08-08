@@ -139,7 +139,10 @@ Run `keepkit` — a three-panel interface opens:
   before rendering — badges, logos, HTML and pictographic emoji go, link text stays
   without its URL, the title (and a slogan under it that only repeats the card's own)
   is dropped so the panel opens on the first sentence that says something new, and
-  code blocks are untouched. While an update runs, this panel shows its live log
+  code blocks are untouched. `z` widens this panel at the card's expense and back —
+  from `[2]` or `[3]`, the same two focuses `R`/`H`/`M` fire from, since it is another
+  key that changes what this panel is; on a terminal too narrow for the split to move
+  it says so instead. While an update runs, this panel shows its live log
   instead, and keeps it afterwards under a line saying how the update ended.
 
 Focus moves with `←` / `→` or the digits `1` / `2` / `3` (each panel's number is in

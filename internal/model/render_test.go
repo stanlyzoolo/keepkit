@@ -4775,6 +4775,7 @@ func TestStatusBarNeverWraps(t *testing.T) {
 		updating  bool
 		knownRate bool
 		rejected  bool
+		statusMsg string
 		width     int
 	}{
 		// The rejection marker costs the gauge a column, and the bar is measured
@@ -4812,6 +4813,15 @@ func TestStatusBarNeverWraps(t *testing.T) {
 		// feature's only visible surface for the rest of the session, so it drops
 		// hint cells rather than itself.
 		{name: "self dismissed cell at 80 cols", focus: focusTools, helpMode: helpModeHelp, self: selfDismissed, knownRate: true, width: 80},
+		// A transient status outranks the hints bar and is rendered whole —
+		// renderStatusBar's statusMsg branch does not truncate, so an over-long
+		// message wraps the bar. The zoom refusal is the one whose trigger IS a
+		// narrow terminal, so it is swept down to where the panels give up.
+		{name: "zoom refusal at 80 cols", focus: focusBrief, helpMode: helpModeReadme, statusMsg: "too narrow to zoom"},
+		{name: "zoom refusal at 40 cols", focus: focusBrief, helpMode: helpModeReadme, statusMsg: "too narrow to zoom", width: 40},
+		{name: "zoom refusal at 24 cols", focus: focusHelp, helpMode: helpModeReadme, statusMsg: "too narrow to zoom", width: 24},
+		{name: "zoom status at 80 cols", focus: focusHelp, helpMode: helpModeReadme, statusMsg: "readme zoomed", knownRate: true},
+		{name: "zoom status restored at 80 cols", focus: focusBrief, helpMode: helpModeReadme, statusMsg: "layout restored", knownRate: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -4851,6 +4861,7 @@ func TestStatusBarNeverWraps(t *testing.T) {
 			if tc.rejected {
 				defer armRejectedToken(t)()
 			}
+			m.statusMsg = tc.statusMsg
 
 			if got := lipgloss.Height(m.renderStatusBar()); got != 3 {
 				t.Errorf("status bar height = %d, want 3 (border + one hint line)", got)
@@ -5608,5 +5619,59 @@ func TestFitCells(t *testing.T) {
 	}
 	if got := fitCells(nil, " · ", 20, 0); got != "" {
 		t.Errorf("fitCells(nil) = %q, want empty", got)
+	}
+}
+
+// TestPanelWidthsForZoom pins both layout variants against one model: the
+// unzoomed triple is today's 20/46/34 arithmetic byte for byte (acceptance
+// criterion 3 lives on this row), and the zoomed one moves 16 points from [2]
+// to [3] without touching [1]. The narrow rows are the other half of the
+// feature: below ~82 columns the minimum-clamp cascade eats the whole
+// difference, which is the state toggleZoom refuses on rather than flipping a
+// flag that changes nothing.
+func TestPanelWidthsForZoom(t *testing.T) {
+	tests := []struct {
+		name                           string
+		width                          int
+		zoom                           bool
+		wantTools, wantBrief, wantHelp int
+	}{
+		{"wide flat", 160, false, 30, 70, 54},
+		{"wide zoomed", 160, true, 30, 46, 78},
+		{"baseline flat", 80, false, 14, 30, 30},
+		{"baseline zoomed", 80, true, 14, 30, 30},
+		{"81 still clamped flat", 81, false, 15, 30, 30},
+		{"81 still clamped zoomed", 81, true, 15, 30, 30},
+		{"82 is where they first diverge, flat", 82, false, 15, 31, 30},
+		{"82 is where they first diverge, zoomed", 82, true, 15, 30, 31},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{width: tt.width, height: 24}
+			toolsW, briefW, helpW := m.panelWidthsFor(tt.zoom)
+			if toolsW != tt.wantTools || briefW != tt.wantBrief || helpW != tt.wantHelp {
+				t.Errorf("panelWidthsFor(%v) at width %d = (%d,%d,%d), want (%d,%d,%d)",
+					tt.zoom, tt.width, toolsW, briefW, helpW,
+					tt.wantTools, tt.wantBrief, tt.wantHelp)
+			}
+		})
+	}
+
+	// The zoomed layout gives [3] the majority of the available columns — the
+	// whole point of the toggle, stated independently of the exact numbers.
+	m := Model{width: 160, height: 24}
+	toolsW, briefW, helpW := m.panelWidthsFor(true)
+	if helpW <= toolsW+briefW {
+		t.Errorf("zoomed helpW=%d is not the majority of %d", helpW, toolsW+briefW+helpW)
+	}
+
+	// calcPanelWidths is the wrapper: it must read the flag, not a constant.
+	flat := Model{width: 160, height: 24}
+	zoomed := Model{width: 160, height: 24, helpZoom: true}
+	if got, want := widthTriple(flat.calcPanelWidths()), widthTriple(flat.panelWidthsFor(false)); got != want {
+		t.Errorf("calcPanelWidths with helpZoom=false = %v, want %v", got, want)
+	}
+	if got, want := widthTriple(zoomed.calcPanelWidths()), widthTriple(zoomed.panelWidthsFor(true)); got != want {
+		t.Errorf("calcPanelWidths with helpZoom=true = %v, want %v", got, want)
 	}
 }

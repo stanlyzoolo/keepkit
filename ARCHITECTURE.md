@@ -185,7 +185,9 @@ Three panels with cycling focus: `[1] tools` (the list), `[2] brief` (the card),
 `[3] readme` (the README/`--help`/`man`/update-log view, switched by `R`/`H`/`M` —
 capitals as a set, so none of them collides with `r` refresh or the lowercase tracker
 verbs, and all three fire from `[2]` as well as `[3]`; `m.helpMode` is global, not per
-tool, and defaults to the README). Focus moves with `→`/`←`, the digits
+tool, and defaults to the README). `z` shares that gate as the fourth key that changes
+what `[3]` is, but it changes the panel's *width* rather than its source, so it moves
+no focus and fetches nothing (see the layout invariant below). Focus moves with `→`/`←`, the digits
 `1`/`2`/`3`, or a mouse click; everything goes through `setFocus(f)`, which repaints
 the tools list — the only viewport whose content depends on focus.
 
@@ -276,8 +278,22 @@ Key invariants:
   `[3]` is *all* content: `cardWidth()` and `helpWrapWidth()` are the single definitions
   of the two budgets, and `indentLines` applies the indent last, to whole finished
   lines, so it can never split an escape sequence or shift a card link's row.
-  `calcListHeight()` is the single definition both the `WindowSizeMsg` handler
-  and the renderers use, so a drift there cannot push the status bar off screen.
+  `calcListHeight()` is the single definition both `applyLayout` and the
+  renderers use, so a drift there cannot push the status bar off screen.
+- **One width core, one relayout.** `panelWidthsFor(zoom bool)` produces the panel
+  widths — 20/46/34 normally, 20/30/50 under the `z` toggle — and `calcPanelWidths()`
+  is the wrapper reading the session-only `m.helpZoom` view flag. Parameterizing the
+  core (rather than copying a `Model` with the flag flipped) is what lets `toggleZoom`
+  compare the two states: below ~82 columns the 15/30/30 minimum clamps make them
+  identical, and the toggle then reports `too narrow to zoom` instead of flipping a
+  flag nothing follows. That refusal gates **activation only**, like
+  `toggleGroupByTag`'s — a session zoomed wide and then resized narrow must still be
+  able to turn zoom off, or the flag is stranded on and the layout returns zoomed the
+  moment the terminal grows. `applyLayout()` is the single relayout definition — the
+  `WindowSizeMsg` handler is two assignments plus that call, so the resize path and the
+  toggle cannot drift. Its one sharp edge: `prevWrapW` is captured from the *stored*
+  `m.helpW`, so the capture must sit above the width recompute or the re-wrap guard is
+  always false and `[3]` keeps stale wrapping.
 - **A click's X picks the panel, `panelRow` decides whether it is on one at all.**
   The outer margin, the borders and the status bars share the panels' columns; with a
   scrolled viewport an unbounded row would map that chrome onto a list row or a card
