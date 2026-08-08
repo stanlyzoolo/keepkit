@@ -1037,8 +1037,15 @@ func TestVersionMsgsEmptyListNoPanic(t *testing.T) {
 // the removed ▎ status edge was in the same class, so the change is not a
 // regression. A bare lipgloss.Width==1 check cannot detect the ambiguity, so the
 // test measures both conditions explicitly.
+//
+// › (U+203A, panel [3]'s heading depth marker) and ☐ (U+2610, an unticked task
+// list item) join them as DOCUMENTATION rather than as coverage: both travel
+// through glamour's own wrap, which this test does not exercise, so the pin
+// records the assumption their placement was made under — the accepted
+// Ambiguous class, where an over-wide measurement can only wrap a line early
+// and never overflow a fixed-width block.
 func TestMarkerGlyphWidth(t *testing.T) {
-	for _, r := range []rune{'⏺', '↑'} {
+	for _, r := range []rune{'⏺', '↑', '›', '☐'} {
 		def := runewidth.Condition{EastAsianWidth: false}
 		if w := def.RuneWidth(r); w != 1 {
 			t.Errorf("RuneWidth(%q) default = %d, want 1", r, w)

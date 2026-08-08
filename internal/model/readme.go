@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/stanlyzoolo/keepkit/internal/ui"
 )
@@ -19,6 +20,42 @@ const readmeMinWrap = 20
 // makes glamour.NewTermRenderer fail, which is how the fallback path is
 // exercised.
 var testReadmeStyle string
+
+// chromaFormatterFor maps lipgloss's resolved color profile onto the chroma
+// formatter glamour should hand a code fence, following the profile the same
+// way WithColorProfile already does — one decision about the terminal's
+// capability, applied to both render paths instead of one.
+//
+// glamour's own default is "terminal256" for every profile, which quantizes the
+// fence's plate into the 256-color cube: Theme.Surface #343945 lands on index
+// 237 (#3a3a3a), a flat gray that has lost the blue cast. That put the SAME
+// plate on screen in two different colors — the card's changelog code line and
+// panel [3]'s inline code both render through lipgloss/termenv at the exact
+// value, while only the fence beside them was off. "terminal16m" emits the hex
+// verbatim and the three agree.
+//
+// It is a mapping rather than a constant because forcing truecolor on a
+// terminal that cannot take it is the same bug one layer down: an ANSI-only
+// session would be sent 24-bit sequences it renders as garbage. Ascii never
+// reaches chroma at all (glamour gates the whole path on
+// ColorProfile != Ascii), so its arm only has to be harmless.
+//
+// Pure, so both branches are table-testable — the shellCommand/planFor idiom;
+// the thin wrapper is the lipgloss.ColorProfile() call in renderReadme.
+func chromaFormatterFor(p termenv.Profile) string {
+	switch p {
+	case termenv.TrueColor:
+		return "terminal16m"
+	case termenv.ANSI256:
+		return "terminal256"
+	case termenv.ANSI:
+		return "terminal16"
+	case termenv.Ascii:
+		return "terminal256"
+	default:
+		return "terminal256"
+	}
+}
 
 // renderReadme turns raw README markdown into the ANSI text panel [3] shows,
 // in two layers. First the text is sanitized with cleanTerminalOutput — a
@@ -42,7 +79,10 @@ func renderReadme(raw string, width int, dark bool, t ui.Theme, about string) st
 	if width < readmeMinWrap {
 		width = readmeMinWrap
 	}
-	style := glamour.WithStyles(keepkitStyle(t, dark))
+	// keepkitStyle takes the CLAMPED width, the same number WithWordWrap gets
+	// below: it sizes the full-width divider, and a divider measured against
+	// the caller's raw request would overrun the panel on a narrow terminal.
+	style := glamour.WithStyles(keepkitStyle(t, dark, width))
 	if testReadmeStyle != "" {
 		style = glamour.WithStandardStyle(testReadmeStyle)
 	}
@@ -53,6 +93,11 @@ func renderReadme(raw string, width int, dark bool, t ui.Theme, about string) st
 		// lipgloss instead so a degraded profile (NO_COLOR, dumb term) yields
 		// plain text like every other panel.
 		glamour.WithColorProfile(lipgloss.ColorProfile()),
+		// A code fence renders through chroma, which has its own formatter and
+		// glamour's own default for it ("terminal256") ignores the profile
+		// above — so the fence quantized its plate while the inline code beside
+		// it did not. One capability answer, both paths.
+		glamour.WithChromaFormatter(chromaFormatterFor(lipgloss.ColorProfile())),
 		// A table link renders in its cell rather than as a numbered footnote
 		// under the table. The preprocessor already unwrapped the inline form;
 		// this covers an autolink that survived into a cell.
