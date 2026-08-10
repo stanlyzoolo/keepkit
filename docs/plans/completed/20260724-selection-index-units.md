@@ -52,3 +52,22 @@ Fix: capture `YOffset` (or resolve the row) before the `setFocus` call.
 
 `go test -race ./...`, plus a regression test per item — the click and paging cases are
 cheap to pin with the `pagingModel` helper added in `internal/model/group_test.go`.
+
+## Outcome (2026-08-10)
+
+Items 1-3 landed and are in `main`:
+
+- **1** — both handlers go through `m.indexOfMeta(name)` (`internal/model/mode.go:196`,
+  `:304`), with the reason stated in a comment at the first site.
+- **2** — `trackTool` carries `Note`, `Tags`, `UpdateCmd`, `Added` and a ref-less
+  input's `GitHub` forward from the existing entry; the status reset to `trying` is
+  the one deliberate change.
+- **3** — `buildToolRows` truncates instead of wrapping
+  (`truncateToWidth(flattenLine(mt.Name), nameBudget)`, `internal/model/render.go:1225`).
+
+**Item 4 is closed unfixed, by the owner's call.** `handleMouse` still reads
+`m.toolsViewport.YOffset` after `setFocus(focusTools)` has re-clamped it
+(`internal/model/render.go:2230-2235`), so a click that follows a wheel scroll from
+another panel can select a neighbouring tool. It is not tracked anywhere else — if it
+starts to bite, this section is the record of what it is and where the fix goes
+(capture the offset, or resolve the row, before the `setFocus` call).
