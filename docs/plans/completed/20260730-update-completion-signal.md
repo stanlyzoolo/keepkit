@@ -291,9 +291,10 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
 - [x] mutation-check every assertion added in tasks 1-7: revert the production
       edit, confirm red, restore — colors and title words especially, that class
       of mutant survived the PR #48 review
-- [ ] ⚠️ `go run .` against a tracked tool with a pending update — **left for the
-      user**: it installs a real package on the machine, so it is not something to
-      trigger unprompted, and a TUI needs a TTY this session does not have
+- ⚠️ **never run, and deliberately so**: `go run .` against a tracked tool with a
+      pending update installs a real package on the machine, so it is not something
+      to trigger unprompted, and a TUI needs a TTY the session did not have. Left to
+      the user — see *Post-Completion* below for what a live run would still add.
 - [x] run the full matrix via the `preflight` skill
 
 ### Task 9: [Final] Update documentation
@@ -310,11 +311,13 @@ decorative class, with `✓ present` / `✕ missing` in the metrics strip and
       was still documented as `[3] Update`, capitalised, from before titles went
       lowercase) and `ARCHITECTURE.md`'s `showsUpdateLog` site list, both found by
       docs-sync rather than by the manual pass
-- [ ] move this plan to `docs/plans/completed/` (after the live run and the merge)
+- [x] move this plan to `docs/plans/completed/` — done 2026-08-10, after the merge
+      and without the live run (see Task 8)
 
 ## Post-Completion
 
-**Manual verification**
+**Manual verification** — none of it was performed; it stays here as the record of
+what a live run would still confirm.
 - The failure path is worth one real run (`chmod -w` on the brew prefix, or an
   `update_cmd` pointing at a missing binary) to see the reason line wrap inside
   27 cells.
