@@ -204,10 +204,26 @@
 
 ### Task 7: Verify acceptance criteria
 
-- [ ] verify all requirements from Overview: prompt kept, overlay launch, full keyboard proxy while alive, `ctrl+\` kill, esc-after-exit close, reserved exit line, cursor rendered, CLI-and-TUI single path, tab path fully gone
-- [ ] verify edge cases: empty list, empty input cancel, launch during a running update, resize during session, tiny-terminal and `!m.ready` refusals, not-installed tool shows 127 in overlay, keys before `termStartedMsg` are safe
-- [ ] run full test suite: `go test -race ./...`
-- [ ] run `go vet ./...`, `golangci-lint run`, `GOOS=windows go build ./...`, `GOOS=darwin go build ./...`
+- [x] verify all requirements from Overview: prompt kept, overlay launch, full keyboard proxy while alive, `ctrl+\` kill, esc-after-exit close, reserved exit line, cursor rendered, CLI-and-TUI single path, tab path fully gone
+
+| Requirement | Pinned by |
+|---|---|
+| prompt kept, prefilled | `TestRunInputPrefill`, `TestRunInputEnterOpensOverlay` |
+| launches into the overlay | `TestRunInputEnterOpensOverlay`, `TestRunInputEnterStoresLastRun` |
+| every key reaches the tool | `TestToolOverlayForwardsEveryKeyWhileRunning` (19 rows, exact bytes), `TestToolOverlayEscDoesNotCloseWhileRunning`, `TestToolOverlayCtrlCDoesNotQuit` |
+| `ctrl+\` kills | `TestToolOverlayKillChord` |
+| esc closes after exit | `TestToolOverlayAfterExit`, `TestToolOverlayCloseDispatchesNothing` |
+| exit row reserved | `TestToolOverlayExitRowBlankWhileRunning`, `TestToolOverlayBlockDoesNotMoveAtExit` |
+| cursor rendered | `TestToolOverlayCursor` |
+| one path for CLI and TUI | `TestToolOverlayEndToEndWithRealPty` (CLI), `TestSessionOutputRendersInEmulator` |
+| tab path gone | `internal/launcher` deleted; no reference survives outside prose |
+
+- [x] verify edge cases: empty list, empty input cancel, launch during a running update, resize during session, tiny-terminal and `!m.ready` refusals, not-installed tool shows 127 in overlay, keys before `termStartedMsg` are safe
+  - `TestRunInputEmptyList`, `TestRunInputCancels`, `TestRunDuringUpdate`, `TestToolOverlayResize` + `TestToolOverlayResizeBelowMinimumClamps`, `TestRunInputRefusesOnTinyTerminal` + `TestTermGeometryNotReady`, `TestSessionNotInstalledToolExits127`, `TestToolOverlayKeysBeforeStart`.
+- [x] run full test suite: `go test -race ./...`
+  - ➕ **one coverage gap was real and is now closed**: every overlay test drove a *fake* session, so nothing would have noticed if `waitForTermChunkCmd` and `term.Session` disagreed about their own channel. `TestToolOverlayEndToEndWithRealPty` runs start → adopt → drain → render → exit against a real pty (a `printf`, unix-only), pumping the command chain the way the tea runtime does. It deliberately does **not** execute the run-prompt's returned cmd, which stays untested by design.
+- [x] run `go vet ./...`, `golangci-lint run`, `GOOS=windows go build ./...`, `GOOS=darwin go build ./...`
+  - all green, plus `GOOS=windows go vet ./...`. 473 tests pass in `internal/model` + `internal/term`.
 
 ### Task 8: [Final] Update documentation
 

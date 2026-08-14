@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -943,6 +944,74 @@ func exitErrorWithCode(t *testing.T, code int) error {
 		t.Fatalf("sh -c 'exit %d' returned %v, want an *exec.ExitError", code, err)
 	}
 	return ee
+}
+
+// The whole loop against a *real* pty, once: start → adopt → drain → render →
+// exit. Every other overlay test drives a fake session, which is what makes
+// them fast and deterministic but also means none of them would notice if
+// waitForTermChunkCmd and term.Session disagreed about their own channel.
+//
+// Deliberately not the run-prompt's returned cmd — that stays untested by
+// design — and deliberately a printf rather than anything interactive: this
+// asserts the wiring, not the tools.
+func TestToolOverlayEndToEndWithRealPty(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ConPTY is not exercised by CI; see the plan's manual verification")
+	}
+
+	m := newTestModel(focusTools)
+	m = mustModel(m.Update(tea.WindowSizeMsg{Width: 120, Height: 34}))
+	m.mode = modeToolOverlay
+	m.termToolName = "printer"
+	m.termW, m.termH, _ = m.termGeometry()
+
+	shell, args := shellCommand(runtime.GOOS, "printf 'real pty output'")
+	msg := startTermCmd(shell, args, m.termW, m.termH)()
+
+	started, ok := msg.(termStartedMsg)
+	if !ok {
+		t.Fatalf("startTermCmd returned %T (%+v), want termStartedMsg", msg, msg)
+	}
+	m = mustModel(m.Update(started))
+	t.Cleanup(func() { m.closeToolOverlay() })
+
+	// Pump the chain to its end, exactly as the tea runtime would.
+	cmd := waitForTermChunkCmd(m.termSession)
+	var exit *termExitMsg
+	for range 50 {
+		next := cmd()
+		if next == nil {
+			t.Fatal("the command chain produced a nil message")
+		}
+		updated, follow := m.Update(next)
+		m = updated.(Model)
+		if m.termExit != nil {
+			exit = m.termExit
+			break
+		}
+		if follow == nil {
+			t.Fatal("the chain stopped before the exit arrived")
+		}
+		cmd = follow
+	}
+
+	if exit == nil {
+		t.Fatal("no exit after 50 messages")
+	}
+	if exit.err != nil {
+		t.Errorf("exit.err = %v, want nil for a clean printf", exit.err)
+	}
+	if exit.elapsed <= 0 {
+		t.Errorf("exit.elapsed = %v, want > 0", exit.elapsed)
+	}
+	if got := m.termEmu.Render(); !strings.Contains(got, "real pty output") {
+		t.Errorf("the tool's output never reached the emulator: %q", got)
+	}
+	// and the frame the user actually sees carries it plus the way out
+	view := stripANSI(m.renderToolOverlay())
+	if !strings.Contains(view, "real pty output") || !strings.Contains(view, "esc close") {
+		t.Errorf("the rendered overlay is missing the output or the exit row:\n%s", view)
+	}
 }
 
 var _ tea.Model = Model{}
