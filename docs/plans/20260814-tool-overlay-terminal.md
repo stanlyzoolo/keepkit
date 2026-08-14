@@ -195,11 +195,12 @@
 - Modify: `internal/model/render.go`
 - Modify: `internal/model/render_test.go`
 
-- [ ] `[?]` overlay tools group: the row is `{"enter", "run in a tab"}` (`render.go:797`) → `run in overlay`; that is +2 visible cells against the hard ≤76-col framed budget — measure after the change, and if `TestRenderHotkeysSizeBudget` breaks, shorten to `run overlay` rather than dropping a row
-- [ ] verify no status-bar or footer branch references the deleted launch statuses; `[1]` footer `enter run` and the `modeRunInput` bar branch stay as-is
-- [ ] sweep rendered-surface tests: hotkeys budget across all five self states, footer cells, status bar at the 80×24 baseline stay green with the new wording
-- [ ] write/adjust tests for the changed `[?]` row
-- [ ] run the full gate (build + vet + `go test -race ./...` + lint) - must pass before task 7
+- [x] `[?]` overlay tools group: the row is `{"enter", "run in a tab"}` (`render.go:797`) → `run in overlay`; that is +2 visible cells against the hard ≤76-col framed budget — measure after the change, and if `TestRenderHotkeysSizeBudget` breaks, shorten to `run overlay` rather than dropping a row
+  - measured after the change: **64×20 in all five self states** against the 76×20 budget. The width worry was unfounded — the overlay is 12 columns inside its ceiling; it is the *height* that sits exactly at 20, which is what the plan's "a new binding needs a row freed" note is about. `run in overlay` stands, no shortening needed.
+- [x] verify no status-bar or footer branch references the deleted launch statuses; `[1]` footer `enter run` and the `modeRunInput` bar branch stay as-is
+- [x] sweep rendered-surface tests: hotkeys budget across all five self states, footer cells, status bar at the 80×24 baseline stay green with the new wording
+- [x] write/adjust tests for the changed `[?]` row
+- [x] run the full gate (build + vet + `go test -race ./...` + lint) - must pass before task 7
 
 ### Task 7: Verify acceptance criteria
 

@@ -813,7 +813,7 @@ func (m Model) renderHotkeys() string {
 			// group is the on-screen statement of the same-in-every-focus rule.
 			{"/", "filter the list"},
 			{"space", "group by tag"},
-			{"enter", "run in a tab"},
+			{"enter", "run in overlay"},
 		}},
 	})
 

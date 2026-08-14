@@ -4457,7 +4457,7 @@ func TestRenderHotkeysOverlayContent(t *testing.T) {
 		"self-update",       // self
 		"navigate / scroll", // [3] readme
 		"half page",         // [3] readme
-		"run in a tab",      // [1] tools enter row
+		"run in overlay",    // [1] tools enter row
 		"close",             // title close hint
 	} {
 		if !strings.Contains(view, want) {
@@ -4522,7 +4522,7 @@ func TestRenderHotkeysSizeBudget(t *testing.T) {
 	}
 	// Bottom-most row of the left column — its trailing word survives only if
 	// nothing was clipped off the bottom or the right edge.
-	if !strings.Contains(view, "run in a tab") {
+	if !strings.Contains(view, "run in overlay") {
 		t.Errorf("size budget: last [1] tools row clipped (bottom/right overflow)")
 	}
 	// Bottom-most row of the right column, in the widest state.
