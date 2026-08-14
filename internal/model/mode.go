@@ -33,6 +33,7 @@ const (
 	modeAPIStatus                // "a": rate-limit / token overlay
 	modeTokenInput               // "e" inside the overlay: masked token entry
 	modeHotkeys                  // "?": static hotkeys-help overlay
+	modeToolOverlay              // enter in focusTools: the tool runs in an embedded terminal
 )
 
 // apiOverlayVisible reports whether the API-status overlay is on screen —
@@ -42,11 +43,12 @@ func (m Model) apiOverlayVisible() bool {
 }
 
 // overlayVisible reports whether any modal overlay is composited over the
-// layout — the [a] API-status overlay (incl. token entry) or the [?] hotkeys
-// overlay. It is the single "modal on screen" predicate for View() and the
-// mouse gate, so a new overlay only has to extend this one helper.
+// layout — the [a] API-status overlay (incl. token entry), the [?] hotkeys
+// overlay, or the embedded tool terminal. It is the single "modal on screen"
+// predicate for View() and the mouse gate, so a new overlay only has to extend
+// this one helper.
 func (m Model) overlayVisible() bool {
-	return m.apiOverlayVisible() || m.mode == modeHotkeys
+	return m.apiOverlayVisible() || m.mode == modeHotkeys || m.mode == modeToolOverlay
 }
 
 // updateHotkeys handles keys while the [?] hotkeys overlay is open: esc, q, or

@@ -30,9 +30,18 @@ func (m Model) View() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, middle, right)
 	layout := lipgloss.JoinVertical(lipgloss.Left, body, m.renderStatusBar())
 	if m.overlayVisible() {
-		fg := m.renderAPIStatus()
-		if m.mode == modeHotkeys {
+		// One picker per overlay mode. It is a switch rather than the two-way
+		// if it grew out of because the API-status default silently answered
+		// for every mode that was not modeHotkeys — with a third overlay that
+		// would have painted the token panel over a running tool.
+		var fg string
+		switch m.mode {
+		case modeHotkeys:
 			fg = m.renderHotkeys()
+		case modeToolOverlay:
+			fg = m.renderToolOverlay()
+		default:
+			fg = m.renderAPIStatus()
 		}
 		layout = ui.PlaceOverlay(layout, fg, m.sty().OverlayDim)
 	}

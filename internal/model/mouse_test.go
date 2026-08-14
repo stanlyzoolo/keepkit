@@ -198,7 +198,7 @@ func TestMouseNoOpUnderOverlay(t *testing.T) {
 	for i := range names {
 		names[i] = fmt.Sprintf("tool%02d", i)
 	}
-	for _, mode := range []inputMode{modeAPIStatus, modeTokenInput, modeHotkeys} {
+	for _, mode := range []inputMode{modeAPIStatus, modeTokenInput, modeHotkeys, modeToolOverlay} {
 		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
 			m := newMouseTestModel(t, 80, 10, names...)
 			m.mode = mode

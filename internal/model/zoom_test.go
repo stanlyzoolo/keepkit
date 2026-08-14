@@ -284,7 +284,7 @@ func TestZoomInSearchStaysQueryText(t *testing.T) {
 // screen underneath an open modal is the one failure this would produce, and
 // modeSearch next door proves the dispatch is not uniform.
 func TestZoomUnderOverlay(t *testing.T) {
-	for _, mode := range []inputMode{modeHotkeys, modeAPIStatus} {
+	for _, mode := range []inputMode{modeHotkeys, modeAPIStatus, modeToolOverlay} {
 		m := zoomModel(t, 160, 40)
 		m.mode = mode
 		nm := mustModel(m.Update(keyRunes("z")))

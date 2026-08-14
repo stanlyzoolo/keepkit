@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/vt"
 
 	"github.com/stanlyzoolo/keepkit/internal/loader"
 	"github.com/stanlyzoolo/keepkit/internal/logx"
@@ -334,6 +335,29 @@ type Model struct {
 	// very keystroke that closes the mode.
 	pendingLaunchName    string
 	pendingLaunchCommand string
+
+	// The embedded tool terminal (modeToolOverlay). termSession is the running
+	// tool behind a narrow interface so tests can drive the handlers with a
+	// fake; termEmu is the VT emulator turning its bytes back into a screen and
+	// lives here, on the model, precisely so that only Update ever touches its
+	// screen state. termInput is the goroutine relaying encoded keys back to
+	// the tool (see its type doc for why one is needed at all).
+	//
+	// termExit is nil while the tool runs and holds the verdict afterwards — it
+	// is the single "has it finished" discriminator, which is why there is no
+	// separate flag and no "running" member on any enum. termW/termH are the
+	// emulator's body size, resolved from termGeometry at dispatch, and
+	// termToolName is what the frame and the status bar call it.
+	//
+	// The whole group is nil/zero outside the overlay: closeToolOverlay is the
+	// single teardown and clears every field, so a stale session can never
+	// outlive the mode.
+	termSession  termSession
+	termEmu      *vt.Emulator
+	termInput    *termInput
+	termExit     *termExitMsg
+	termW, termH int
+	termToolName string
 
 	// spinner animates while a force refresh ([r]) is in flight; refreshingFor
 	// holds the name of the tool being refreshed (empty = idle). refreshingFor
@@ -1411,6 +1435,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.briefViewport.SetContent(m.renderCard())
 		return m, tea.Batch(statusCmd, fetchInstalledCmd(t))
 
+	case termStartedMsg:
+		return m, m.handleTermStarted(msg)
+
+	case termChunkMsg:
+		return m, m.handleTermChunk(msg)
+
+	case termExitMsg:
+		m.handleTermExit(msg)
+		return m, nil
+
 	case statusExpiredMsg:
 		// Retire a transient status only if it is still the current one: a stale
 		// timer from a superseded message must not clear the newer message. The
@@ -1453,6 +1487,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return flushPendingLaunch(m.updateAPIStatus(msg))
 		case modeHotkeys:
 			return flushPendingLaunch(m.updateHotkeys(msg))
+		case modeToolOverlay:
+			// Deliberately not wrapped in flushPendingLaunch, unlike every
+			// sibling above: a deferred exec fallback must not seize the
+			// terminal with tea.ExecProcess on the very keystroke that closes
+			// the overlay. The wrapper disappears with the tab launcher.
+			return m.updateToolOverlay(msg)
 		}
 
 		if m.mode == modeSearch {
