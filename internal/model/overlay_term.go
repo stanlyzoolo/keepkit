@@ -1,11 +1,17 @@
 package model
 
 import (
+	"errors"
 	"io"
+	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 
 	"github.com/stanlyzoolo/keepkit/internal/term"
@@ -409,14 +415,238 @@ func sendToolKey(emu *vt.Emulator, msg tea.KeyMsg) {
 	}
 }
 
-// renderToolOverlay draws the embedded terminal. Placeholder: the frame,
-// geometry, cursor and outcome line land in Task 4 of the tool-overlay plan.
-func (m Model) renderToolOverlay() string {
-	body := "starting " + m.termToolName + "…"
-	if m.termEmu != nil {
-		body = m.termEmu.Render()
+// Overlay geometry. The block covers termOverlayPercent of the screen in both
+// directions; the minimums are what a tool actually needs to be usable rather
+// than merely drawn — below them the keypress refuses instead of opening a
+// window nothing fits in.
+const (
+	termOverlayPercent = 70
+	termMinBodyW       = 40
+	termMinBodyH       = 10
+
+	// termChromeRows is what the frame spends on itself inside the border: the
+	// title row and the exit row. The exit row is reserved from the very start
+	// and left blank while the tool runs, so the block's height never changes
+	// and PlaceOverlay cannot re-centre it the moment the tool exits.
+	termChromeRows = 2
+	// termChromeCols is the border (2) plus OverlayBorder's Padding(0, 1) (2).
+	termChromeCols = 4
+)
+
+// termGeometry is the emulator's body size for the current terminal, plus
+// whether the screen is big enough for one at all.
+//
+// The size is always clamped to the floor and ok is a separate answer, because
+// the two callers want different things: the keypress refuses on !ok, while a
+// terminal shrunk *mid-session* keeps rendering at the minimum — resizing the
+// user's editor into nothing is bad, killing it outright is worse.
+//
+// !m.ready is checked first and explicitly, the toggleZoom idiom: before the
+// first WindowSizeMsg every dimension is zero and the percentages below would
+// agree on a floor-sized overlay by coincidence rather than by measurement.
+func (m Model) termGeometry() (w, h int, ok bool) {
+	if !m.ready {
+		return termMinBodyW, termMinBodyH, false
 	}
-	return m.sty().OverlayBorder.Render(body)
+	return termGeometryFor(m.width, m.height)
+}
+
+// termGeometryFor is the pure core (the planFor/baseFor idiom), so the clamps
+// are testable without a laid-out model.
+func termGeometryFor(width, height int) (w, h int, ok bool) {
+	// The overlay composites over the layout, not over the terminal: View wraps
+	// the composite in Margin(1, 0), so two rows are already spoken for and an
+	// overlay sized against the raw height would be clipped at the bottom by
+	// PlaceOverlay — silently, which is how a missing exit line would look.
+	bgH := height - 2
+
+	outerW := min(width*termOverlayPercent/100, width)
+	outerH := min(bgH*termOverlayPercent/100, bgH)
+
+	w, h = outerW-termChromeCols, outerH-2-termChromeRows
+	ok = w >= termMinBodyW && h >= termMinBodyH
+	return max(w, termMinBodyW), max(h, termMinBodyH), ok
+}
+
+// resizeToolOverlay follows a terminal resize through to the tool: the emulator
+// is re-laid-out first and the pty is told second, so the child's redraw lands
+// on a screen that is already the right shape.
+func (m *Model) resizeToolOverlay() {
+	if m.mode != modeToolOverlay {
+		return
+	}
+	w, h, _ := m.termGeometry()
+	if w == m.termW && h == m.termH {
+		return
+	}
+	m.termW, m.termH = w, h
+	if m.termEmu != nil {
+		m.termEmu.Resize(w, h)
+	}
+	if m.termSession != nil {
+		_ = m.termSession.Resize(w, h)
+	}
+}
+
+// renderToolOverlay draws the embedded terminal: a title row naming the tool,
+// the tool's own screen, and a bottom row that is blank while it runs and
+// carries the verdict once it has exited.
+func (m Model) renderToolOverlay() string {
+	s := m.sty()
+	w, h, _ := m.termGeometry()
+
+	// Title. The kill chord is advertised here rather than only in the status
+	// bar because this frame is what the user is looking at, and it is the one
+	// key that still belongs to keepkit while the tool has the keyboard. It
+	// goes once the tool has exited — by then the only key that does anything
+	// is esc, and the exit row says so.
+	title := s.EmphasisBold.Render(m.termToolName)
+	titleRow := title
+	if m.termExit == nil {
+		hint := m.hint(`ctrl+\`, "kill")
+		if pad := w - lipgloss.Width(title) - lipgloss.Width(hint); pad > 0 {
+			titleRow = title + strings.Repeat(" ", pad) + hint
+		}
+	}
+
+	rows := make([]string, 0, h+termChromeRows)
+	rows = append(rows, titleRow)
+	rows = append(rows, m.termBodyRows(w, h)...)
+	rows = append(rows, m.termExitRow(w))
+
+	// Every row is padded to exactly w before the frame goes round it. lipgloss
+	// sizes a border to its widest line, so without this the block would be as
+	// wide as whatever the tool happened to print — and, worse, it would *change
+	// width at exit*, when the title loses its kill hint and the exit row
+	// replaces a blank. PlaceOverlay centres what it is given, so a one-cell
+	// change is the whole block jumping sideways at the moment the user is
+	// reading the outcome. The reserved row keeps the height constant; this
+	// keeps the width constant.
+	for i, row := range rows {
+		rows[i] = termRow(row, w)
+	}
+	return s.OverlayBorder.Render(strings.Join(rows, "\n"))
+}
+
+// termRow fits one row to exactly w visible cells.
+//
+// Both directions go through x/ansi: padding is plain spaces appended after the
+// styling (never inside it), and a row too wide is cut by visible column rather
+// than by byte or rune index, which would land inside an escape sequence that
+// the terminal then executes.
+func termRow(row string, w int) string {
+	switch width := lipgloss.Width(row); {
+	case width < w:
+		return row + strings.Repeat(" ", w-width)
+	case width > w:
+		return ansi.Truncate(row, w, "")
+	default:
+		return row
+	}
+}
+
+// termBodyRows is the tool's screen, exactly h rows tall.
+//
+// Before termStartedMsg there is no emulator: the overlay is already on screen
+// (the keypress opened it) and has to say something, which is the same
+// "starting …" idiom the update log uses for its own pre-output window.
+func (m Model) termBodyRows(w, h int) []string {
+	rows := make([]string, h)
+	if m.termEmu == nil {
+		rows[0] = m.sty().Dim.Render("starting " + m.termToolName + "…")
+		return rows
+	}
+
+	lines := strings.Split(m.termEmu.Render(), "\n")
+	for i := range rows {
+		if i < len(lines) {
+			// Padded here rather than by the final pass, because the cursor
+			// splice below addresses a *column*: on a short line, a cursor
+			// past its end would otherwise be spliced in right after the last
+			// glyph instead of where the tool actually put it.
+			rows[i] = termRow(lines[i], w)
+		} else {
+			rows[i] = strings.Repeat(" ", w)
+		}
+	}
+	return m.withTermCursor(rows, w, h)
+}
+
+// withTermCursor reverse-videos the cell the tool has its cursor on, so a shell
+// prompt or an editor's caret is visible instead of the screen looking frozen.
+// Hidden once the tool has exited: a cursor on a dead screen invites typing.
+//
+// The splice goes through x/ansi rather than a byte offset: an emulator line
+// carries SGR runs, and cutting one at a rune index lands inside an escape
+// sequence, which the terminal then executes. ansi.Truncate/TruncateLeft cut by
+// *visible* column and keep the styling on both sides intact.
+func (m Model) withTermCursor(rows []string, w, h int) []string {
+	if m.termExit != nil || m.termEmu == nil {
+		return rows
+	}
+
+	pos := m.termEmu.CursorPosition()
+	if pos.X < 0 || pos.X >= w || pos.Y < 0 || pos.Y >= h || pos.Y >= len(rows) {
+		return rows
+	}
+
+	content := " "
+	if cell := m.termEmu.CellAt(pos.X, pos.Y); cell != nil && cell.Content != "" {
+		content = cell.Content
+	}
+
+	line := rows[pos.Y]
+	rows[pos.Y] = ansi.Truncate(line, pos.X, "") +
+		m.sty().TermCursor.Render(content) +
+		ansi.TruncateLeft(line, pos.X+1, "")
+	return rows
+}
+
+// termExitRow is the reserved bottom row: blank while the tool runs, the
+// verdict plus the way out once it has finished.
+//
+// No status message accompanies it — the screen the tool left behind is the
+// answer, and this row is the caption on it.
+func (m Model) termExitRow(w int) string {
+	if m.termExit == nil {
+		return ""
+	}
+	s := m.sty()
+	sep := s.Dim.Render(footerSep)
+
+	verdict := s.Ok.Render("✓ exited")
+	switch {
+	case m.termExit.startFailed:
+		verdict = s.Danger.Render("✕ failed to start")
+	case m.termExit.killed:
+		verdict = s.Danger.Render("✕ killed")
+	case m.termExit.err != nil:
+		verdict = s.Danger.Render("✕ exit " + termExitCode(m.termExit.err))
+	}
+
+	cells := []string{verdict}
+	// A start failure has no elapsed worth printing and a reason that is the
+	// whole point, so it takes the middle cell the others spend on duration.
+	if m.termExit.startFailed {
+		if reason := m.termExit.err; reason != nil {
+			cells = append(cells, s.Dim.Render(reason.Error()))
+		}
+	} else if el := formatElapsed(m.termExit.elapsed); el != "" {
+		cells = append(cells, s.Dim.Render(el))
+	}
+	cells = append(cells, m.hint("esc", "close"))
+
+	return fitCells(cells, sep, w, 0)
+}
+
+// termExitCode names the code an exited tool reported, falling back to "?" for
+// an error that is not an exit status at all (a wait that failed on its own).
+func termExitCode(err error) string {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return strconv.Itoa(ee.ExitCode())
+	}
+	return "?"
 }
 
 // termRunning reports that the overlay has a tool that has not exited yet —

@@ -2384,6 +2384,10 @@ func (m *Model) applyLayout() {
 	// the pre-resize content (wrong scroll, out-of-range click mapping).
 	m.setToolsContent()
 	m.briefViewport.SetContent(m.renderCard())
+	// The embedded terminal is sized off the screen rather than off the panel
+	// widths, so it follows a resize from here — the single relayout point —
+	// and is a no-op in every other mode.
+	m.resizeToolOverlay()
 }
 
 // initViewports creates the three viewports on the first relayout — the

@@ -2,14 +2,19 @@ package model
 
 import (
 	"errors"
+	"fmt"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
+	"github.com/stanlyzoolo/keepkit/internal/loader"
 	"github.com/stanlyzoolo/keepkit/internal/term"
+	"github.com/stanlyzoolo/keepkit/internal/ui"
 )
 
 // fakeTermSession drives the overlay handlers without a pty: the test feeds
@@ -78,6 +83,12 @@ func (f *fakeTermSession) input(t *testing.T, want string) string {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func (f *fakeTermSession) resizes() [][2]int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][2]int(nil), f.resized...)
 }
 
 func (f *fakeTermSession) counts() (killed, closed int) {
@@ -563,6 +574,376 @@ func TestToolOverlayDoesNotFlushPendingLaunch(t *testing.T) {
 	if nm.(Model).pendingLaunchName != "fd" {
 		t.Error("the deferred fallback was consumed by the overlay's dispatch")
 	}
+}
+
+// laidOutOverlay is a ready model of the given size sitting in the overlay with
+// the session adopted and the emulator sized by termGeometry — the state every
+// rendering assertion runs against.
+func laidOutOverlay(t *testing.T, w, h int, f *fakeTermSession) Model {
+	t.Helper()
+
+	m := New([]loader.ToolMeta{{Name: "yazi"}}).WithAppVersion("v0.1.0")
+	mm := mustModel(m.Update(tea.WindowSizeMsg{Width: w, Height: h}))
+	mm.mode = modeToolOverlay
+	mm.termToolName = "yazi"
+	mm.termW, mm.termH, _ = mm.termGeometry()
+
+	nm := mustModel(mm.Update(termStartedMsg{session: f}))
+	t.Cleanup(func() { nm.closeToolOverlay() })
+	return nm
+}
+
+// blockSize reports the overlay frame's size in visible cells.
+//
+// Measured on the frame itself rather than on the composited View: the layout
+// behind it is full of rounded corners of its own (three panels and the status
+// bar), so scanning the finished screen for a frame finds the panels' borders
+// and reports a size that never changes no matter what the overlay does.
+func blockSize(t *testing.T, frame string) (rows, cols int) {
+	t.Helper()
+
+	lines := strings.Split(stripANSI(frame), "\n")
+	for _, line := range lines {
+		if w := len([]rune(line)); w > cols {
+			cols = w
+		}
+	}
+	if cols == 0 {
+		t.Fatal("the overlay frame rendered nothing")
+	}
+	return len(lines), cols
+}
+
+// The block must not move when the tool exits. Height is held by the reserved
+// exit row and width by padding every row to the body width; without either,
+// PlaceOverlay re-centres the whole frame at the exact moment the user is
+// reading the outcome.
+func TestToolOverlayBlockDoesNotMoveAtExit(t *testing.T) {
+	for _, dim := range [][2]int{{80, 24}, {120, 34}} {
+		t.Run(fmt.Sprintf("%dx%d", dim[0], dim[1]), func(t *testing.T) {
+			f := newFakeSession(4)
+			m := laidOutOverlay(t, dim[0], dim[1], f)
+			m = mustModel(m.Update(termChunkMsg{session: f, data: []byte("a wide enough line of tool output\r\n")}))
+
+			runRows, runCols := blockSize(t, m.renderToolOverlay())
+
+			exited := mustModel(m.Update(termExitMsg{elapsed: 12 * time.Second}))
+			exitRows, exitCols := blockSize(t, exited.renderToolOverlay())
+
+			if runRows != exitRows {
+				t.Errorf("block height %d running, %d exited — the reserved row is not doing its job", runRows, exitRows)
+			}
+			if runCols != exitCols {
+				t.Errorf("block width %d running, %d exited — a row is not padded to the body width", runCols, exitCols)
+			}
+		})
+	}
+}
+
+// Every row inside the frame is exactly the body width, whatever the tool
+// printed: a short row leaves a ragged edge and a long one widens the block.
+func TestToolOverlayRowsAreExactlyBodyWidth(t *testing.T) {
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 100, 30, f)
+	// a line carrying SGR, and one longer than the body can hold
+	m = mustModel(m.Update(termChunkMsg{session: f,
+		data: []byte("\x1b[1;31mred\x1b[0m short\r\n" + strings.Repeat("x", 200))}))
+
+	rows := m.termBodyRows(m.termW, m.termH)
+	for i, row := range rows {
+		if got := lipgloss.Width(row); got != m.termW {
+			t.Errorf("body row %d is %d cells, want %d", i, got, m.termW)
+		}
+	}
+
+	frame := m.renderToolOverlay()
+	widths := map[int]bool{}
+	for _, line := range strings.Split(stripANSI(frame), "\n") {
+		widths[len([]rune(line))] = true
+	}
+	if len(widths) != 1 {
+		t.Errorf("frame lines have %d distinct widths %v, want all equal", len(widths), widths)
+	}
+}
+
+// A tool whose name is wider than the body must not widen the block. lipgloss
+// sizes a border to its widest line, so an unclamped title row is the one thing
+// that can push the frame past the geometry everything else agreed on — and it
+// would push it past the screen edge, where PlaceOverlay clips silently.
+func TestToolOverlayLongToolNameDoesNotWidenTheBlock(t *testing.T) {
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 100, 30, f)
+	want := frameWidth(t, m.renderToolOverlay())
+
+	m.termToolName = strings.Repeat("very-long-tool-name-", 8)
+	if got := frameWidth(t, m.renderToolOverlay()); got != want {
+		t.Errorf("frame is %d cells wide with a long tool name, want %d", got, want)
+	}
+
+	// and the same once it has exited, where the title row loses its right cell
+	m.termExit = &termExitMsg{elapsed: time.Second}
+	if got := frameWidth(t, m.renderToolOverlay()); got != want {
+		t.Errorf("exited frame is %d cells wide with a long tool name, want %d", got, want)
+	}
+}
+
+// frameWidth is the visible width of a rendered frame's widest line.
+func frameWidth(t *testing.T, frame string) int {
+	t.Helper()
+
+	widest := 0
+	for _, line := range strings.Split(stripANSI(frame), "\n") {
+		if w := len([]rune(line)); w > widest {
+			widest = w
+		}
+	}
+	return widest
+}
+
+// The title names the tool and, while it runs, carries the one key that is
+// still keepkit's. Both go once the tool has exited: by then esc is the only
+// key that does anything, and the exit row is what says so.
+func TestToolOverlayTitleAndKillHint(t *testing.T) {
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 100, 30, f)
+
+	running := stripANSI(m.renderToolOverlay())
+	if !strings.Contains(running, "yazi") {
+		t.Error("the frame does not name the tool")
+	}
+	if !strings.Contains(running, `ctrl+\ kill`) {
+		t.Error("the frame does not advertise the kill chord while the tool runs")
+	}
+
+	exited := stripANSI(mustModel(m.Update(termExitMsg{elapsed: time.Second})).renderToolOverlay())
+	if strings.Contains(exited, `ctrl+\ kill`) {
+		t.Error("the kill chord is still advertised after the tool exited")
+	}
+}
+
+// Before termStartedMsg the overlay is already on screen and has to say
+// something rather than showing a blank rectangle.
+func TestToolOverlayStartingBody(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "yazi"}})
+	mm := mustModel(m.Update(tea.WindowSizeMsg{Width: 100, Height: 30}))
+	mm.mode = modeToolOverlay
+	mm.termToolName = "yazi"
+
+	if got := stripANSI(mm.renderToolOverlay()); !strings.Contains(got, "starting yazi…") {
+		t.Errorf("pre-start frame does not say what it is waiting for:\n%s", got)
+	}
+}
+
+// The child's cursor is a reverse-video cell while it runs, so a shell prompt
+// does not look frozen; it goes once the tool has exited, because a cursor on a
+// dead screen invites typing.
+func TestToolOverlayCursor(t *testing.T) {
+	// Reverse video is styling, and the default test profile strips it — the
+	// assertion would pass against a cursor that was never drawn.
+	forceColor(t)
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 100, 30, f)
+	m = mustModel(m.Update(termChunkMsg{session: f, data: []byte("$ ")}))
+
+	pos := m.termEmu.CursorPosition()
+	if pos.X != 2 || pos.Y != 0 {
+		t.Fatalf("emulator cursor at (%d,%d), want (2,0) after %q", pos.X, pos.Y, "$ ")
+	}
+
+	rows := m.termBodyRows(m.termW, m.termH)
+	if !strings.Contains(rows[0], "\x1b[7m") {
+		t.Errorf("cursor row carries no reverse-video sequence: %q", rows[0])
+	}
+	if got := lipgloss.Width(rows[0]); got != m.termW {
+		t.Errorf("the cursor splice changed the row width to %d, want %d", got, m.termW)
+	}
+
+	exited := mustModel(m.Update(termExitMsg{elapsed: time.Second}))
+	if strings.Contains(exited.termBodyRows(exited.termW, exited.termH)[0], "\x1b[7m") {
+		t.Error("the cursor is still drawn after the tool exited")
+	}
+}
+
+// The four outcomes each get their own line, and each names what happened plus
+// the way out. No status message accompanies them — the screen is the answer.
+func TestToolOverlayExitRow(t *testing.T) {
+	tests := []struct {
+		name string
+		exit termExitMsg
+		want []string
+	}{
+		{"clean", termExitMsg{elapsed: 12 * time.Second}, []string{"✓ exited", "12s", "esc close"}},
+		{"non-zero", termExitMsg{err: exitErrorWithCode(t, 3), elapsed: 4 * time.Second},
+			[]string{"✕ exit 3", "4s", "esc close"}},
+		{"killed", termExitMsg{err: errors.New("signal: killed"), elapsed: 90 * time.Second, killed: true},
+			[]string{"✕ killed", "1m30s", "esc close"}},
+		{"failed to start", termExitMsg{err: errors.New("no such file"), startFailed: true},
+			[]string{"✕ failed to start", "no such file", "esc close"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeSession(4)
+			m := laidOutOverlay(t, 120, 34, f)
+			m = mustModel(m.Update(tt.exit))
+
+			row := stripANSI(m.termExitRow(m.termW))
+			for _, want := range tt.want {
+				if !strings.Contains(row, want) {
+					t.Errorf("exit row %q does not contain %q", row, want)
+				}
+			}
+			if m.statusMsg != "" {
+				t.Errorf("statusMsg = %q, want the exit row to be the only report", m.statusMsg)
+			}
+		})
+	}
+}
+
+// While the tool runs the row is reserved and blank: it exists so the block's
+// height never changes, not to say anything yet.
+func TestToolOverlayExitRowBlankWhileRunning(t *testing.T) {
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 100, 30, f)
+
+	if got := m.termExitRow(m.termW); got != "" {
+		t.Errorf("exit row = %q while the tool runs, want it reserved and blank", got)
+	}
+}
+
+// The status bar has a branch of its own, because the global one advertises six
+// keys the running tool has taken over — including a q quit that cannot fire.
+func TestToolOverlayStatusBar(t *testing.T) {
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 100, 30, f)
+
+	running := stripANSI(m.renderStatusBar())
+	if !strings.Contains(running, "yazi running") || !strings.Contains(running, `ctrl+\ kill`) {
+		t.Errorf("running status bar = %q", running)
+	}
+	for _, dead := range []string{"q quit", "t track", "a api"} {
+		if strings.Contains(running, dead) {
+			t.Errorf("status bar still advertises %q, which the tool has taken over", dead)
+		}
+	}
+
+	exited := stripANSI(mustModel(m.Update(termExitMsg{elapsed: time.Second})).renderStatusBar())
+	if !strings.Contains(exited, "yazi exited") || !strings.Contains(exited, "esc close") {
+		t.Errorf("exited status bar = %q", exited)
+	}
+	if strings.Count(exited, "\n") != 2 {
+		t.Errorf("status bar wrapped: %q", exited)
+	}
+}
+
+// Geometry: 70% of the screen, minus the frame's own chrome, refusing below the
+// minimums. The 80x24 baseline must succeed — it is the default terminal.
+func TestTermGeometry(t *testing.T) {
+	tests := []struct {
+		w, h         int
+		wantW, wantH int
+		wantOK       bool
+	}{
+		// 80x24: background is 22 rows, 70% -> 56x15, body 52x11
+		{80, 24, 52, 11, true},
+		{120, 34, 80, 18, true},
+		{60, 20, termMinBodyW, termMinBodyH, false}, // too short: body would be 8 rows
+		{40, 40, termMinBodyW, 22, false},           // too narrow: body would be 24 cols, height is fine
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%dx%d", tt.w, tt.h), func(t *testing.T) {
+			w, h, ok := termGeometryFor(tt.w, tt.h)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if w != tt.wantW || h != tt.wantH {
+				t.Errorf("body = %dx%d, want %dx%d", w, h, tt.wantW, tt.wantH)
+			}
+			if w < termMinBodyW || h < termMinBodyH {
+				t.Errorf("body %dx%d is under the floor — a shrunk terminal must clamp, not vanish", w, h)
+			}
+		})
+	}
+}
+
+// Before the first WindowSizeMsg there is no layout: refused explicitly rather
+// than by the percentages agreeing on the floor by coincidence.
+func TestTermGeometryNotReady(t *testing.T) {
+	m := New([]loader.ToolMeta{{Name: "yazi"}})
+	m.width, m.height = 200, 60 // set, but no WindowSizeMsg has been applied
+
+	if _, _, ok := m.termGeometry(); ok {
+		t.Error("termGeometry() reported ok before the first relayout")
+	}
+}
+
+// A resize follows through to both halves: the emulator is re-laid-out and the
+// tool is told, so its redraw lands on a screen of the right shape.
+func TestToolOverlayResize(t *testing.T) {
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 120, 34, f)
+	beforeW, beforeH := m.termW, m.termH
+
+	nm := mustModel(m.Update(tea.WindowSizeMsg{Width: 160, Height: 44}))
+
+	if nm.termW == beforeW && nm.termH == beforeH {
+		t.Fatalf("geometry unchanged after a resize: %dx%d", nm.termW, nm.termH)
+	}
+	if nm.termEmu.Width() != nm.termW || nm.termEmu.Height() != nm.termH {
+		t.Errorf("emulator is %dx%d, want %dx%d", nm.termEmu.Width(), nm.termEmu.Height(), nm.termW, nm.termH)
+	}
+	got := f.resizes()
+	if len(got) == 0 {
+		t.Fatal("the tool was never told about the resize")
+	}
+	if last := got[len(got)-1]; last[0] != nm.termW || last[1] != nm.termH {
+		t.Errorf("tool told %dx%d, want %dx%d", last[0], last[1], nm.termW, nm.termH)
+	}
+}
+
+// Shrinking past the minimum clamps to the floor and keeps the tool running:
+// resizing somebody's editor into nothing is bad, killing it outright is worse.
+func TestToolOverlayResizeBelowMinimumClamps(t *testing.T) {
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 120, 34, f)
+
+	nm := mustModel(m.Update(tea.WindowSizeMsg{Width: 50, Height: 16}))
+
+	if nm.termW != termMinBodyW || nm.termH != termMinBodyH {
+		t.Errorf("geometry = %dx%d, want the %dx%d floor", nm.termW, nm.termH, termMinBodyW, termMinBodyH)
+	}
+	if nm.mode != modeToolOverlay || nm.termSession == nil {
+		t.Error("a shrink tore the session down")
+	}
+}
+
+// The background is dimmed like every other overlay, so the tool's screen is
+// the only full-colour thing on it.
+func TestToolOverlayDimsTheBackground(t *testing.T) {
+	forceColor(t)
+	f := newFakeSession(4)
+	m := laidOutOverlay(t, 120, 34, f)
+
+	view := m.View()
+	dim := lipgloss.NewStyle().Foreground(ui.Default.Dim).Render("")
+	if seq, _, _ := strings.Cut(dim, "m"); !strings.Contains(view, seq) {
+		t.Error("the layout behind the overlay is not dimmed")
+	}
+}
+
+// exitErrorWithCode produces a real *exec.ExitError carrying code, so the exit
+// row is exercised against the shape a session actually reports rather than a
+// zero value whose ExitCode() is -1.
+func exitErrorWithCode(t *testing.T, code int) error {
+	t.Helper()
+
+	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("sh -c 'exit %d' returned %v, want an *exec.ExitError", code, err)
+	}
+	return ee
 }
 
 var _ tea.Model = Model{}

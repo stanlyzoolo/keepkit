@@ -129,6 +129,16 @@ func (m Model) renderStatusBar() string {
 	if m.mode == modeHotkeys {
 		return style.Render(m.hint("esc", "close"))
 	}
+	// The overlay's siblings all have a branch here, and without one the bar
+	// would go on advertising six global keys the running tool has taken over —
+	// including a q quit that cannot fire. Two states, because the keyboard
+	// belongs to different owners in each.
+	if m.mode == modeToolOverlay {
+		if m.termExit == nil {
+			return style.Render(s.Dim.Render(m.termToolName+" running") + "  " + m.hint(`ctrl+\`, "kill"))
+		}
+		return style.Render(s.Dim.Render(m.termToolName+" exited") + "  " + m.hint("esc", "close"))
+	}
 	if m.statusMsg != "" {
 		return style.Render(s.AccentBold.Render(m.statusMsg))
 	}

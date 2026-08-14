@@ -75,6 +75,14 @@ type Styles struct {
 	OverlayBorder lipgloss.Style
 	OverlayDim    lipgloss.Style
 
+	// TermCursor marks where the tool running in the [enter] overlay has its
+	// cursor. It is the one style here that names no theme color, and that is
+	// the point: reverse video swaps whatever the tool already painted into
+	// that cell, so the block stays visible against the tool's own palette
+	// instead of keepkit's — which is the only way one style can mark a cursor
+	// on a screen keepkit does not control.
+	TermCursor lipgloss.Style
+
 	// The API-usage gauge. GaugeTrack is Theme.SignalDim's only consumer: fill
 	// and track have to read as one bar, which no other pair of roles can do.
 	GaugeFill  lipgloss.Style
@@ -130,6 +138,7 @@ func NewStyles(t Theme) *Styles {
 			BorderForeground(t.Accent).
 			Padding(0, 1),
 		OverlayDim: fg(t.Dim),
+		TermCursor: lipgloss.NewStyle().Reverse(true),
 
 		GaugeFill:  fg(t.Signal),
 		GaugeTrack: fg(t.SignalDim),
