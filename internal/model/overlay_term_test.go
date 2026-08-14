@@ -380,4 +380,189 @@ func TestViewPicksTheToolOverlay(t *testing.T) {
 	}
 }
 
+// Every key reaches the tool while it runs — including the ones keepkit would
+// otherwise act on. esc must not close the overlay (vim needs it) and ctrl+c
+// must not quit keepkit (it is the tool's interrupt), which is the whole claim
+// "the tool has the keyboard" makes.
+func TestToolOverlayForwardsEveryKeyWhileRunning(t *testing.T) {
+	tests := []struct {
+		name string
+		key  tea.KeyMsg
+		want string
+	}{
+		{"letters", keyRunes("ls"), "ls"},
+		{"space", tea.KeyMsg{Type: tea.KeySpace}, " "},
+		{"enter", tea.KeyMsg{Type: tea.KeyEnter}, "\r"},
+		{"tab", tea.KeyMsg{Type: tea.KeyTab}, "\t"},
+		{"backspace", tea.KeyMsg{Type: tea.KeyBackspace}, "\x7f"},
+		{"esc goes to the tool", tea.KeyMsg{Type: tea.KeyEsc}, "\x1b"},
+		{"ctrl+c goes to the tool", tea.KeyMsg{Type: tea.KeyCtrlC}, "\x03"},
+		{"ctrl+d", tea.KeyMsg{Type: tea.KeyCtrlD}, "\x04"},
+		{"up arrow", tea.KeyMsg{Type: tea.KeyUp}, "\x1b[A"},
+		{"down arrow", tea.KeyMsg{Type: tea.KeyDown}, "\x1b[B"},
+		{"home", tea.KeyMsg{Type: tea.KeyHome}, "\x1b[H"},
+		{"page up", tea.KeyMsg{Type: tea.KeyPgUp}, "\x1b[5~"},
+		{"delete", tea.KeyMsg{Type: tea.KeyDelete}, "\x1b[3~"},
+		{"shift+tab", tea.KeyMsg{Type: tea.KeyShiftTab}, "\x1b[Z"},
+		{"f1", tea.KeyMsg{Type: tea.KeyF1}, "\x1bOP"},
+		{"f5", tea.KeyMsg{Type: tea.KeyF5}, "\x1b[15~"},
+		{"ctrl+left", tea.KeyMsg{Type: tea.KeyCtrlLeft}, "\x1b[1;5D"},
+		{"shift+right", tea.KeyMsg{Type: tea.KeyShiftRight}, "\x1b[1;2C"},
+		{"alt+rune", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b"), Alt: true}, "\x1bb"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeSession(4)
+			m := overlayModel(t, f)
+
+			nm := mustModel(m.Update(tt.key))
+
+			if got := f.input(t, tt.want); !strings.Contains(got, tt.want) {
+				t.Errorf("tool received %q, want it to contain %q", got, tt.want)
+			}
+			if nm.mode != modeToolOverlay {
+				t.Errorf("mode = %v, want the overlay to keep the keyboard", nm.mode)
+			}
+		})
+	}
+}
+
+// esc while the tool runs is the tool's, not the overlay's: closing here would
+// make vim unusable, which is the case the whole design is built around.
+func TestToolOverlayEscDoesNotCloseWhileRunning(t *testing.T) {
+	f := newFakeSession(4)
+	m := overlayModel(t, f)
+
+	nm := mustModel(m.Update(tea.KeyMsg{Type: tea.KeyEsc}))
+
+	if nm.mode != modeToolOverlay {
+		t.Errorf("mode = %v after esc, want the overlay still open", nm.mode)
+	}
+	if nm.termSession == nil {
+		t.Error("esc tore down a running session")
+	}
+}
+
+// ctrl+c must not reach keepkit's global quit. That case sits after the mode
+// dispatch, so this is structural - asserted because the failure is keepkit
+// exiting out from under a running tool.
+func TestToolOverlayCtrlCDoesNotQuit(t *testing.T) {
+	f := newFakeSession(4)
+	m := overlayModel(t, f)
+
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	if cmd != nil {
+		t.Error("ctrl+c in the overlay returned a command (tea.Quit reached)")
+	}
+	if nm.(Model).mode != modeToolOverlay {
+		t.Error("ctrl+c left the overlay")
+	}
+}
+
+// ctrl+\ is the reserved chord: it kills but stays in the mode, because the
+// outcome line the user killed something to read arrives with termExitMsg.
+func TestToolOverlayKillChord(t *testing.T) {
+	f := newFakeSession(4)
+	m := overlayModel(t, f)
+
+	nm := mustModel(m.Update(tea.KeyMsg{Type: tea.KeyCtrlBackslash}))
+
+	killed, _ := f.counts()
+	if killed != 1 {
+		t.Errorf("Kill called %d times, want 1", killed)
+	}
+	if nm.mode != modeToolOverlay {
+		t.Errorf("mode = %v after ctrl+\\, want to stay until the exit arrives", nm.mode)
+	}
+	if nm.termExit != nil {
+		t.Error("ctrl+\\ synthesised an exit instead of waiting for the session's")
+	}
+	if got := f.input(t, ""); strings.Contains(got, "\x1c") {
+		t.Error("the kill chord was also forwarded to the tool")
+	}
+}
+
+// After the exit the overlay is a still image: esc closes, everything else does
+// nothing, and nothing is forwarded because there is nothing to forward to.
+func TestToolOverlayAfterExit(t *testing.T) {
+	f := newFakeSession(4)
+	base := overlayModel(t, f)
+	base = mustModel(base.Update(termExitMsg{elapsed: time.Second}))
+
+	t.Run("esc closes", func(t *testing.T) {
+		m := base
+		nm := mustModel(m.Update(tea.KeyMsg{Type: tea.KeyEsc}))
+		if nm.mode != modeNormal {
+			t.Errorf("mode = %v after esc, want modeNormal", nm.mode)
+		}
+		if nm.termSession != nil || nm.termEmu != nil || nm.termExit != nil {
+			t.Error("esc left overlay state behind")
+		}
+	})
+
+	t.Run("other keys are no-ops", func(t *testing.T) {
+		for _, key := range []tea.KeyMsg{
+			keyRunes("q"), tea.KeyMsg{Type: tea.KeyEnter}, tea.KeyMsg{Type: tea.KeyCtrlC},
+			tea.KeyMsg{Type: tea.KeyCtrlBackslash},
+		} {
+			m := base
+			nm, cmd := m.Update(key)
+			if nm.(Model).mode != modeToolOverlay {
+				t.Errorf("key %v left the exited overlay", key)
+			}
+			if cmd != nil {
+				t.Errorf("key %v returned a command from an exited overlay", key)
+			}
+		}
+		// nothing was written to a tool that is no longer there
+		if got := f.input(t, ""); got != "" {
+			t.Errorf("an exited overlay forwarded %q to the dead session", got)
+		}
+	})
+}
+
+// The window between the keypress and termStartedMsg has no session and no
+// emulator. A key there must be dropped, not dereferenced: a panic would
+// re-panic through logx.Recover and take keepkit down.
+func TestToolOverlayKeysBeforeStart(t *testing.T) {
+	m := newTestModel(focusTools)
+	m.mode = modeToolOverlay
+	m.termToolName = "git"
+
+	for _, key := range []tea.KeyMsg{
+		keyRunes("x"), tea.KeyMsg{Type: tea.KeyEsc}, tea.KeyMsg{Type: tea.KeyCtrlBackslash},
+		tea.KeyMsg{Type: tea.KeyUp},
+	} {
+		nm, cmd := m.Update(key) // must not panic
+		if nm.(Model).mode != modeToolOverlay {
+			t.Errorf("key %v left the pre-start overlay", key)
+		}
+		if cmd != nil {
+			t.Errorf("key %v returned a command before the session existed", key)
+		}
+	}
+}
+
+// The overlay's dispatch is deliberately not wrapped in flushPendingLaunch,
+// unlike every sibling mode: a deferred exec fallback firing tea.ExecProcess on
+// the keystroke that closes the overlay would seize the terminal.
+func TestToolOverlayDoesNotFlushPendingLaunch(t *testing.T) {
+	f := newFakeSession(4)
+	m := overlayModel(t, f)
+	m.pendingLaunchName = "fd"
+	m.pendingLaunchCommand = "fd --version"
+	m = mustModel(m.Update(termExitMsg{elapsed: time.Second}))
+
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if cmd != nil {
+		t.Error("closing the overlay dispatched the deferred exec fallback")
+	}
+	if nm.(Model).pendingLaunchName != "fd" {
+		t.Error("the deferred fallback was consumed by the overlay's dispatch")
+	}
+}
+
 var _ tea.Model = Model{}

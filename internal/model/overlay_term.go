@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 
 	"github.com/stanlyzoolo/keepkit/internal/term"
@@ -262,13 +263,150 @@ func (m *Model) closeToolOverlay() {
 	m.mode = modeNormal
 }
 
+// termKillKey is the one chord the overlay keeps for itself. Everything else —
+// esc, ctrl+c, q — belongs to the tool, so the way out of a hung program cannot
+// be a key the program might want. ctrl+\ is the choice because it is already
+// SIGQUIT by convention and no editor binds it.
+const termKillKey = tea.KeyCtrlBackslash
+
 // updateToolOverlay owns every keystroke while the overlay is open — that is
 // what "the tool has the keyboard" means, and it is why the mode consumes keys
 // it has no use for rather than letting them fall through to the normal-mode
-// map underneath. Key translation, the ctrl+\ kill chord and esc-after-exit
-// land in Task 3 of the tool-overlay plan.
-func (m Model) updateToolOverlay(_ tea.KeyMsg) (tea.Model, tea.Cmd) {
+// map underneath.
+//
+// While the tool runs, every key is translated and sent, ctrl+\ kills. Once it
+// has exited the overlay is a still image: esc closes it and nothing else does
+// anything — in particular the keys are no longer forwarded, because there is
+// nothing left to forward them to.
+func (m Model) updateToolOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.termExit != nil {
+		if msg.Type == tea.KeyEsc {
+			m.closeToolOverlay()
+		}
+		return m, nil
+	}
+
+	if msg.Type == termKillKey {
+		// Kill, but stay in the mode: the verdict arrives as termExitMsg and
+		// that is what turns the overlay into its outcome line. Leaving here
+		// would drop the log the user just killed something to read.
+		if m.termSession != nil {
+			m.termSession.Kill()
+		}
+		return m, nil
+	}
+
+	// Between the keypress that opened the overlay and termStartedMsg there is
+	// no emulator and no session. Keys are dropped rather than queued: the
+	// window is milliseconds, and a nil deref here would re-panic through
+	// logx.Recover and take keepkit down with it.
+	if m.termEmu != nil {
+		sendToolKey(m.termEmu, msg)
+	}
 	return m, nil
+}
+
+// termNamedKeys maps the Bubble Tea key types that need the emulator's own
+// encoder — the ones whose bytes depend on emulator state (DECCKM turns the
+// arrows and Home/End into their \x1bO… forms, DECNKM the keypad). Everything
+// here goes through SendKey for that reason; see the file header on why the
+// model cannot encode them itself.
+var termNamedKeys = map[tea.KeyType]uv.KeyPressEvent{
+	tea.KeyUp:       {Code: uv.KeyUp},
+	tea.KeyDown:     {Code: uv.KeyDown},
+	tea.KeyRight:    {Code: uv.KeyRight},
+	tea.KeyLeft:     {Code: uv.KeyLeft},
+	tea.KeyHome:     {Code: uv.KeyHome},
+	tea.KeyEnd:      {Code: uv.KeyEnd},
+	tea.KeyPgUp:     {Code: uv.KeyPgUp},
+	tea.KeyPgDown:   {Code: uv.KeyPgDown},
+	tea.KeyInsert:   {Code: uv.KeyInsert},
+	tea.KeyDelete:   {Code: uv.KeyDelete},
+	tea.KeyShiftTab: {Code: uv.KeyTab, Mod: uv.ModShift},
+	tea.KeyF1:       {Code: uv.KeyF1},
+	tea.KeyF2:       {Code: uv.KeyF2},
+	tea.KeyF3:       {Code: uv.KeyF3},
+	tea.KeyF4:       {Code: uv.KeyF4},
+	tea.KeyF5:       {Code: uv.KeyF5},
+	tea.KeyF6:       {Code: uv.KeyF6},
+	tea.KeyF7:       {Code: uv.KeyF7},
+	tea.KeyF8:       {Code: uv.KeyF8},
+	tea.KeyF9:       {Code: uv.KeyF9},
+	tea.KeyF10:      {Code: uv.KeyF10},
+	tea.KeyF11:      {Code: uv.KeyF11},
+	tea.KeyF12:      {Code: uv.KeyF12},
+}
+
+// termModifiedKeys covers the modified cursor keys, which the pinned x/vt does
+// not encode at all — its SendKey falls through to a default that emits nothing
+// for a modified special key, so routing these through the emulator would
+// silently swallow ctrl+left in every editor.
+//
+// They are safe to write out here because, unlike the bare arrows, the modified
+// forms do not depend on DECCKM: xterm's CSI 1;<mod><final> shape is what every
+// terminal sends whatever the cursor-keys mode. The modifier digit is
+// 1+shift(1)+alt(2)+ctrl(4), and the finals are A/B/C/D for the arrows and H/F
+// for home/end.
+var termModifiedKeys = map[tea.KeyType]string{
+	tea.KeyShiftUp:        "\x1b[1;2A",
+	tea.KeyShiftDown:      "\x1b[1;2B",
+	tea.KeyShiftRight:     "\x1b[1;2C",
+	tea.KeyShiftLeft:      "\x1b[1;2D",
+	tea.KeyShiftHome:      "\x1b[1;2H",
+	tea.KeyShiftEnd:       "\x1b[1;2F",
+	tea.KeyCtrlUp:         "\x1b[1;5A",
+	tea.KeyCtrlDown:       "\x1b[1;5B",
+	tea.KeyCtrlRight:      "\x1b[1;5C",
+	tea.KeyCtrlLeft:       "\x1b[1;5D",
+	tea.KeyCtrlHome:       "\x1b[1;5H",
+	tea.KeyCtrlEnd:        "\x1b[1;5F",
+	tea.KeyCtrlShiftUp:    "\x1b[1;6A",
+	tea.KeyCtrlShiftDown:  "\x1b[1;6B",
+	tea.KeyCtrlShiftRight: "\x1b[1;6C",
+	tea.KeyCtrlShiftLeft:  "\x1b[1;6D",
+	tea.KeyCtrlShiftHome:  "\x1b[1;6H",
+	tea.KeyCtrlShiftEnd:   "\x1b[1;6F",
+	tea.KeyCtrlPgUp:       "\x1b[5;5~",
+	tea.KeyCtrlPgDown:     "\x1b[6;5~",
+}
+
+// sendToolKey translates one Bubble Tea key into what the tool should read.
+//
+// Bubble Tea's control-key types are the control bytes themselves — KeyEnter is
+// 0x0d, KeyEsc 0x1b, KeyCtrlA 0x01, KeyBackspace 0x7f — and none of those is
+// mode-dependent, so writing the byte is exactly what the emulator's encoder
+// would have produced for them. Alt arrives as a flag rather than a key, and an
+// alt-modified key is its unmodified form behind an ESC.
+func sendToolKey(emu *vt.Emulator, msg tea.KeyMsg) {
+	alt := ""
+	if msg.Alt {
+		alt = "\x1b"
+	}
+
+	switch msg.Type {
+	case tea.KeyRunes:
+		emu.SendText(alt + string(msg.Runes))
+	case tea.KeySpace:
+		emu.SendText(alt + " ")
+	default:
+		if seq, ok := termModifiedKeys[msg.Type]; ok {
+			emu.SendText(alt + seq)
+			return
+		}
+		if key, ok := termNamedKeys[msg.Type]; ok {
+			if msg.Alt {
+				key.Mod |= uv.ModAlt
+			}
+			emu.SendKey(key)
+			return
+		}
+		// What is left is the control range, where the key type *is* the byte.
+		// A type outside it is one Bubble Tea knows and this build does not
+		// (a newer F-key, say); dropping it beats sending a stray rune.
+		if msg.Type >= 0 && msg.Type <= 0x7f {
+			emu.SendText(alt + string(rune(msg.Type)))
+		}
+	}
 }
 
 // renderToolOverlay draws the embedded terminal. Placeholder: the frame,

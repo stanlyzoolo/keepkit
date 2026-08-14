@@ -133,12 +133,17 @@
 - Modify: `internal/model/mode.go`, `internal/model/overlay_term.go`
 - Modify: `internal/model/overlay_term_test.go`
 
-- [ ] implement key translation `tea.KeyMsg` → tool input (runes → text; named keys/ctrl-chords → key events; mechanism per Task 1's decision), confirmed against the pinned vt version; esc translates and is **sent**, not consumed, while the process runs
-- [ ] add `case modeToolOverlay: return m.updateToolOverlay(msg)` to the mode dispatch **unwrapped** — deliberately *not* through `flushPendingLaunch` like its siblings: a deferred exec fallback must not fire `tea.ExecProcess` on the very keystroke that closes the overlay (the wrapper disappears entirely in Task 5)
-- [ ] `updateToolOverlay`: process alive → translate & send everything except `ctrl+\` (→ `Session.Kill`, stays in mode until `termExitMsg`); process exited → `esc` cleans up (session close, `termEmu = nil`, `modeNormal`), everything else no-op
-- [ ] **pre-`termStartedMsg` nil guard**: keys arriving before the session exists are dropped, `ctrl+\` is a no-op there (a nil deref would re-panic through `logx.Recover` and crash keepkit)
-- [ ] write tests: keys (incl. esc, ctrl+c) reach the fake's input while alive; `ctrl+\` triggers `Kill` and mode holds; esc before exit does NOT close; esc after `termExitMsg` cleans and returns to `modeNormal`; non-esc after exit is a no-op; a key in the pre-started state neither panics nor reaches anything
-- [ ] run the full gate (build + vet + `go test -race ./...` + lint) - must pass before task 4
+- [x] implement key translation `tea.KeyMsg` → tool input (runes → text; named keys/ctrl-chords → key events; mechanism per Task 1's decision), confirmed against the pinned vt version; esc translates and is **sent**, not consumed, while the process runs
+  - three paths, split by what actually depends on emulator state: **runes/space** → `SendText`; **the mode-dependent named keys** (arrows, Home/End, PgUp/PgDn, Insert/Delete, shift+tab, F1–F12) → `SendKey`, so DECCKM/DECNKM are honoured; **the control range** → the byte itself, because Bubble Tea's control key *types are* the control bytes (`KeyEnter` is 0x0d, `KeyEsc` 0x1b, `KeyBackspace` 0x7f) and none of them is mode-dependent — writing the byte is exactly what vt's encoder produces.
+  - ➕ **`termModifiedKeys`**: the pinned x/vt encodes no modified special key at all — its `SendKey` default emits nothing when `Mod != 0` — so `ctrl+left` and friends would be silently swallowed in every editor. They are written out as xterm's `CSI 1;<mod><final>`, which is safe to hand-encode precisely because, unlike the bare arrows, the modified forms do not depend on DECCKM.
+  - `Alt` is a Bubble Tea *flag*, not a key: it becomes an ESC prefix (or `ModAlt` on the `SendKey` path).
+- [x] add `case modeToolOverlay: return m.updateToolOverlay(msg)` to the mode dispatch **unwrapped** — deliberately *not* through `flushPendingLaunch` like its siblings: a deferred exec fallback must not fire `tea.ExecProcess` on the very keystroke that closes the overlay (the wrapper disappears entirely in Task 5)
+  - landed in Task 2 (see the ⚠️ ordering note there); `TestToolOverlayDoesNotFlushPendingLaunch` is what pins the unwrapping.
+- [x] `updateToolOverlay`: process alive → translate & send everything except `ctrl+\` (→ `Session.Kill`, stays in mode until `termExitMsg`); process exited → `esc` cleans up (session close, `termEmu = nil`, `modeNormal`), everything else no-op
+- [x] **pre-`termStartedMsg` nil guard**: keys arriving before the session exists are dropped, `ctrl+\` is a no-op there (a nil deref would re-panic through `logx.Recover` and crash keepkit)
+- [x] write tests: keys (incl. esc, ctrl+c) reach the fake's input while alive; `ctrl+\` triggers `Kill` and mode holds; esc before exit does NOT close; esc after `termExitMsg` cleans and returns to `modeNormal`; non-esc after exit is a no-op; a key in the pre-started state neither panics nor reaches anything
+  - ➕ the forwarding test is a **19-row table asserting the exact bytes** the tool receives, not just that something arrived: the encoding is the feature, and "a key reached the fake" would pass with every sequence wrong.
+- [x] run the full gate (build + vet + `go test -race ./...` + lint) - must pass before task 4
 
 ### Task 4: rendering — geometry, overlay frame, cursor, exit line, status bar, resize
 
