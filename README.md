@@ -61,8 +61,9 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
   draws them as a proportional band in GitHub's own per-language colors
 - **Tags and grouping** — one tag per tool; `space` regroups the flat list under
   section headers, led by everything with a pending update, and back
-- **Run tools** — launch any tracked tool in a new terminal tab (tmux / iTerm2 /
-  kitty / WezTerm / Terminal.app) or in the current window, without leaving keepkit
+- **Run tools** — `enter` runs any tracked tool on an embedded terminal inside
+  keepkit: a TUI like vim or yazi draws and lives in it with the full keyboard,
+  a plain command prints and its final screen stays until you close it
 - **Search** — `/` filters by name and tag with match highlighting and an `N/M` counter
 - **GitHub API token** — a quota gauge in the status bar, plus token management in
   the `a` overlay, lifts the anonymous 60 requests/hour to 5000
@@ -128,7 +129,7 @@ Run `keepkit` — a three-panel interface opens:
 
 - **`[1] Tools`** — the tracker list, each row carrying its installed version:
   search, tag grouping, track / untrack / rename, and `enter` to run the selected
-  tool.
+  tool in an embedded terminal.
 - **`[2] Brief`** — the tool card: the tool's name and repo, its tagline, then a
   metrics strip (installed / latest / maintenance / stars) and a line carrying
   languages, status, tag and note. From here `enter` installs a pending release, the
@@ -392,6 +393,9 @@ subprocess sandbox — is described in [ARCHITECTURE.md](ARCHITECTURE.md).
 - [Glamour](https://github.com/charmbracelet/glamour) — markdown rendering for the README panel
 - [goldmark-emoji](https://github.com/yuin/goldmark-emoji) — GitHub's `:shortcode:` dictionary, used to strip them from a README
 - [x/ansi](https://github.com/charmbracelet/x) — stripping escape sequences from captured tool output
+- [x/xpty](https://github.com/charmbracelet/x) — the pseudo-terminal a tool runs on (unix ptys, Windows ConPTY)
+- [x/vt](https://github.com/charmbracelet/x) — the terminal emulator that turns a tool's output back into a screen
+- [ultraviolet](https://github.com/charmbracelet/ultraviolet) — x/vt's key and cell types, used to translate keystrokes for the running tool
 - [termenv](https://github.com/muesli/termenv) — terminal color-profile detection
 - [go-runewidth](https://github.com/mattn/go-runewidth) — glyph width measurement
 - [golang.org/x/mod/semver](https://pkg.go.dev/golang.org/x/mod/semver) — version comparison

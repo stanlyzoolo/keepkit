@@ -17,10 +17,12 @@ Both ends of that wiring sit in named functions outside `runTUI` — `newRootMod
 and `restartIfRequested(final, restart)` — because `runTUI` needs a terminal and cannot be
 tested, and those two lines are the whole path from the model logic to the user.
 
-Three areas carry more rationale than fits here — updating a tool, self-update, and panel
-`[3]`'s README pipeline. Their full text lives under `docs/design/`:
-[`updating.md`](docs/design/updating.md), [`self-update.md`](docs/design/self-update.md)
-and [`readme-pipeline.md`](docs/design/readme-pipeline.md).
+Four areas carry more rationale than fits here — updating a tool, self-update, panel
+`[3]`'s README pipeline, and running a tool in the embedded terminal. Their full text
+lives under `docs/design/`: [`updating.md`](docs/design/updating.md),
+[`self-update.md`](docs/design/self-update.md),
+[`readme-pipeline.md`](docs/design/readme-pipeline.md) and
+[`tool-overlay.md`](docs/design/tool-overlay.md).
 
 ## Package map
 
@@ -34,7 +36,7 @@ graph TD
     model[internal/model] --> loader[internal/loader]
     model --> version[internal/version]
     model --> updater[internal/updater]
-    model --> launcher[internal/launcher]
+    model --> term[internal/term]
     model --> ui[internal/ui]
     model --> proc[internal/proc]
     model --> logx
@@ -44,6 +46,7 @@ graph TD
     version --> configdir
     updater --> loader
     updater --> proc
+    term --> proc
     ui --> loader
     loader --> logx
     loader --> configdir
@@ -53,16 +56,16 @@ graph TD
 | Package | Responsibility |
 |---|---|
 | `internal/configdir` | Resolve the base user-config dir: `~/.config/keepkit` on macOS/Linux (`$XDG_CONFIG_HOME` else `~/.config`), `%AppData%\keepkit` on Windows. Pure `baseFor(goos, …)` core + `Base()` wrapper; stdlib-only bottom leaf shared by `loader`/`version`/`logx`/`main` |
-| `internal/launcher` | Decide how to run a tracked tool in a new terminal tab: pure `planFor(env, command, toolName)` → `Plan{Argv, Fallback, Terminal}`, detection chain tmux → iTerm2 → Terminal.app → kitty → WezTerm → fallback; env-only, no subprocesses |
 | `internal/loader` | Tracker persistence (`meta.yaml`), status lifecycle (`active → trying → inactive`, legacy values migrated on read), the one-tag-per-tool invariant (a legacy multi-tag list is truncated to its first entry on read), GitHub ref parsing (`NormalizeRepo`, `ParseToolRef`) |
 | `internal/logx` | Session error journal: errors only, one lazily created file per session, imports only the stdlib-only `configdir` leaf. Package-level state — any package can log without threading a logger through |
 | `internal/model` | The entire Bubble Tea model: TUI state, key handling, rendering |
 | `internal/proc` | `DetachTTY` — run probes without a controlling terminal; `KillGroup` — process-group SIGKILL (plain `Kill` on Windows) |
+| `internal/term` | Run a command on a pseudo-terminal and stream what it prints: `Start(shell, args, w, h, env)` over `x/xpty` (unix ptys, Windows ConPTY), one reader goroutine, `Events() <-chan Event` ending in a single `Exit{Err, Elapsed, Killed}`. A pty read error is never the verdict — `EIO`/EOF/`os.ErrClosed` are all normal termination and `xpty.WaitProcess` decides. Sets `Setsid`+`Setctty` itself (xpty does not), which is why `proc.DetachTTY` must never touch a pty command. No TUI knowledge, no config, no logging |
 | `internal/ui` | `Theme` — the app's ten semantic color roles — and `Styles`, the whole style set built from one theme by `NewStyles`; the two non-role palettes (`LanguageColor`, and `HeadingColors`/`ChromaColors` for panel `[3]`); `PlaceOverlay`, `StripANSI` |
 | `internal/updater` | Detect the package manager that owns an installed binary and produce an update `Plan{Manager, Argv, Display}` |
 | `internal/version` | Detect the installed version locally — `InstalledVersion(t) (ver, present)`; GitHub API with a 24-hour cache; semver comparison (`IsNewer`) and the card's version spelling (`DisplayVersion`); keepkit's own release check (`SelfRepo`, `SelfLatest`) |
 
-`configdir`, `launcher`, `logx`, `proc`, `ui`, `updater` and `version` sit at the bottom of the import graph:
+`configdir`, `logx`, `proc`, `term`, `ui`, `updater` and `version` sit at the bottom of the import graph:
 they know nothing about the TUI (`ui`, `updater` and `version` reach only into
 `loader`/`proc`/`logx`). `configdir` is the lowest leaf (stdlib only), shared by
 `loader`/`version`/`logx`/`main` for one config-dir resolution. GitHub ref parsing
@@ -74,6 +77,7 @@ The `model` package is split across files within a single package:
 |---|---|
 | `model.go` | The `Model` struct, message types, `New`/`Init`/`Update`, selection and filtering helpers (`selectMeta`, `setFocus`, `searchMatches`, `filteredMeta`, `indexOfMeta`, `setHelpContent`) |
 | `mode.go` | The `inputMode` enum and a handler per input mode |
+| `overlay_term.go` | The embedded tool terminal: the pty session interface, its messages and commands, the input relay, key translation, geometry and the frame renderer |
 | `commands.go` | All `tea.Cmd` constructors (fetch commands, update streaming) and re-fetch predicates |
 | `render.go` | `View`, panel/card/status-bar/gauge/overlay renderers, mouse handling. The two list/card builders return their line index alongside the text: `buildCard` → clickable lines, `buildToolRows` → the tool-index ↔ screen-line maps. Carries the single-entry `changelogRenderCache` — the card is rebuilt on every spinner frame, so the release-notes conversion must not repeat |
 | `readme.go` | `renderReadme` — panel `[3]`'s pipeline: sanitize → preprocess → glamour, with a single-entry render cache; `chromaFormatterFor` maps the color profile onto chroma's formatter so a code fence's plate is not quantized away from the card's |
@@ -191,9 +195,10 @@ no focus and fetches nothing (see the layout invariant below). Focus moves with 
 `1`/`2`/`3`, or a mouse click; everything goes through `setFocus(f)`, which repaints
 the tools list — the only viewport whose content depends on focus.
 
-All modal state is a single field `m.mode inputMode` (12 values: `modeNormal`, `modeSearch`,
+All modal state is a single field `m.mode inputMode` (13 values: `modeNormal`, `modeSearch`,
 `modeEditNote`, `modeEditTags`, `modeTrack`, `modeConfirmUntrack`, `modeRename`,
-`modeRunInput`, `modeConfirmUpdate`, `modeAPIStatus`, `modeTokenInput`, `modeHotkeys`). Exactly one mode is active at
+`modeRunInput`, `modeConfirmUpdate`, `modeAPIStatus`, `modeTokenInput`, `modeHotkeys`,
+`modeToolOverlay`). Exactly one mode is active at
 a time; `Update()` dispatches via `switch m.mode`, so keys that open other modes
 structurally cannot fire inside another mode's input.
 
@@ -345,7 +350,7 @@ path). Detection spawns subprocesses, so it runs as a `tea.Cmd`, never inside
 
 Five steps are path-convention based (cargo, pipx, uv, pnpm, bun) and take their
 roots from `managerDirsFrom(getenv, home, goos)` (pure core, `resolveManagerDirs()`
-wrapper — the `launcher.planFor` idiom): `$UV_TOOL_DIR`, `$PNPM_HOME` and
+wrapper — the `configdir.baseFor` idiom): `$UV_TOOL_DIR`, `$PNPM_HOME` and
 `$BUN_INSTALL` with per-platform defaults, plus home-derived `~/.cargo/bin` and
 `~/.local/pipx/venvs` (no `$CARGO_HOME`/`$PIPX_HOME` — unchanged behaviour, and a
 separate question from path resolution). Carrying all five is what lets
@@ -469,26 +474,32 @@ succeed).
 ## Running a tool (`enter`)
 
 `enter` in `[1] Tools` opens a one-line prompt (prefilled with the last command
-dispatched for the tool this session, else the tool name) and launches the
-command. `launcher.Detect` picks the path from the environment alone — no
-subprocesses, so unlike every probe it is safe inside `Update()`. A tab plan
-runs its argv as a `tea.Cmd` through `proc.DetachTTY` with a 10-second ceiling
-(`proc.KillGroup` on the process group when it fires — mostly for osascript
-blocked on the macOS Automation dialog); a `Fallback` plan — terminals with no
-scripting API, and native Windows — runs the command in the current window via
-`tea.ExecProcess` (`sh -c` / `cmd /c`): keepkit suspends and resumes when the
-tool exits.
+dispatched for the tool this session, else the tool name) and runs the command
+on a **pseudo-terminal inside keepkit** — a bordered block over the dimmed
+layout, with the whole keyboard handed to the tool. One path for everything: a
+TUI draws and lives in it, a plain CLI prints and exits and its final screen
+stays until `esc`.
 
-An adapter failure **auto-falls back** to `tea.ExecProcess`, so the tool still
-launches — but only from `modeNormal`: the result can arrive seconds after
-enter, and seizing the terminal under an open editor or overlay would send the
-user's keystrokes to the spawned shell. Under any other mode the fallback is
-deferred, not dropped: it fires — with a visible status message — on the
-keystroke that closes the mode, going straight to the exec fallback (the
-failing adapter plan is never re-run). One adapter launch runs at a time (`m.launchingFor`, the
-launch twin of `updatingFor`). Working directories differ by path: a tab opens
-in the new shell's default cwd, the fallback inherits keepkit's. A non-zero
-exit of the tool itself is a status message only — never logged.
+`internal/term` owns the pty and one reader goroutine; the VT emulator lives on
+the model, so only `Update` ever touches its screen state. While the tool runs
+every key is forwarded — `esc` and `ctrl+c` included, because `esc` is what
+makes vim usable and `ctrl+c` is the tool's interrupt. `ctrl+\` is the one
+reserved chord: it kills the process group and stays in the mode, since the
+outcome line arrives with the exit. Afterwards `esc` closes and nothing else
+does anything.
+
+The block is 70% of the screen with its exit row reserved from the start and
+every row padded to the body width, so it never moves when the tool finishes. A
+screen too small refuses the keypress and remembers nothing; a terminal shrunk
+mid-session clamps to the floor and keeps the tool running. The working
+directory is keepkit's. A non-zero exit of the tool itself is shown in the exit
+row — never logged.
+
+This replaced a tab launcher that scripted other terminals (tmux, iTerm2,
+Terminal.app, kitty, WezTerm) into opening a tab, plus the `tea.ExecProcess`
+fallback and the deferred-fallback machinery that existed to survive an adapter
+failing. Full rationale, including the upstream races it works around, in
+[`docs/design/tool-overlay.md`](docs/design/tool-overlay.md).
 
 ## GitHub API
 
@@ -578,8 +589,8 @@ leaves no file, so the presence of a file is itself the signal. The filename car
 colon-free zero-padded timestamp: lexicographic order equals chronological order,
 which is what `Cleanup()` relies on (the 20 most recent are kept). `logx.Recover` is
 hooked deeper than Bubble Tea's own recover (inside `Update`, `View` and every
-command via `safeCmd`; `execToolCmd` is the one unwrapped cmd — `tea.ExecProcess`
-only constructs the exec message, nothing there can panic): it records the panic
+command via `safeCmd`, with no exceptions left — the one unwrapped cmd was
+`execToolCmd`, and it died with the tab launcher): it records the panic
 with a stack trace and **re-panics** so
 Bubble Tea restores the terminal correctly. The logger's own failures are swallowed
 silently.

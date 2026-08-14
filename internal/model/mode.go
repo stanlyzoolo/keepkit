@@ -28,7 +28,7 @@ const (
 	modeTrack                    // "t", global
 	modeConfirmUntrack           // "u", global
 	modeRename                   // "m", global
-	modeRunInput                 // enter in focusTools: run the tool in a new terminal tab
+	modeRunInput                 // enter in focusTools: the run prompt
 	modeConfirmUpdate            // enter in focusBrief (or "U"): confirm the detected update command
 	modeAPIStatus                // "a": rate-limit / token overlay
 	modeTokenInput               // "e" inside the overlay: masked token entry

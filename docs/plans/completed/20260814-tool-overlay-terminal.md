@@ -231,12 +231,12 @@
 - Create: `docs/design/tool-overlay.md`
 - Modify: `CLAUDE.md`, `ARCHITECTURE.md`, `README.md`, `docs/design/updating.md`, `internal/updater/updater.go`, `internal/model/model.go`
 
-- [ ] create `docs/design/tool-overlay.md` (fourth deep-design doc: the Update-only emulator rule and why, the input-path decision, esc semantics, the kill chord and the no-`DetachTTY` invariant, geometry incl. the reserved exit row, the pty EOF rule, what was deleted and why) and link it from CLAUDE.md's design-docs table
-- [ ] CLAUDE.md: replace the `internal/launcher` package row with `internal/term`; rewrite the **Run (`enter` in `focusTools`)** bullet to the overlay invariant summary; input-modes list (`modeToolOverlay`); `overlayVisible()` description; commands.go/mode.go file-table rows; drop `setStickyStatus` from the status-message lifecycle section; **"Three features" → four** in the design-docs preamble (line ~22) and the "never re-inline these three sections" sentence; fix the misquoted hotkeys row (`run in a tab`, not `run in tab`) while touching it
-- [ ] re-anchor the **`planFor` idiom** onto a surviving example (`baseFor`/`shellCommand`): CLAUDE.md lines ~36/42/109, ARCHITECTURE.md ~348, `docs/design/updating.md` (two sites), `internal/updater/updater.go:93`; rewrite the "`execToolCmd` is the one unwrapped cmd" sentence in CLAUDE.md's logx section and ARCHITECTURE.md ~581 (every cmd is safeCmd-wrapped again); drop `launcher` from ARCHITECTURE.md ~65's bottom-leaf list; replace the "`launchDoneMsg`'s mode gate" mirror in `docs/design/updating.md` and the comment at `internal/model/model.go:839` with the surviving reason
-- [ ] ARCHITECTURE.md: mermaid edge `model --> term` (drop `--> launcher`), package table row, mode count, rewrite the "Running a tool (`enter`)" section, "Three areas" → four (~20-22)
-- [ ] README.md: rewrite the Features bullet at ~64-65 (the adapter list is the whole sentence and it all goes), Usage `enter` line at ~129-131, and the `[1]` hint enumeration at ~153
-- [ ] move this plan to `docs/plans/completed/`
+- [x] create `docs/design/tool-overlay.md` (fourth deep-design doc: the Update-only emulator rule and why, the input-path decision, esc semantics, the kill chord and the no-`DetachTTY` invariant, geometry incl. the reserved exit row, the pty EOF rule, what was deleted and why) and link it from CLAUDE.md's design-docs table
+- [x] CLAUDE.md: replace the `internal/launcher` package row with `internal/term`; rewrite the **Run (`enter` in `focusTools`)** bullet to the overlay invariant summary; input-modes list (`modeToolOverlay`); `overlayVisible()` description; commands.go/mode.go file-table rows; drop `setStickyStatus` from the status-message lifecycle section; **"Three features" → four** in the design-docs preamble (line ~22) and the "never re-inline these three sections" sentence; fix the misquoted hotkeys row (`run in a tab`, not `run in tab`) while touching it
+- [x] re-anchor the **`planFor` idiom** onto a surviving example (`baseFor`/`shellCommand`): CLAUDE.md lines ~36/42/109, ARCHITECTURE.md ~348, `docs/design/updating.md` (two sites), `internal/updater/updater.go:93`; rewrite the "`execToolCmd` is the one unwrapped cmd" sentence in CLAUDE.md's logx section and ARCHITECTURE.md ~581 (every cmd is safeCmd-wrapped again); drop `launcher` from ARCHITECTURE.md ~65's bottom-leaf list; replace the "`launchDoneMsg`'s mode gate" mirror in `docs/design/updating.md` and the comment at `internal/model/model.go:839` with the surviving reason
+- [x] ARCHITECTURE.md: mermaid edge `model --> term` (drop `--> launcher`), package table row, mode count, rewrite the "Running a tool (`enter`)" section, "Three areas" → four (~20-22)
+- [x] README.md: rewrite the Features bullet at ~64-65 (the adapter list is the whole sentence and it all goes), Usage `enter` line at ~129-131, and the `[1]` hint enumeration at ~153
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 
@@ -250,3 +250,18 @@
 **External follow-ups**:
 - demo GIFs (`demo/hero.gif`, `demo/update.gif`) show the old launch flow — decide on regeneration via the demo-gifs skill after merge
 - track upstream x/vt issues #879/#935; a future tagged x/vt release replaces the pinned pseudo-version
+
+## Task 8 notes
+
+- ➕ **the docs-sync sweep found two real drifts beyond the plan's list**: the mermaid
+  graph was missing the `term --> proc` edge (`internal/term/session.go` imports it for
+  `KillGroup`), and README's *Stack* omitted `ultraviolet`, which the key translation
+  made a **direct** dependency. Both fixed.
+- ➕ the `modeRunInput` enum comment in `mode.go` still said *"run the tool in a new
+  terminal tab"* — corrected while verifying the enum against the docs.
+- ⚠️ **CLAUDE.md is 144 641 characters**, over the docs-sync skill's ~140 000 warning
+  threshold and under the 150 000 harness limit. This change *reduced* it by 1 896
+  (146 537 → 144 641): the Run bullet became an invariant summary plus a link, which
+  more than paid for the new package row and the fourth design-doc row. The threshold
+  was already crossed before this work, so splitting another section out is left as a
+  separate decision rather than folded in here.
