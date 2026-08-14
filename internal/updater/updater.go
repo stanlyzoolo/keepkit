@@ -90,7 +90,7 @@ type managerDirs struct {
 }
 
 // resolveManagerDirs is the thin OS-facing wrapper over managerDirsFrom
-// (the launcher.planFor idiom: pure core over an injected env lookup), plus the
+// (the configdir.baseFor idiom: pure core over an injected env lookup), plus the
 // one thing the pure core cannot do — expanding symlinks in the resolved roots.
 //
 // That expansion is load-bearing, not hygiene. Detect compares these roots

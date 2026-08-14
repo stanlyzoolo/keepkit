@@ -7,12 +7,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stanlyzoolo/keepkit/internal/launcher"
 	"github.com/stanlyzoolo/keepkit/internal/loader"
 	"github.com/stanlyzoolo/keepkit/internal/logx"
 	"github.com/stanlyzoolo/keepkit/internal/proc"
@@ -49,68 +47,15 @@ func validateTokenCmd(token string) tea.Cmd {
 	})
 }
 
-// launchTimeout bounds a tab-open adapter subprocess. Adapters normally return
-// near-instantly; the ceiling exists for the paths that can block on a human —
-// most notably osascript waiting on the macOS Automation permission dialog.
-// When it fires, the launchDoneMsg error handler auto-falls back to running the
-// tool in the current window, so the launch still happens. A var, not a const:
-// the timeout/KillGroup wiring is load-bearing and tests shrink it instead of
-// waiting 10 real seconds (the same seam idiom as updater's testHomeDir).
-var launchTimeout = 10 * time.Second
-
-// launchDoneMsg carries the result of a tab-open adapter run (startLaunchCmd).
-// command is the user's shell command, carried so the error handler can build
-// the ExecProcess fallback without re-reading input state.
-type launchDoneMsg struct {
-	toolName string
-	command  string
-	err      error
-}
-
-// execDoneMsg is the tea.ExecProcess callback result for the fallback path:
-// the tool ran in the current window and keepkit resumed. err is the tool's
-// own exit status — a tool exiting non-zero is not a keepkit anomaly, so the
-// handler surfaces it as a statusMsg and never logs it.
-type execDoneMsg struct {
-	toolName string
-	err      error
-}
-
-// startLaunchCmd runs a tab-open adapter plan (tmux new-window, osascript,
-// kitten @ launch, …) and emits launchDoneMsg. The adapter is detached from
-// the controlling terminal like every other probe (proc.DetachTTY), and on the
-// timeout the whole process group is killed — DetachTTY's Setsid makes the
-// child a session leader, so a plain kill would orphan grandchildren. The
-// error is not logged here: the launchDoneMsg handler auto-falls back, so an
-// adapter failure is a degraded path, not a dead end.
-//
-// Accepted race: if the timeout kills an adapter that had already executed its
-// tab command (osascript stuck after `write text`, a stalled tmux server), the
-// error still triggers the fallback and the command runs twice. The window is
-// narrow and undetectable from here; the alternative — not falling back — would
-// strand every genuine failure.
-func startLaunchCmd(plan launcher.Plan, toolName, command string) tea.Cmd {
-	return safeCmd("startLaunchCmd", func() tea.Msg {
-		if len(plan.Argv) == 0 {
-			return launchDoneMsg{toolName: toolName, command: command, err: errors.New("empty launch command")}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), launchTimeout)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, plan.Argv[0], plan.Argv[1:]...)
-		proc.DetachTTY(cmd)
-		cmd.Cancel = func() error { return proc.KillGroup(cmd) }
-		err := cmd.Run()
-		return launchDoneMsg{toolName: toolName, command: command, err: err}
-	})
-}
-
-// shellCommand resolves the shell invocation that runs the user's command in
-// the current window. Pure and goos-parameterized so both branches are
+// shellCommand resolves the shell invocation that runs the user's command on
+// the embedded terminal's pty. Pure and goos-parameterized so both branches are
 // table-testable without spawning anything — the exact mirror of
-// browserCommand's seam. The cmd /c branch rides Go's generic argv quoting,
-// which is not cmd.exe-aware — a command embedding double quotes can misparse
-// there; accepted on the degraded Windows path (the fix, SysProcAttr.CmdLine,
-// needs a per-GOOS file and a real Windows report to justify it).
+// browserCommand's seam, and the reason internal/term needs no goos knowledge
+// of its own: the model builds argv and hands it over.
+// The cmd /c branch rides Go's generic argv quoting, which is not cmd.exe-aware
+// — a command embedding double quotes can misparse there; accepted on the
+// degraded Windows path (the fix, SysProcAttr.CmdLine, needs a per-GOOS file
+// and a real Windows report to justify it).
 // updater.customPlan is the deliberate duplicate of this decision on the update
 // path (updater sits below model in the import graph and may not import it);
 // the two must not drift.
@@ -119,39 +64,6 @@ func shellCommand(goos, cmd string) (string, []string) {
 		return "cmd", []string{"/c", cmd}
 	}
 	return "sh", []string{"-c", cmd}
-}
-
-// execToolCmd runs command in the current window via tea.ExecProcess: Bubble
-// Tea releases the terminal, the tool takes it over, and keepkit resumes when
-// it exits. This is the fallback for terminals with no tab-scripting API and
-// the safety net when an adapter fails. Deliberately not wrapped in safeCmd:
-// tea.ExecProcess only builds the exec message — nothing here can panic.
-func execToolCmd(toolName, command string) tea.Cmd {
-	name, args := shellCommand(runtime.GOOS, command)
-	return tea.ExecProcess(exec.Command(name, args...), execDoneCallback(toolName))
-}
-
-// execDoneCallback maps the tea.ExecProcess completion error into execDoneMsg
-// for toolName. Extracted from execToolCmd so the mapping is testable — the
-// exec message Bubble Tea builds keeps its callback field unexported.
-func execDoneCallback(toolName string) func(error) tea.Msg {
-	return func(err error) tea.Msg {
-		return execDoneMsg{toolName: toolName, err: err}
-	}
-}
-
-// notFoundExit reports whether err is the shell's "command not found" exit
-// status: 127 from sh (POSIX), 9009 from cmd.exe. Exit 127 means the tool
-// never ran at all, so the execDoneMsg handler can say "not installed"
-// instead of a cryptic exit status. Only the ExecProcess fallback can see
-// this — a tab adapter's shell reports the miss inside its own tab.
-func notFoundExit(err error) bool {
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) {
-		return false
-	}
-	code := ee.ExitCode()
-	return code == 127 || code == 9009
 }
 
 // fetchInstalledCmd returns a Cmd that detects the installed version of t

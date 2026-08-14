@@ -177,13 +177,17 @@
 - Modify: `internal/model/mode_test.go`, `internal/model/status_test.go`
 - Modify/Delete: `internal/model/launch_test.go`
 
-- [ ] rewire `updateRunInput`'s enter: **refusal first** (`termGeometry` incl. `!m.ready`) → statusMsg (`terminal too small to run a tool`-class wording) with **no `lastRun` write** — a launch that never started is not remembered (today's refusal comment, `mode.go:346`, keeps its meaning); on success: `lastRun` write, `startTermCmd`, `modeToolOverlay`; empty-input-cancels unchanged
-- [ ] delete `internal/launcher`; in model: `startLaunchCmd`, `execToolCmd`, `launchDoneMsg`/`execDoneMsg`, `m.launchingFor`, `pendingLaunchName`/`Command` + `flushPendingLaunch` and all its modal-return call sites, `launchTimeout`, `launchFallbackStatus`, `notFoundExit`, the `launching…`/`tab open failed…` wordings
-- [ ] delete `setStickyStatus` (its only callers were the two launch statuses) and `TestInFlightStatusSurvivesStaleExpiry`; keep `setStatus`/TTL machinery untouched
-- [ ] keep `shellCommand` (now feeds the overlay dispatch; refresh its comment and the cross-reference on `updater.customPlan`)
-- [ ] update `mode_test.go`: `TestRunInputEnterStoresLastRun` (post-enter mode → `modeToolOverlay`, `lastRun` still written); audit the other `modeRunInput` tests (`TestRunInputOpensPrefilled`, `TestRunInputEscCancels`, `TestRunInputBlankInputCancels`, `TestRunDuringUpdate`, `TestRunInputKeyGuard`) — prompt-opening ones stay, only dispatch-shape assertions change
-- [ ] rewrite `launch_test.go` into overlay-dispatch tests: enter→prompt→overlay opens with prefill variants; empty list no-op; rename still clears `lastRun`; refusal writes no `lastRun`; **no test executes the returned cmd** (it would spawn a real pty)
-- [ ] run the full gate + `GOOS=windows go build ./...` - must pass before task 6
+- [x] rewire `updateRunInput`'s enter: **refusal first** (`termGeometry` incl. `!m.ready`) → statusMsg (`terminal too small to run a tool`-class wording) with **no `lastRun` write** — a launch that never started is not remembered (today's refusal comment, `mode.go:346`, keeps its meaning); on success: `lastRun` write, `startTermCmd`, `modeToolOverlay`; empty-input-cancels unchanged
+- [x] delete `internal/launcher`; in model: `startLaunchCmd`, `execToolCmd`, `launchDoneMsg`/`execDoneMsg`, `m.launchingFor`, `pendingLaunchName`/`Command` + `flushPendingLaunch` and all its modal-return call sites, `launchTimeout`, `launchFallbackStatus`, `notFoundExit`, the `launching…`/`tab open failed…` wordings
+  - the untrack handler's "drop a pending fallback for this tool" branch goes with them, and the `tea.KeyMsg` dispatch comment now states what the switch actually does rather than what the wrapper used to.
+- [x] delete `setStickyStatus` (its only callers were the two launch statuses) and `TestInFlightStatusSurvivesStaleExpiry`; keep `setStatus`/TTL machinery untouched
+- [x] keep `shellCommand` (now feeds the overlay dispatch; refresh its comment and the cross-reference on `updater.customPlan`)
+- [x] update `mode_test.go`: `TestRunInputEnterStoresLastRun` (post-enter mode → `modeToolOverlay`, `lastRun` still written); audit the other `modeRunInput` tests (`TestRunInputOpensPrefilled`, `TestRunInputEscCancels`, `TestRunInputBlankInputCancels`, `TestRunDuringUpdate`, `TestRunInputKeyGuard`) — prompt-opening ones stay, only dispatch-shape assertions change
+  - ⚠️ `TestRunInputEnterStoresLastRun` broke for a second reason the plan did not predict: `newTestModel` sets `width`/`height` **without a `WindowSizeMsg`**, so `m.ready` is false and the new refusal fired. It now goes through a real resize — which is the honest fixture, since the dispatch measures the screen.
+- [x] rewrite `launch_test.go` into overlay-dispatch tests: enter→prompt→overlay opens with prefill variants; empty list no-op; rename still clears `lastRun`; refusal writes no `lastRun`; **no test executes the returned cmd** (it would spawn a real pty)
+  - `TestRenameClearsLastRun` already existed in `mode_test.go` and was left there rather than duplicated.
+- [x] run the full gate + `GOOS=windows go build ./...` - must pass before task 6
+  - ➕ four comments in Go source pointed at now-deleted symbols and were re-anchored here rather than left for Task 8: `updater.go`'s `launcher.planFor` idiom → `configdir.baseFor`, two `launchTimeout` var-seam references → `updateTimeout`, and `acceptsUpdateDetect`'s `launchDoneMsg` mode-gate mirror → the overlay's own reason.
 
 ### Task 6: surfaces — hotkeys overlay sweep
 

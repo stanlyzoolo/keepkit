@@ -114,9 +114,9 @@ type readmeMsg struct {
 type statusExpiredMsg struct{ seq int }
 
 // statusMsgTTL is how long a transient status message holds the bar before it
-// yields back to the hints. A var, not a const, mirroring launchTimeout: tea.Tick
-// blocks for the full duration, so tests shrink it to inspect the produced
-// statusExpiredMsg without a real sleep.
+// yields back to the hints. A var, not a const, mirroring updateTimeout:
+// tea.Tick blocks for the full duration, so tests shrink it to inspect the
+// produced statusExpiredMsg without a real sleep.
 var statusMsgTTL = 1 * time.Second
 
 const (
@@ -285,8 +285,10 @@ type Model struct {
 	// bumps it on every transient message and stamps the value into the
 	// statusExpiredMsg tick it returns, so a stale timer (from a message already
 	// superseded by a newer one) is dropped instead of clearing the current
-	// message early. In-flight statuses ("launching …") bypass setStatus and so
-	// carry no timer — they are extinguished by launchDoneMsg, not the clock.
+	// message early. Every transient status goes through setStatus; work still
+	// in progress reports itself on the surface that owns it (the update log's
+	// outcome block, the overlay's exit row) rather than on a bar message that
+	// would have to outlive its own timer.
 	statusSeq int
 	width     int
 	height    int
@@ -314,27 +316,6 @@ type Model struct {
 	runInput textinput.Model
 	lastRun  map[string]string
 
-	// launchingFor is the one-adapter-launch-at-a-time guard (the launch twin
-	// of updatingFor): the name of the tool whose tab-open adapter run is in
-	// flight, empty when idle. Set on startLaunchCmd dispatch, cleared by
-	// launchDoneMsg. Without it a second enter+enter while osascript sits on
-	// the macOS Automation dialog (up to launchTimeout) would dispatch a
-	// concurrent adapter run. The ExecProcess fallback needs no guard — it
-	// suspends the TUI synchronously.
-	launchingFor string
-
-	// pendingLaunchName/Command hold the exec fallback deferred by the
-	// launchDoneMsg mode gate: the adapter failed while another mode owned the
-	// screen (tea.ExecProcess would seize the terminal under an open
-	// editor/overlay and route keystrokes to the spawned shell), so the
-	// fallback waits here until the keystroke that returns the model to
-	// modeNormal — flushPendingLaunch (mode.go) then dispatches it with a
-	// visible status message. A statusMsg set at gate time would be dead UI:
-	// every non-normal mode's renderStatusBar branch outranks the statusMsg
-	// branch, and the blanket statusMsg reset on tea.KeyMsg wipes it on the
-	// very keystroke that closes the mode.
-	pendingLaunchName    string
-	pendingLaunchCommand string
 
 	// The embedded tool terminal (modeToolOverlay). termSession is the running
 	// tool behind a narrow interface so tests can drive the handlers with a
@@ -860,7 +841,8 @@ func (m *Model) selfUpdateKey() tea.Cmd {
 // queue) and while any input mode owns the keyboard: detection spawns
 // subprocesses and the answer can arrive seconds later, so a confirm dialog
 // opening under an editor, a search or an overlay would steal the keystroke
-// aimed at it (the same reasoning as launchDoneMsg's mode gate). Beyond that a
+// aimed at it — and under the tool overlay it would steal one the running tool
+// is waiting for. Beyond that a
 // tool result must still match the selection — the user may have moved on —
 // while keepkit's own has no selection to match: it is typically untracked and
 // the tracker may be empty.
@@ -1238,52 +1220,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case launchDoneMsg:
-		// Tab-open adapter finished. Clear the one-launch-at-a-time guard
-		// first, so the fallback (or the user's retry) can dispatch again.
-		if m.launchingFor == msg.toolName {
-			m.launchingFor = ""
-		}
-		// On failure, auto-fall back to running the tool in the current
-		// window — the tool always launches, the status bar explains the
-		// degradation. Not logged: the fallback makes this a degraded path,
-		// not a keepkit malfunction.
-		if msg.err != nil {
-			// The result can arrive up to launchTimeout after enter (osascript
-			// blocked on the macOS Automation dialog). tea.ExecProcess seizes
-			// the terminal, so the auto-fallback fires only from the base
-			// state: under an open editor/overlay/search it would hijack the
-			// screen and send the user's keystrokes to the spawned shell —
-			// there the fallback is deferred instead: flushPendingLaunch
-			// dispatches it (same statusMsg, no adapter re-run) on the
-			// keystroke that returns the mode to modeNormal.
-			if m.mode != modeNormal {
-				m.pendingLaunchName = msg.toolName
-				m.pendingLaunchCommand = msg.command
-				return m, nil
-			}
-			return m, tea.Batch(
-				m.setStatus(launchFallbackStatus(msg.toolName)),
-				execToolCmd(msg.toolName, msg.command),
-			)
-		}
-		// Mode-neutral wording: Terminal.app and tmux open a window, not a tab.
-		return m, m.setStatus("launched " + msg.toolName)
-
-	case execDoneMsg:
-		// The tool ran in the current window and keepkit resumed. A non-zero
-		// exit belongs to the tool, not keepkit — statusMsg only, no logx.
-		// Exception in wording only: the shell's own "command not found"
-		// exit (notFoundExit) means the tool never ran, so the message says
-		// "not installed" instead of surfacing a cryptic exit status.
-		if msg.err != nil {
-			if notFoundExit(msg.err) {
-				return m, m.setStatus(msg.toolName + " not found — is it installed?")
-			}
-			return m, m.setStatus(msg.toolName + " exited: " + msg.err.Error())
-		}
-		return m, nil
-
 	case helpOutputMsg:
 		// Only the named tool's result retires the loading marker: a stale
 		// fetch for a previously highlighted tool must not clear the flag
@@ -1463,35 +1399,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		m.statusMsg = ""
 
-		// Every modal return funnels through flushPendingLaunch: the keystroke
-		// that brings the mode back to modeNormal is the single point where a
-		// deferred exec fallback (launchDoneMsg mode gate) can safely fire —
-		// see the pendingLaunchName field doc. While the mode stays open the
-		// wrapper is a no-op.
+		// A non-normal mode owns the keyboard: its handler runs and returns, so
+		// the per-focus map below and the global keys after it never see the
+		// key. That is what makes the old per-flag guard bugs impossible.
 		switch m.mode {
 		case modeEditNote:
-			return flushPendingLaunch(m.updateNoteEdit(msg))
+			return m.updateNoteEdit(msg)
 		case modeEditTags:
-			return flushPendingLaunch(m.updateTagsEdit(msg))
+			return m.updateTagsEdit(msg)
 		case modeTrack:
-			return flushPendingLaunch(m.updateTrackInput(msg))
+			return m.updateTrackInput(msg)
 		case modeConfirmUntrack:
-			return flushPendingLaunch(m.updateUntrackConfirm(msg))
+			return m.updateUntrackConfirm(msg)
 		case modeRename:
-			return flushPendingLaunch(m.updateRenameInput(msg))
+			return m.updateRenameInput(msg)
 		case modeRunInput:
-			return flushPendingLaunch(m.updateRunInput(msg))
+			return m.updateRunInput(msg)
 		case modeConfirmUpdate:
-			return flushPendingLaunch(m.updateConfirmUpdate(msg))
+			return m.updateConfirmUpdate(msg)
 		case modeAPIStatus, modeTokenInput:
-			return flushPendingLaunch(m.updateAPIStatus(msg))
+			return m.updateAPIStatus(msg)
 		case modeHotkeys:
-			return flushPendingLaunch(m.updateHotkeys(msg))
+			return m.updateHotkeys(msg)
 		case modeToolOverlay:
-			// Deliberately not wrapped in flushPendingLaunch, unlike every
-			// sibling above: a deferred exec fallback must not seize the
-			// terminal with tea.ExecProcess on the very keystroke that closes
-			// the overlay. The wrapper disappears with the tab launcher.
 			return m.updateToolOverlay(msg)
 		}
 
@@ -1510,7 +1440,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// selectMeta before the flush: it mutates m, and Go copies m
 				// into the call before evaluating a second argument.
 				cmd = m.selectMeta(m.indexOfMeta(prev))
-				return flushPendingLaunch(m, cmd)
+				return m, cmd
 			case "enter":
 				// Commit: accept the highlighted match. With no matches the key
 				// is a no-op and search stays open.
@@ -1528,7 +1458,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// flush: it mutates m, and Go copies m into the call before
 				// evaluating a second argument.
 				cmd = m.selectMeta(m.indexOfMeta(mt.Name))
-				return flushPendingLaunch(m, cmd)
+				return m, cmd
 			case "up", "down":
 				// Move the highlight through the filtered list (wrap-around,
 				// j/k parity). Never forwarded to the textinput, so the query
@@ -2092,18 +2022,6 @@ func (m *Model) setStatus(s string) tea.Cmd {
 	return tea.Tick(statusMsgTTL, func(time.Time) tea.Msg {
 		return statusExpiredMsg{seq: seq}
 	})
-}
-
-// setStickyStatus shows an in-flight status with no expiry timer — it reports
-// work still in progress and is extinguished by the completion message, not by
-// the clock. The seq bump is the whole point of the helper: a transient status
-// set within the last statusMsgTTL still has a tick in flight, and its seq would
-// otherwise match this message too, wiping the only sign the adapter is busy for
-// up to launchTimeout. It returns nothing, so a caller cannot batch a timer onto
-// it by mistake.
-func (m *Model) setStickyStatus(s string) {
-	m.statusSeq++
-	m.statusMsg = s
 }
 
 // toggleGroupByTag flips the [1] list between the flat update-grouped view and

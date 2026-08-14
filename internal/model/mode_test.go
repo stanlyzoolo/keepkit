@@ -1773,9 +1773,8 @@ func TestRunInputEmptyEnterCancels(t *testing.T) {
 
 // TestRunInputOpensDuringUpdate pins a deliberate decision: a running update
 // stream (updatingFor set) does NOT block the launch prompt — independent
-// concerns; ExecProcess pauses rendering of the live update log and the buffer
-// catches up on resume. A future "safety" guard here would silently change
-// documented behavior.
+// concerns; the log keeps streaming into [3] under the overlay's dim. A future
+// "safety" guard here would silently change documented behavior.
 func TestRunInputOpensDuringUpdate(t *testing.T) {
 	m := newTestModel(focusTools)
 	m.updatingFor = "git"
@@ -1786,14 +1785,19 @@ func TestRunInputOpensDuringUpdate(t *testing.T) {
 }
 
 // TestRunInputEnterStoresLastRun: a dispatching enter records the trimmed
-// command under the tool's name, so the next prompt prefills it.
+// command under the tool's name, so the next prompt prefills it, and leaves the
+// model in the overlay rather than back at modeNormal.
+//
+// The model has to go through a real WindowSizeMsg: the dispatch now measures
+// the screen first and refuses without one, which is also what the geometry
+// refusal test asserts from the other side.
 func TestRunInputEnterStoresLastRun(t *testing.T) {
-	m := newTestModel(focusTools)
+	m := mustModel(newTestModel(focusTools).Update(tea.WindowSizeMsg{Width: 120, Height: 34}))
 	m.mode = modeRunInput
 	m.runInput.SetValue("  git status  ")
 	nm := mustModel(m.Update(tea.KeyMsg{Type: tea.KeyEnter}))
-	if nm.mode != modeNormal {
-		t.Errorf("mode = %d, want modeNormal", nm.mode)
+	if nm.mode != modeToolOverlay {
+		t.Errorf("mode = %d, want modeToolOverlay", nm.mode)
 	}
 	if got := nm.lastRun["git"]; got != "git status" {
 		t.Errorf("lastRun[git] = %q, want the trimmed %q", got, "git status")

@@ -556,23 +556,22 @@ func TestToolOverlayKeysBeforeStart(t *testing.T) {
 	}
 }
 
-// The overlay's dispatch is deliberately not wrapped in flushPendingLaunch,
-// unlike every sibling mode: a deferred exec fallback firing tea.ExecProcess on
-// the keystroke that closes the overlay would seize the terminal.
-func TestToolOverlayDoesNotFlushPendingLaunch(t *testing.T) {
+// Closing the overlay dispatches nothing at all. The esc that closes it is the
+// one keystroke the deleted tab launcher could have hijacked with a deferred
+// tea.ExecProcess, so this pins that the exit is silent: no fetch, no exec, no
+// status tick rides along.
+func TestToolOverlayCloseDispatchesNothing(t *testing.T) {
 	f := newFakeSession(4)
 	m := overlayModel(t, f)
-	m.pendingLaunchName = "fd"
-	m.pendingLaunchCommand = "fd --version"
 	m = mustModel(m.Update(termExitMsg{elapsed: time.Second}))
 
 	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 
 	if cmd != nil {
-		t.Error("closing the overlay dispatched the deferred exec fallback")
+		t.Errorf("closing the overlay returned a command (%T)", cmd())
 	}
-	if nm.(Model).pendingLaunchName != "fd" {
-		t.Error("the deferred fallback was consumed by the overlay's dispatch")
+	if nm.(Model).mode != modeNormal {
+		t.Error("esc did not close the overlay")
 	}
 }
 
