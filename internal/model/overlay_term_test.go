@@ -141,12 +141,22 @@ func TestTermStartedCreatesEmulatorAtGeometrySize(t *testing.T) {
 }
 
 // A session that arrives after the overlay is gone must not be adopted and must
-// not be left running: nothing could reach it afterwards.
+// not be left running: nothing could reach it afterwards. The branch must also
+// drain the session's events — a chatty child that filled the buffer before
+// the kill would otherwise park the reader goroutine on a channel send
+// forever, with the killed child never reaped behind it.
 func TestTermStartedAfterCloseKillsTheSession(t *testing.T) {
 	f := newFakeSession(4)
+	// What a chatty child leaves behind: queued output plus the exit, channel
+	// closed — the shape the reader produces once Kill+Close land.
+	f.events <- term.Data{Bytes: []byte("queued output")}
+	f.events <- term.Exit{}
+	close(f.events)
+
 	m := newTestModel(focusTools) // still modeNormal - the overlay never opened
 
-	nm := mustModel(m.Update(termStartedMsg{session: f}))
+	tm, cmd := m.Update(termStartedMsg{session: f})
+	nm := tm.(Model)
 
 	if nm.termSession != nil {
 		t.Error("a session was adopted outside modeToolOverlay")
@@ -154,6 +164,15 @@ func TestTermStartedAfterCloseKillsTheSession(t *testing.T) {
 	killed, closed := f.counts()
 	if killed == 0 || closed == 0 {
 		t.Errorf("stale session left running: killed=%d closed=%d, want both > 0", killed, closed)
+	}
+	if cmd == nil {
+		t.Fatal("the stale branch returned no drain cmd")
+	}
+	if msg := cmd(); msg != nil {
+		t.Errorf("the drain produced %v, want nil — it must never re-enter the overlay's message flow", msg)
+	}
+	if _, ok := <-f.events; ok {
+		t.Error("the stale session's events were not drained")
 	}
 }
 
@@ -437,6 +456,43 @@ func TestToolOverlayForwardsEveryKeyWhileRunning(t *testing.T) {
 				t.Errorf("mode = %v, want the overlay to keep the keyboard", nm.mode)
 			}
 		})
+	}
+}
+
+// A paste is one block of text, not typed keys: it goes through
+// Emulator.Paste, which brackets it with the ?2004 markers exactly when the
+// tool asked for them — vim without the markers auto-indents every pasted
+// line.
+func TestToolOverlayPasteBracketsWhenTheToolAskedForIt(t *testing.T) {
+	f := newFakeSession(4)
+	m := overlayModel(t, f)
+
+	// The tool enables bracketed paste; the request arrives like any other
+	// output, through a chunk.
+	nm := mustModel(m.Update(termChunkMsg{session: f, data: []byte("\x1b[?2004h")}))
+
+	mustModel(nm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a\n\tb"), Paste: true}))
+
+	want := "\x1b[200~a\n\tb\x1b[201~"
+	if got := f.input(t, want); !strings.Contains(got, want) {
+		t.Errorf("tool received %q, want it to contain %q", got, want)
+	}
+}
+
+// A tool that never asked for bracketed paste gets the pasted text bare — the
+// markers would be input it does not understand.
+func TestToolOverlayPasteIsBareWithoutBracketedPaste(t *testing.T) {
+	f := newFakeSession(4)
+	m := overlayModel(t, f)
+
+	mustModel(m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("plain paste"), Paste: true}))
+
+	got := f.input(t, "plain paste")
+	if !strings.Contains(got, "plain paste") {
+		t.Errorf("tool received %q, want it to contain %q", got, "plain paste")
+	}
+	if strings.Contains(got, "\x1b[200~") || strings.Contains(got, "\x1b[201~") {
+		t.Errorf("tool received %q with paste markers it never asked for", got)
 	}
 }
 
@@ -915,6 +971,44 @@ func TestToolOverlayResizeBelowMinimumClamps(t *testing.T) {
 	}
 	if nm.mode != modeToolOverlay || nm.termSession == nil {
 		t.Error("a shrink tore the session down")
+	}
+}
+
+// A resize landing in the window between the run-prompt enter and
+// termStartedMsg must still reach the tool. The pty was created at the
+// geometry captured at keypress time; the WindowSizeMsg handler moves
+// termW/termH but has no session to tell, and resizeToolOverlay's
+// nothing-changed early return then sees the new size already stored — so
+// adoption is the one place left that can bring the pty up to date.
+func TestToolOverlayResizeBeforeStartReachesTheSession(t *testing.T) {
+	f := newFakeSession(4)
+	m := New([]loader.ToolMeta{{Name: "yazi"}}).WithAppVersion("v0.1.0")
+	mm := mustModel(m.Update(tea.WindowSizeMsg{Width: 120, Height: 34}))
+	mm.mode = modeToolOverlay
+	mm.termToolName = "yazi"
+	// What the run-prompt enter captured: startTermCmd is in flight at this
+	// size and the pty it creates will be exactly this large.
+	mm.termW, mm.termH, _ = mm.termGeometry()
+	startW, startH := mm.termW, mm.termH
+
+	// The resize lands while term.Start is still in flight.
+	mm = mustModel(mm.Update(tea.WindowSizeMsg{Width: 160, Height: 44}))
+	if mm.termW == startW && mm.termH == startH {
+		t.Fatal("the resize did not change the overlay geometry — the fixture no longer exercises the race")
+	}
+
+	nm := mustModel(mm.Update(termStartedMsg{session: f}))
+	t.Cleanup(func() { nm.closeToolOverlay() })
+
+	if nm.termEmu.Width() != nm.termW || nm.termEmu.Height() != nm.termH {
+		t.Errorf("emulator is %dx%d, want %dx%d", nm.termEmu.Width(), nm.termEmu.Height(), nm.termW, nm.termH)
+	}
+	got := f.resizes()
+	if len(got) == 0 {
+		t.Fatal("the pty keeps the keypress-time size: the session was never resized to the new geometry")
+	}
+	if last := got[len(got)-1]; last[0] != nm.termW || last[1] != nm.termH {
+		t.Errorf("session resized to %dx%d, want %dx%d", last[0], last[1], nm.termW, nm.termH)
 	}
 }
 

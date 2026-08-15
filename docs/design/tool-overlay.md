@@ -64,8 +64,9 @@ Translation splits three ways, by what actually depends on emulator state:
 | arrows, Home/End, PgUp/PgDn, Insert/Delete, shift+tab, F1–F12 | `SendKey` | DECCKM/DECNKM apply |
 | the control range (`KeyEnter`, `KeyEsc`, `KeyCtrlA` …) | the byte itself | Bubble Tea's control key *types are* the control bytes, and none of them is mode-dependent — writing the byte is exactly what vt's encoder produces |
 | ctrl/shift-modified cursor keys | hand-encoded `CSI 1;<mod><final>` | **x/vt encodes none of them** — its `SendKey` default emits nothing when `Mod != 0`, which would silently swallow `ctrl+left` in every editor. Safe to write out because, unlike the bare arrows, the modified forms do not depend on DECCKM |
+| a paste (`KeyRunes` with `Paste: true`) | `Emulator.Paste` | one block of text, not typed keys: `Paste` brackets it with the `?2004` markers exactly when the tool set that mode — without them vim auto-indents every pasted line — and passes it bare to a tool that never asked |
 
-`Alt` is a Bubble Tea flag rather than a key: it becomes an ESC prefix.
+`Alt` is a Bubble Tea flag rather than a key: it becomes an ESC prefix (a paste takes no prefix — it has no modifier).
 
 ### Teardown: never call `Emulator.Close()`
 

@@ -196,20 +196,39 @@ func waitForTermChunkCmd(s termSession) tea.Cmd {
 // the Update goroutine, and the input relay is started now that both ends
 // exist.
 //
-// A session arriving after the overlay is gone — the user's tool failed to
-// start and esc closed the outcome line while term.Start was still in flight,
-// or a stale start lost its race — is killed rather than adopted. Leaving it
-// running would strand a pty nothing can reach.
+// A session arriving when the overlay is no longer waiting for one is killed
+// rather than adopted. As wired that cannot happen — the start-failure exit
+// and a started session are alternative results of the same command, and no
+// message handler writes m.mode without a gate that refuses modeToolOverlay —
+// but a fake can produce it and a future mode writer could, and a guard kept
+// for that future must actually be safe when it fires: the drain below is
+// what lets the reader goroutine end (and the killed child be reaped) when a
+// chatty tool has already filled the event buffer, where a bare Kill+Close
+// would park the reader on a channel send forever.
 func (m *Model) handleTermStarted(msg termStartedMsg) tea.Cmd {
 	if m.mode != modeToolOverlay || m.termSession != nil {
 		msg.session.Kill()
 		_ = msg.session.Close()
-		return nil
+		// Bounded: the closed master fails the reader's next read, the wait
+		// reaps the killed child, Exit lands and the channel closes.
+		return safeCmd("drainStaleTermSession", func() tea.Msg {
+			for range msg.session.Events() {
+			}
+			return nil
+		})
 	}
 
 	m.termSession = msg.session
 	m.termEmu = vt.NewEmulator(m.termW, m.termH)
 	m.termInput = startTermInput(m.termEmu, msg.session)
+	// The pty was created at the geometry the run-prompt enter captured. A
+	// WindowSizeMsg processed in the start window has already moved termW/termH
+	// with no session to follow it, and resizeToolOverlay's nothing-changed
+	// early return then sees the new size stored — so the pty would keep the
+	// stale winsize until the next real resize. Unconditional on purpose: in
+	// the common no-resize case this is a same-size TIOCSWINSZ, which the
+	// kernel drops without a SIGWINCH, so the child never notices.
+	_ = msg.session.Resize(m.termW, m.termH)
 	return waitForTermChunkCmd(msg.session)
 }
 
@@ -391,6 +410,14 @@ func sendToolKey(emu *vt.Emulator, msg tea.KeyMsg) {
 
 	switch msg.Type {
 	case tea.KeyRunes:
+		if msg.Paste {
+			// A paste is one block of text, not typed keys: Emulator.Paste
+			// brackets it with the ?2004 markers exactly when the tool asked
+			// for them, which is what keeps vim from auto-indenting every
+			// pasted line. No alt prefix — a paste has no modifier.
+			emu.Paste(string(msg.Runes))
+			return
+		}
 		emu.SendText(alt + string(msg.Runes))
 	case tea.KeySpace:
 		emu.SendText(alt + " ")
