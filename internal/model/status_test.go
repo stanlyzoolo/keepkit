@@ -13,9 +13,8 @@ import (
 
 // shrinkStatusTTL shortens statusMsgTTL so a test can invoke the tick Cmd that
 // setStatus returns without waiting the real TTL (tea.Tick blocks for the full
-// duration). Same var-seam idiom as updateTimeout in commands.go. Must be
-// called before the Update that produces the tick — tea.Tick captures the TTL
-// value at construction time.
+// duration). Must be called before the Update that produces the tick —
+// tea.Tick captures the TTL value at construction time.
 func shrinkStatusTTL(t *testing.T) {
 	t.Helper()
 	orig := statusMsgTTL

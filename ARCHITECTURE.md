@@ -589,8 +589,8 @@ leaves no file, so the presence of a file is itself the signal. The filename car
 colon-free zero-padded timestamp: lexicographic order equals chronological order,
 which is what `Cleanup()` relies on (the 20 most recent are kept). `logx.Recover` is
 hooked deeper than Bubble Tea's own recover (inside `Update`, `View` and every
-command via `safeCmd`, with no exceptions left — the one unwrapped cmd was
-`execToolCmd`, and it died with the tab launcher): it records the panic
+command via `safeCmd`; the one unwrapped cmd is `handleTermChunk`'s exit
+re-emit, a closure returning a prebuilt value that cannot panic): it records the panic
 with a stack trace and **re-panics** so
 Bubble Tea restores the terminal correctly. The logger's own failures are swallowed
 silently.

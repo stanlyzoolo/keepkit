@@ -114,9 +114,10 @@ type readmeMsg struct {
 type statusExpiredMsg struct{ seq int }
 
 // statusMsgTTL is how long a transient status message holds the bar before it
-// yields back to the hints. A var, not a const, mirroring updateTimeout:
-// tea.Tick blocks for the full duration, so tests shrink it to inspect the
-// produced statusExpiredMsg without a real sleep.
+// yields back to the hints. A var, not a const — the last shrinkable timeout
+// seam now that launchTimeout died with the tab launcher: tea.Tick blocks for
+// the full duration, so tests shrink it to inspect the produced
+// statusExpiredMsg without a real sleep.
 var statusMsgTTL = 1 * time.Second
 
 const (
@@ -315,7 +316,6 @@ type Model struct {
 	// al.; untrack leaves it (harmless, session-scoped).
 	runInput textinput.Model
 	lastRun  map[string]string
-
 
 	// The embedded tool terminal (modeToolOverlay). termSession is the running
 	// tool behind a narrow interface so tests can drive the handlers with a
