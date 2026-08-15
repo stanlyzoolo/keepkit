@@ -17,6 +17,7 @@ package term
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"sync"
@@ -97,6 +98,10 @@ func Start(shell string, args []string, w, h int, env []string) (*Session, error
 		_ = pty.Close()
 		return nil, err
 	}
+	// The child owns its dup of the slave now; the parent's copy must go, or
+	// on Linux the master never answers EIO after the child exits and the
+	// Exit event never fires. See closeSlave.
+	closeSlave(pty)
 
 	s := &Session{
 		pty:    pty,
@@ -164,8 +169,17 @@ func (s *Session) Kill() {
 // Close releases the pty. Calling it while the child lives sends it SIGHUP;
 // the normal path is to Close after the Exit event has already arrived. Safe
 // to call more than once.
+//
+// os.ErrClosed is filtered out: xpty's Close closes master then slave, and the
+// unix slave was already dropped at Start (see closeSlave) — its second close
+// is the expected shape of a clean teardown, not a failure to report.
 func (s *Session) Close() error {
 	var err error
-	s.closeOnce.Do(func() { err = s.pty.Close() })
+	s.closeOnce.Do(func() {
+		err = s.pty.Close()
+		if errors.Is(err, os.ErrClosed) {
+			err = nil
+		}
+	})
 	return err
 }
