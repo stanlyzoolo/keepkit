@@ -529,7 +529,16 @@ func TestCleanReadmeMarkdownNormalizesCRLF(t *testing.T) {
 // The shape that did: one line of leading block markers, which made
 // rcLineContent copy the remaining line once per marker — 8.4 s at the cap.
 func TestCleanReadmeMarkdownPathologicalInputIsFast(t *testing.T) {
-	const budget = 2 * time.Second
+	budget := 2 * time.Second
+	if raceEnabled {
+		// The race detector slows this string-heavy pass several times over
+		// — ~1s under race on an M-series against ~30ms without — and CI's
+		// shared two-core runners land exactly on the 2s line (2.003s and
+		// 2.031s observed on a fair pass). The guard is against the 8.4s
+		// freeze class, so tripling under race still catches the regression
+		// while no longer failing a pass a slower runner merely stretched.
+		budget *= 3
+	}
 	inputs := map[string]string{
 		"leading bullets":  "\U0001F680 " + strings.Repeat("- ", 262144),
 		"leading quotes":   "\U0001F680 " + strings.Repeat("> ", 262144),
