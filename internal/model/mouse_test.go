@@ -33,6 +33,17 @@ func leftClick(x, y int) tea.MouseMsg {
 	return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
 }
 
+func leftRelease(x, y int) tea.MouseMsg {
+	return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease}
+}
+
+// clickUpdate sends a press then a release at the same cell — the events a pure
+// click (no drag) produces — and returns the model and command after the release.
+func clickUpdate(m Model, x, y int) (tea.Model, tea.Cmd) {
+	nm, _ := m.Update(leftClick(x, y))
+	return nm.Update(leftRelease(x, y))
+}
+
 func wheelDown(x, y int) tea.MouseMsg {
 	return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
 }

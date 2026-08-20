@@ -2200,6 +2200,194 @@ func (m Model) hasUpdate(toolName string) bool {
 	return ok && version.IsNewer(vi.Installed, vi.Latest)
 }
 
+// panelContentStartX returns the first screen column of the given panel's
+// viewport content — the column right of its left border — and the content's
+// width in columns. Panels sit flush with no outer horizontal margin, so the
+// start is pure panel-width arithmetic; the content is one column narrower than
+// the panel because withScrollbar keeps the last column for the thumb.
+func (m Model) panelContentStartX(focus int) (start, width int, ok bool) {
+	toolsPanelEnd := m.toolsW + 2
+	switch focus {
+	case focusBrief:
+		return toolsPanelEnd + 1, m.briefW - 1, true
+	case focusHelp:
+		return toolsPanelEnd + m.briefW + 2 + 1, m.helpW - 1, true
+	default:
+		return 0, 0, false
+	}
+}
+
+// mouseSelPos maps a screen X/Y to panel content coordinates (see selPos). X
+// maps to a cell column within the viewport; Y maps to a content line through
+// panelRow plus the viewport's YOffset. Clicks past the text (the scrollbar
+// column, a row beyond the last line) clamp to the widest column; cutCells
+// clamps again to each line's real width.
+func (m Model) mouseSelPos(focus, x, y int) (selPos, bool) {
+	startX, vpW, ok := m.panelContentStartX(focus)
+	if !ok {
+		return selPos{}, false
+	}
+	vp := m.briefViewport
+	if focus != focusBrief {
+		vp = m.helpViewport
+	}
+	row := panelRow(y, vp.Height)
+	if row < 0 {
+		return selPos{}, false
+	}
+	col := max(x-startX, 0)
+	if vpW > 0 {
+		col = min(col, vpW)
+	}
+	return selPos{line: row + vp.YOffset, col: col}, true
+}
+
+// beginSelection snapshots the panel's current content (styled and plain) and
+// anchors the selection at pos. The snapshot is what paintSelection repaints, so
+// a motion event never re-renders the card or README.
+func (m *Model) beginSelection(focus int, pos selPos) {
+	m.selActive = true
+	m.selPanel = focus
+	m.selAnchor = pos
+	m.selCursor = pos
+	switch focus {
+	case focusBrief:
+		m.selStyled = strings.Split(m.renderCard(), "\n")
+	case focusHelp:
+		m.selStyled = strings.Split(m.renderHelpContent(), "\n")
+	}
+	m.selPlain = make([]string, len(m.selStyled))
+	for i, l := range m.selStyled {
+		m.selPlain[i] = stripANSI(l)
+	}
+}
+
+// clearSelection drops the selection state and restores the panel's clean
+// content. For [3] it repaints renderHelpContent directly rather than through
+// setHelpContent — the latter resets the --help/man spotlight cursor, which a
+// drag must not.
+func (m *Model) clearSelection() {
+	if !m.selActive {
+		return
+	}
+	m.selActive = false
+	m.selAnchor, m.selCursor = selPos{}, selPos{}
+	m.selStyled, m.selPlain = nil, nil
+	switch m.selPanel {
+	case focusBrief:
+		m.briefViewport.SetContent(m.renderCard())
+	case focusHelp:
+		m.helpViewport.SetContent(m.renderHelpContent())
+	}
+	m.selPanel = 0
+}
+
+// paintSelection repaints the selected panel's viewport with the selection
+// highlight and keeps the cursor visible (auto-scrolling at the edges so a drag
+// can extend past the visible window).
+func (m *Model) paintSelection() {
+	if !m.selActive {
+		return
+	}
+	start, end := selOrdered(m.selAnchor, m.selCursor)
+	content := highlightSelection(m.selStyled, start, end)
+	if m.selPanel == focusBrief {
+		m.briefViewport.SetContent(content)
+	} else {
+		m.helpViewport.SetContent(content)
+	}
+
+	vp := &m.briefViewport
+	if m.selPanel != focusBrief {
+		vp = &m.helpViewport
+	}
+	line := m.selCursor.line
+	total := len(m.selStyled)
+	switch {
+	case line < vp.YOffset:
+		vp.SetYOffset(line)
+	case line > vp.YOffset+vp.Height-1:
+		vp.SetYOffset(line - vp.Height + 1)
+	case line == vp.YOffset && vp.YOffset > 0:
+		vp.SetYOffset(vp.YOffset - 1)
+	case line == vp.YOffset+vp.Height-1 && vp.YOffset+vp.Height < total:
+		vp.SetYOffset(vp.YOffset + 1)
+	}
+}
+
+// handleSelectableMouse drives drag selection for a panel that supports it
+// (brief or help). Press anchors, motion extends, release copies the plain text
+// of a non-empty selection. openLink, when non-nil, is consulted on a pure click
+// (press+release without motion) so the brief card's links still open in the
+// browser. Returns the command to run, if any.
+func (m Model) handleSelectableMouse(focus int, msg tea.MouseMsg, clickable bool, openLink func(line int) tea.Cmd) (tea.Model, tea.Cmd) {
+	switch msg.Button {
+	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+		var vp *viewport.Model
+		if focus == focusBrief {
+			vp = &m.briefViewport
+		} else {
+			vp = &m.helpViewport
+		}
+		var c tea.Cmd
+		*vp, c = vp.Update(msg)
+		return m, c
+	case tea.MouseButtonLeft:
+		if !clickable {
+			return m, nil
+		}
+		switch msg.Action {
+		case tea.MouseActionPress:
+			m.setFocus(focus)
+			if pos, ok := m.mouseSelPos(focus, msg.X, msg.Y); ok {
+				m.beginSelection(focus, pos)
+				m.paintSelection()
+			}
+			return m, nil
+		case tea.MouseActionMotion:
+			if !m.selActive || m.selPanel != focus {
+				return m, nil
+			}
+			if pos, ok := m.mouseSelPos(focus, msg.X, msg.Y); ok {
+				m.selCursor = pos
+				m.paintSelection()
+			}
+			return m, nil
+		case tea.MouseActionRelease:
+			if m.selActive && m.selPanel == focus {
+				start, end := selOrdered(m.selAnchor, m.selCursor)
+				text, n := selectedText(m.selPlain, start, end)
+				m.clearSelection()
+				if n > 0 {
+					return m, copyCmd(text)
+				}
+			}
+			// A pure click (no motion) is not a selection: open the link, if
+			// the panel has one under the cursor.
+			if openLink != nil {
+				if row := panelRow(msg.Y, m.briefViewport.Height); row >= 0 {
+					line := row + m.briefViewport.YOffset
+					if cmd := openLink(line); cmd != nil {
+						return m, cmd
+					}
+				}
+			}
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+// briefLinkCmd returns the browser-open command for a clickable card line, or
+// nil when the line is not a link. Extracted so the drag-continuation path in
+// handleMouse and the normal brief branch share one definition.
+func (m Model) briefLinkCmd(line int) tea.Cmd {
+	if _, links := m.buildCard(); links[line] != "" {
+		return openURLCmd(links[line])
+	}
+	return nil
+}
+
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Mouse policy: wheel scrolls in every mode, clicks (selection/focus) only
 	// in modeNormal — while an input mode owns the keyboard a click must not
@@ -2210,21 +2398,27 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	clickable := m.mode == modeNormal
 
+	// A drag belongs to the panel where it was anchored, not where the cursor
+	// currently is: motion and release must finalize through the anchoring
+	// panel even if the cursor drifts over [1], the status bar or outside the
+	// viewport — otherwise a release outside [2]/[3] would strand selActive and
+	// leave the highlight frozen on screen.
+	if m.selActive && msg.Button == tea.MouseButtonLeft &&
+		(msg.Action == tea.MouseActionMotion || msg.Action == tea.MouseActionRelease) {
+		if m.selPanel == focusBrief {
+			return m.handleSelectableMouse(focusBrief, msg, clickable, m.briefLinkCmd)
+		}
+		return m.handleSelectableMouse(focusHelp, msg, clickable, nil)
+	}
+
 	// Panels sit flush (each is panelW+2 wide incl. borders) with no outer
 	// horizontal margin, so screen X maps directly to panel spans.
 	toolsPanelEnd := m.toolsW + 2
 	briefPanelEnd := toolsPanelEnd + m.briefW + 2
 
-	// X alone does not mean "inside a panel": the outer Margin(1,0) row, the
-	// panel borders and the status/hints bars share the panels' columns. Rows
-	// outside the viewport must not be mapped onto content — a stray Y there
-	// once resolved to a card link and opened the browser from a click on empty
-	// chrome.
-
-	// Detect which panel the click is in
 	var cmd tea.Cmd
 	if msg.X < toolsPanelEnd {
-		// Left panel (Tools)
+		// Left panel (Tools) — no drag selection here.
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && clickable {
 			// Any click in the panel focuses it, matching brief/help.
 			m.setFocus(focusTools)
@@ -2244,36 +2438,12 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.toolsViewport, cmd = m.toolsViewport.Update(msg)
 		}
 	} else if msg.X < briefPanelEnd {
-		// Middle panel (Brief)
-		switch msg.Button {
-		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
-			m.briefViewport, cmd = m.briefViewport.Update(msg)
-		case tea.MouseButtonLeft:
-			if msg.Action == tea.MouseActionPress && clickable {
-				m.setFocus(focusBrief)
-				// Clickable links: the repo line and the changelog release URL
-				// open in the browser, like the [o] and [c] keys. The index is
-				// recomputed here rather than cached in the model — it is one
-				// card render per click and can never go stale against the
-				// content actually on screen.
-				if row := panelRow(msg.Y, m.briefViewport.Height); row >= 0 {
-					line := row + m.briefViewport.YOffset
-					if _, links := m.buildCard(); links[line] != "" {
-						return m, openURLCmd(links[line])
-					}
-				}
-			}
-		}
+		// Middle panel (Brief): drag selects text; a pure click opens a
+		// clickable link (repo line, changelog heading), like [o]/[c].
+		return m.handleSelectableMouse(focusBrief, msg, clickable, m.briefLinkCmd)
 	} else {
-		// Right panel (Help)
-		switch msg.Button {
-		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
-			m.helpViewport, cmd = m.helpViewport.Update(msg)
-		case tea.MouseButtonLeft:
-			if msg.Action == tea.MouseActionPress && clickable {
-				m.setFocus(focusHelp)
-			}
-		}
+		// Right panel (Help): drag selects text.
+		return m.handleSelectableMouse(focusHelp, msg, clickable, nil)
 	}
 	return m, cmd
 }

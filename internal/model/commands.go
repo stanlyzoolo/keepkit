@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"runtime"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/atotto/clipboard"
 
 	"github.com/stanlyzoolo/keepkit/internal/launcher"
 	"github.com/stanlyzoolo/keepkit/internal/loader"
@@ -686,5 +688,31 @@ func fetchHelpCmd(name string, mode int) tea.Cmd {
 			return helpOutputMsg{toolName: name, mode: mode, err: err}
 		}
 		return helpOutputMsg{toolName: name, mode: mode, output: cleanTerminalOutput(string(output))}
+	})
+}
+
+// copyDoneMsg carries the result of writing a mouse selection to the system
+// clipboard. n is the number of runes copied (0 on failure); err is the
+// clipboard error, nil on success.
+type copyDoneMsg struct {
+	n   int
+	err error
+}
+
+// writeClipboard is the seam copyCmd writes through: clipboard.WriteAll in
+// production, swapped in tests so the handler can be driven without touching a
+// real clipboard. The shape mirrors updater's testHomeDir / version's
+// testBrewPrefix — a package-level var a test overrides, not an injected dep.
+var writeClipboard = clipboard.WriteAll
+
+// copyCmd writes text to the system clipboard off the Update thread and reports
+// the outcome via copyDoneMsg. The clipboard write shells out (pbcopy / xclip /
+// wl-clipboard / PowerShell) and can block, so it must not run inside Update.
+func copyCmd(text string) tea.Cmd {
+	return safeCmd("copyCmd", func() tea.Msg {
+		if err := writeClipboard(text); err != nil {
+			return copyDoneMsg{err: err}
+		}
+		return copyDoneMsg{n: utf8.RuneCountInString(text)}
 	})
 }

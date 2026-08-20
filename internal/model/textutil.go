@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/stanlyzoolo/keepkit/internal/ui"
 	"github.com/stanlyzoolo/keepkit/internal/version"
@@ -673,6 +675,138 @@ func mdCutComments(line string, inComment bool) (string, bool) {
 
 func stripANSI(s string) string {
 	return ui.StripANSI(s)
+}
+
+// selPos is a position in panel content coordinates. line is a 0-based content
+// line index (bubbles/viewport is line-based — no soft wrap — so a content line
+// is a screen line); col is a 0-based cell column within that line's plain text,
+// measured with runewidth, the same width lipgloss.Width uses. Living in content
+// coordinates is what keeps the mouse-drag selection above scrolling: YOffset is
+// added only when mapping a screen row back to a line, never stored.
+type selPos struct {
+	line int
+	col  int
+}
+
+// selOrdered normalizes an anchor/cursor pair into [start, end), so a selection
+// dragged upward or leftward is the same range as one dragged the other way.
+func selOrdered(a, b selPos) (selPos, selPos) {
+	if b.line < a.line || (b.line == a.line && b.col < a.col) {
+		return b, a
+	}
+	return a, b
+}
+
+// selStyle is the paint for a mouse selection: reverse video, not a theme role.
+// Selection is a transient highlight laid over *other* content's own colors, so
+// it is not a meaning Theme has a word for — the same reasoning that keeps
+// HeadingColors/LanguageColor outside the theme switch.
+var selStyle = lipgloss.NewStyle().Reverse(true)
+
+// highlightLine repaints the cell columns [from, to) of a styled content line
+// with the selection style, preserving the original styling of the prefix and
+// suffix. ansi.Cut is ANSI- and wide-char-aware, so the two cuts cannot split an
+// escape sequence; the selected middle is stripped and repainted whole — the
+// codebase's strip-then-repaint rule, which exists because styling must never be
+// cut mid-sequence and re-emitted to a terminal verbatim. An empty range is a
+// no-op that returns the line untouched.
+func highlightLine(styled string, from, to int) string {
+	if from >= to {
+		return styled
+	}
+	// Width measured in ansi.Cut's own units (GraphemeWidth), not runewidth, so
+	// the three Cut calls below partition the line exactly — prefix [0,from) +
+	// middle [from,to) + suffix [to,w) == [0,w) by construction, with no cell
+	// dropped or duplicated. runewidth and displaywidth agree on every glyph
+	// keepkit renders (single BMP codepoints, no ZWJ emoji), so this matches the
+	// copy side's runewidth columns.
+	w := ansi.StringWidth(styled)
+	from = max(from, 0)
+	to = min(to, w)
+	if from >= to {
+		return styled
+	}
+	if from == 0 && to >= w {
+		return selStyle.Render(stripANSI(styled))
+	}
+	return ansi.Cut(styled, 0, from) +
+		selStyle.Render(stripANSI(ansi.Cut(styled, from, to))) +
+		ansi.Cut(styled, to, w)
+}
+
+// cutCells returns the substring of s spanning cell columns [from, to), measured
+// with runewidth. A wide rune straddling a boundary is kept whole — a cell
+// column cannot be half-copied.
+func cutCells(s string, from, to int) string {
+	width := runewidth.StringWidth(s)
+	from = max(from, 0)
+	to = min(to, width)
+	if from >= to {
+		return ""
+	}
+	var b strings.Builder
+	col := 0
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if col >= to {
+			break
+		}
+		if col+rw > from {
+			b.WriteRune(r)
+		}
+		col += rw
+	}
+	return b.String()
+}
+
+// selectedText extracts the plain (ANSI-stripped) text of the selection from
+// plainLines and returns it with the number of runes copied. The first and last
+// lines are cut to their cell columns; intermediate lines are copied whole.
+// Returns "" and 0 for an empty or out-of-range selection.
+func selectedText(plainLines []string, start, end selPos) (string, int) {
+	if len(plainLines) == 0 || start.line < 0 || start.line >= len(plainLines) {
+		return "", 0
+	}
+	end.line = min(end.line, len(plainLines)-1)
+	if start.line > end.line {
+		return "", 0
+	}
+	if start.line == end.line {
+		cut := cutCells(plainLines[start.line], start.col, end.col)
+		return cut, utf8.RuneCountInString(cut)
+	}
+	var sb strings.Builder
+	sb.WriteString(cutCells(plainLines[start.line], start.col, runewidth.StringWidth(plainLines[start.line])))
+	sb.WriteByte('\n')
+	for i := start.line + 1; i < end.line; i++ {
+		sb.WriteString(plainLines[i])
+		sb.WriteByte('\n')
+	}
+	sb.WriteString(cutCells(plainLines[end.line], 0, end.col))
+	return sb.String(), utf8.RuneCountInString(sb.String())
+}
+
+// highlightSelection repaints the cell range [start, end) over styled content
+// lines. Lines before start and after end pass through untouched; the boundary
+// lines are cut to their columns and intermediate lines are repainted whole.
+// Pure, so it is table-testable without a terminal.
+func highlightSelection(styled []string, start, end selPos) string {
+	out := make([]string, len(styled))
+	copy(out, styled)
+	if len(out) == 0 {
+		return ""
+	}
+	for i := start.line; i <= end.line && i < len(out); i++ {
+		from, to := 0, ansi.StringWidth(styled[i])
+		if i == start.line {
+			from = start.col
+		}
+		if i == end.line {
+			to = end.col
+		}
+		out[i] = highlightLine(out[i], from, to)
+	}
+	return strings.Join(out, "\n")
 }
 
 // isTUITakeover reports whether captured probe output shows the tool started

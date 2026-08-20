@@ -57,6 +57,9 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
   samples are left exactly as written
 - **Clickable card** — the repository and release links on the tool card open in the
   browser by mouse click, or by hotkeys for the repo and changelog pages
+- **Select and copy** — drag with the mouse in the brief card or the docs panel to
+  select text; releasing the button copies the plain text to the system clipboard,
+  with a confirmation in the status bar
 - **Language stack** — the card names a repository's languages with their shares and
   draws them as a proportional band in GitHub's own per-language colors
 - **Tags and grouping** — one tag per tool; `space` regroups the flat list under
