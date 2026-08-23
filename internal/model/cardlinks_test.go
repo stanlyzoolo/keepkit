@@ -249,7 +249,7 @@ func TestMouseBriefLinkClick(t *testing.T) {
 			t.Fatalf("setup: links = %v, want the repo and changelog lines", links)
 		}
 		for line, url := range links {
-			_, cmd := m.Update(leftClick(briefX(m), line+2))
+			_, cmd := clickUpdate(m, briefX(m), line+2)
 			if cmd == nil {
 				t.Errorf("click on line %d (%s) dispatched no command", line, url)
 			}
@@ -264,7 +264,7 @@ func TestMouseBriefLinkClick(t *testing.T) {
 		if _, ok := links[2]; ok {
 			t.Fatalf("setup: line 2 unexpectedly linked")
 		}
-		updated, cmd := m.Update(leftClick(briefX(m), 2+2))
+		updated, cmd := clickUpdate(m, briefX(m), 2+2)
 		if cmd != nil {
 			t.Errorf("click on an unlinked line dispatched a command")
 		}
@@ -291,10 +291,10 @@ func TestMouseBriefLinkClick(t *testing.T) {
 		}
 		// The same screen row now shows a different content line: clicking where
 		// the changelog heading was before the scroll must no longer open it.
-		if _, cmd := m.Update(leftClick(briefX(m), logLine+2)); cmd != nil {
+		if _, cmd := clickUpdate(m, briefX(m), logLine+2); cmd != nil {
 			t.Errorf("click ignored the scroll offset and still opened a link")
 		}
-		if _, cmd := m.Update(leftClick(briefX(m), logLine-3+2)); cmd == nil {
+		if _, cmd := clickUpdate(m, briefX(m), logLine-3+2); cmd == nil {
 			t.Errorf("click at the scrolled changelog row dispatched no command")
 		}
 	})
@@ -320,7 +320,7 @@ func TestMouseBriefLinkClick(t *testing.T) {
 			{"below the terminal", m.height + 5},
 		}
 		for _, tt := range outside {
-			if _, cmd := m.Update(leftClick(briefX(m), tt.y)); cmd != nil {
+			if _, cmd := clickUpdate(m, briefX(m), tt.y); cmd != nil {
 				t.Errorf("click on the %s (y=%d) dispatched a command", tt.name, tt.y)
 			}
 		}
@@ -331,7 +331,7 @@ func TestMouseBriefLinkClick(t *testing.T) {
 		m.mode = modeEditNote
 		_, links := m.buildCard()
 		for line := range links {
-			if _, cmd := m.Update(leftClick(briefX(m), line+2)); cmd != nil {
+			if _, cmd := clickUpdate(m, briefX(m), line+2); cmd != nil {
 				t.Errorf("click on line %d opened a link while the note editor was open", line)
 			}
 		}

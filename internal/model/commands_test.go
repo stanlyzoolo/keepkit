@@ -702,3 +702,32 @@ func TestTokenAcceptedRefetchesEveryRepo(t *testing.T) {
 		}
 	})
 }
+
+func TestCopyDoneMsgHandler(t *testing.T) {
+	prev := writeClipboard
+	t.Cleanup(func() { writeClipboard = prev })
+
+	base := New(nil)
+
+	t.Run("success sets the copied status", func(t *testing.T) {
+		writeClipboard = func(string) error { return nil }
+		msg := copyCmd("hello")()
+		done, ok := msg.(copyDoneMsg)
+		if !ok || done.n != 5 {
+			t.Fatalf("copyCmd = %#v, want copyDoneMsg{n:5}", msg)
+		}
+		updated, _ := base.Update(done)
+		if got := updated.(Model).statusMsg; got != "copied 5 characters" {
+			t.Errorf("statusMsg = %q, want %q", got, "copied 5 characters")
+		}
+	})
+
+	t.Run("failure sets the copy-failed status", func(t *testing.T) {
+		writeClipboard = func(string) error { return errors.New("no xclip") }
+		msg := copyCmd("x")()
+		updated, _ := base.Update(msg)
+		if got := updated.(Model).statusMsg; got != "copy failed: no xclip" {
+			t.Errorf("statusMsg = %q, want %q", got, "copy failed: no xclip")
+		}
+	})
+}

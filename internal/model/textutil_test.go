@@ -2,8 +2,11 @@ package model
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestMdInline(t *testing.T) {
@@ -494,5 +497,95 @@ func TestMarkdownToLinesFenceKind(t *testing.T) {
 		if got[i].kind != k {
 			t.Errorf("line %d (%q) kind = %d, want %d", i, got[i].text, got[i].kind, k)
 		}
+	}
+}
+
+func TestHighlightLine(t *testing.T) {
+	t.Run("empty or inverted range is a no-op", func(t *testing.T) {
+		if got := highlightLine("abcde", 2, 2); got != "abcde" {
+			t.Errorf("highlightLine(2,2) = %q, want the line untouched", got)
+		}
+		if got := highlightLine("abcde", 3, 1); got != "abcde" {
+			t.Errorf("highlightLine(3,1) = %q, want the line untouched", got)
+		}
+	})
+
+	t.Run("preserves the text of styled input", func(t *testing.T) {
+		styled := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2")).Render("hello world")
+		if got := stripANSI(highlightLine(styled, 0, 5)); got != "hello world" {
+			t.Errorf("highlight changed the text to %q", got)
+		}
+	})
+
+	t.Run("full line repaints whole", func(t *testing.T) {
+		if got := highlightLine("abc", 0, 3); got != selStyle.Render("abc") {
+			t.Errorf("highlightLine(0,3) = %q, want %q", got, selStyle.Render("abc"))
+		}
+	})
+
+	t.Run("middle range repaints only the middle", func(t *testing.T) {
+		got := highlightLine("abcde", 1, 3)
+		want := "a" + selStyle.Render("bc") + "de"
+		if got != want {
+			t.Errorf("highlightLine(1,3) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("out-of-range clamps to the line", func(t *testing.T) {
+		if got := highlightLine("abc", -1, 99); got != selStyle.Render("abc") {
+			t.Errorf("highlightLine(-1,99) = %q, want full-line repaint", got)
+		}
+	})
+}
+
+func TestSelectedText(t *testing.T) {
+	t.Run("single line partial", func(t *testing.T) {
+		got, n := selectedText([]string{"abcdef"}, selPos{0, 1}, selPos{0, 4})
+		if got != "bcd" || n != 3 {
+			t.Errorf("selectedText = %q/%d, want %q/3", got, n, "bcd")
+		}
+	})
+
+	t.Run("multi-line with partial edges", func(t *testing.T) {
+		got, n := selectedText([]string{"aa", "bb", "cc"}, selPos{0, 1}, selPos{2, 1})
+		if got != "a\nbb\nc" || n != 6 {
+			t.Errorf("selectedText = %q/%d, want %q/6", got, n, "a\nbb\nc")
+		}
+	})
+
+	t.Run("empty range returns nothing", func(t *testing.T) {
+		got, n := selectedText([]string{"abc"}, selPos{0, 1}, selPos{0, 1})
+		if got != "" || n != 0 {
+			t.Errorf("selectedText(empty) = %q/%d, want \"\"/0", got, n)
+		}
+	})
+
+	t.Run("out-of-range clamps to line end", func(t *testing.T) {
+		got, _ := selectedText([]string{"abcdef"}, selPos{0, 1}, selPos{0, 99})
+		if got != "bcdef" {
+			t.Errorf("selectedText(clamped) = %q, want %q", got, "bcdef")
+		}
+	})
+
+	t.Run("wide glyph is kept whole", func(t *testing.T) {
+		// '界' is two cells wide; a cell range [1,3) that straddles it must not
+		// split the rune.
+		got, _ := selectedText([]string{"a界b"}, selPos{0, 1}, selPos{0, 3})
+		if got != "界" {
+			t.Errorf("selectedText(wide) = %q, want %q", got, "界")
+		}
+	})
+}
+
+func TestHighlightSelection(t *testing.T) {
+	styled := []string{"aa", "bb", "cc"}
+	got := highlightSelection(styled, selPos{0, 1}, selPos{2, 1})
+	want := []string{
+		"a" + selStyle.Render("a"),
+		selStyle.Render("bb"),
+		selStyle.Render("c") + "c",
+	}
+	if got != strings.Join(want, "\n") {
+		t.Errorf("highlightSelection =\n%q\nwant\n%q", got, strings.Join(want, "\n"))
 	}
 }

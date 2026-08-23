@@ -361,6 +361,19 @@ type Model struct {
 	updateLogFor  string
 	updateOutcome updateOutcome
 
+	// Mouse-drag selection state for panels [2]/[3]. selActive runs from the
+	// left-button press to the release; selPanel names the panel being selected
+	// in (focusBrief or focusHelp). selAnchor/selCursor are content coordinates
+	// (see selPos); selStyled/selPlain are that panel's content lines — styled
+	// and ANSI-stripped — snapshotted at press time, so a motion event paints
+	// without re-rendering the card/README.
+	selActive bool
+	selPanel  int
+	selAnchor selPos
+	selCursor selPos
+	selStyled []string
+	selPlain  []string
+
 	// appVersion is the version of the running binary (ldflag or buildinfo,
 	// injected by WithAppVersion) and the gate for the whole self-update
 	// feature: empty or "dev" means no self-check request and no banner. It is
@@ -1214,6 +1227,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case copyDoneMsg:
+		if msg.err != nil {
+			return m, m.setStatus("copy failed: " + msg.err.Error())
+		}
+		return m, m.setStatus("copied " + strconv.Itoa(msg.n) + " characters")
+
 	case launchDoneMsg:
 		// Tab-open adapter finished. Clear the one-launch-at-a-time guard
 		// first, so the fallback (or the user's retry) can dispatch again.
@@ -1428,6 +1447,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		m.statusMsg = ""
+		// Any keystroke abandons an in-flight mouse drag: a release is not
+		// always delivered (the button can be let go over another window), and a
+		// key must never act on content still wearing the selection highlight.
+		// clearSelection is a no-op when no drag is active.
+		m.clearSelection()
 
 		// Every modal return funnels through flushPendingLaunch: the keystroke
 		// that brings the mode back to modeNormal is the single point where a
