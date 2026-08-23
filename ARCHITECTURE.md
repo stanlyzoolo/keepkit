@@ -79,7 +79,7 @@ The `model` package is split across files within a single package:
 | `readme.go` | `renderReadme` — panel `[3]`'s pipeline: sanitize → preprocess → glamour, with a single-entry render cache; `chromaFormatterFor` maps the color profile onto chroma's formatter so a code fence's plate is not quantized away from the card's |
 | `readme_clean.go` | `cleanReadmeMarkdown(text, about)` — the pure README preprocessor. Fenced blocks and inline spans are segmented out first (code is never rewritten), then badges, hrefs, HTML and emoji are removed from what is left, and finally the leading H1 (plus a slogan under it that repeats `about`) is dropped as a title page the card already shows |
 | `readme_style.go` | `keepkitStyle(theme, dark, width)` — panel `[3]`'s glamour theme: the standard config cloned, its *chrome* re-accented from the `ui.Theme` it is handed and its *typography* (heading ladder, fence accents) taken from `ui`'s fixed README palette; `width` sizes the full-width divider |
-| `textutil.go` | Pure text helpers (`wrapText`, `stripANSI`, `colorizeHelp`, `parseHelpEntries`, `markdownToLines` — the card's release-notes markdown → pre-wrapped tagged lines, …) |
+| `textutil.go` | Pure text helpers (`wrapText`, `stripANSI`, `colorizeHelp`, `parseHelpEntries`, `markdownToLines` — the card's release-notes markdown → pre-wrapped tagged lines, `highlightSelection`/`selectedText`/`cutCells` — the mouse selection's paint and copy, …) |
 | `browser.go` | Opening URLs per `GOOS` |
 
 ## Data flow
@@ -252,10 +252,21 @@ Key invariants:
 - **Card links are indexed, not parsed.** `buildCard()` returns the card text plus a
   `line → URL` map recorded while writing (line heights vary with wrapping), so a click
   on the title line (which carries the bare `owner/repo` beside the name, linked as the
-  full ref) or on the changelog heading opens the browser. The changelog line is
+  full ref) or on the changelog heading opens the browser — on `Release` without motion,
+  never on `Press`, because the press anchors a drag and a drag begun on a link must
+  copy. The changelog line is
   registered only when its `release notes ↗` affordance actually fit — a heading that
   looks like plain text must not open a browser. `handleMouse` rebuilds the map per
   click, which is why it can never describe stale content.
+- **A mouse drag in `[2]`/`[3]` selects text and copies it on release.** `Press` anchors,
+  `Motion` extends, `Release` writes the plain text to the clipboard through `copyCmd`
+  (off the `Update` thread — the write shells out to `pbcopy`/`xclip`/PowerShell and can
+  block). The drag belongs to the panel it was anchored in, so a release over `[1]` or
+  outside the viewport still finalizes instead of stranding the highlight on screen, and
+  any keystroke abandons it — a release is not always delivered. Coordinates are content
+  coordinates, so the selection survives scrolling; the highlight is `ansi.Cut` plus
+  reverse video applied per whole line, the strip-then-repaint rule that keeps a cut from
+  landing inside an escape sequence.
 - **The status bar is global; each panel owns its footer.** A key belongs on the bar
   exactly when it does the same thing in every focus, and six do: `t` track, `u`
   untrack, `m` rename, `a` api, `?` keys, `q` quit (`globalHints`). `enter` and `/`
@@ -603,7 +614,9 @@ Per-test setup still uses the internal seams: `testConfigDir`, `testCacheDir`,
 `updater` — each private to its package), `updater`'s `testHomeDir`, and
 `model`'s `testReadmeStyle` (routes the renderer through a named standard style
 instead of `keepkitStyle`; an unknown name forces the glamour construction failure,
-which is how the plain-text fallback is covered). `testAPIBase` is private to `version`, so a `model`
+which is how the plain-text fallback is covered) and `model`'s `writeClipboard` (the
+clipboard write itself, so the copy path is driven without a real clipboard).
+`testAPIBase` is private to `version`, so a `model`
 test cannot redirect a fetch at an httptest server — a network command is executed
 there only when the cache can answer it (`seedSelfReleaseCache` for the self-check);
 otherwise `Init` batches are asserted by length, never run.
