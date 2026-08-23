@@ -71,8 +71,8 @@ Pure TUI, no subcommands; the only flags are `--version` and `--help`.
   the `a` overlay, lifts the anonymous 60 requests/hour to 5000
 - **Session error log** — errors (and only errors) are journaled to a per-session
   file, so a misbehaving session can be researched after the fact; no errors — no file
-- **Mouse support** — scrolling, panel focus, selection and card links all respond
-  to the mouse
+- **Mouse support** — scrolling, panel focus, tool selection, drag-to-copy and card
+  links all respond to the mouse
 
 The status bar carries the keys that mean the same thing in every panel, each
 panel's own actions sit in its footer, and `?` opens the full hotkeys overlay —
@@ -397,6 +397,7 @@ subprocess sandbox — is described in [ARCHITECTURE.md](ARCHITECTURE.md).
 - [x/ansi](https://github.com/charmbracelet/x) — stripping escape sequences from captured tool output
 - [termenv](https://github.com/muesli/termenv) — terminal color-profile detection
 - [go-runewidth](https://github.com/mattn/go-runewidth) — glyph width measurement
+- [clipboard](https://github.com/atotto/clipboard) — writing a mouse selection to the system clipboard
 - [golang.org/x/mod/semver](https://pkg.go.dev/golang.org/x/mod/semver) — version comparison
 - [gopkg.in/yaml.v3](https://pkg.go.dev/gopkg.in/yaml.v3) — reading/writing `meta.yaml`
 
